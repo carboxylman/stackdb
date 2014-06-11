@@ -565,7 +565,7 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 	    fflush(stderr);
 	    fflush(stdout);
 
-	    fprintf(stdout,"RESULT(%c:%d): %s (%d) %s %s (",
+	    fprintf(stdout,"RESULT:: (%c:%d) %s (%d) %s %s (",
 		    spfa->report.rt,result_counter,
 		    spfa->report.tn ? spfa->report.tn : "",
 		    spfa->report.tid,spfa->report.rv ? spfa->report.rv : "",
@@ -615,7 +615,7 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 	    print_thread_context(stdout,bsymbol->region->space->target,tid,
 				 spfa->report.ttctx,spfa->report.ttdetail,
 				 spfa->report.bt,";",":","thread=",",");
-	    fputs(")\n",stdout);
+	    fprintf(stdout,") ::RESULT\n");
 	    fflush(stdout);
 	}
 	else if (spfa->atype == SPF_ACTION_PRINT) {
@@ -1362,7 +1362,7 @@ void spf_config_free(struct spf_config *config) {
  *
  * Reports interpreted by the XML server like this:
  *
- *   "RESULT(%c:%d): %ms (%d) %ms \"%m[^\"]\" (%m[^)])",
+ *   "RESULT:: (%c:%d) %ms (%d) %ms \"%m[^\"]\" (%m[^)]) ::RESULT\n",
  *   &rt,&id,&name,&type,&result_value,&msg,&value_str);
  *
  *   rt=(i|f) id=<unique_int> typename typeid result_value "msg" (<meta_kv_pairs>)

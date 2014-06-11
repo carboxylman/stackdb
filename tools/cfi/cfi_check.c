@@ -86,9 +86,9 @@ result_t cfi_handler(struct probe *probe,tid_t tid,void *data,
     if (cts->status.isviolation) {
 	buf = cfi_thread_backtrace(cfi,cts," | ");
 	fprintf(stdout,
-		"RESULT(i:%d): cfi (2) CFIViolation \"CFI violation!\""
+		"RESULT:: (i:%d) cfi (2) CFIViolation \"CFI violation!\""
 		" (badretaddr=0x%"PRIxADDR",oldretaddr=0x%"PRIxADDR","
-		" depth=%d,violations=%d,stack=%s)\n",
+		" depth=%d,violations=%d,stack=%s) ::RESULT\n",
 		++result_counter,
 		cts->status.newretaddr,cts->status.oldretaddr,
 		array_list_len(cts->shadow_stack),cts->status.violations,buf);
@@ -97,10 +97,10 @@ result_t cfi_handler(struct probe *probe,tid_t tid,void *data,
     }
     /*
     else {
-	fprintf(stdout,"RESULT(i:%d): rop (0) CFIClean \"CFI clean\""
+	fprintf(stdout,"RESULT:: (i:%d) rop (0) CFIClean \"CFI clean\""
 		" (retaddr=0x%"PRIxADDR",violations=%d,total=%d,"
 		"fpviolations=%d,jmpfpviolations=%d,jccfpviolations=%d,"
-		"isfpviolation=%d)\n",
+		"isfpviolation=%d) ::RESULT\n",
 		++result_counter,rop_status->current_ret_addr,
 		rop_status->violations,rop_status->total,
 		rop_status->fpviolations,rop_status->jmpfpviolations,
@@ -126,9 +126,9 @@ void cfi_check_print_final_results(struct probe *probe) {
 	if (cts->status.isviolation) {
 	    buf = cfi_thread_backtrace(cfi,cts," | ");
 	    fprintf(stdout,
-		    "RESULT(f:%d): cfi (2) CFIViolation \"CFI violation!\""
+		    "RESULT:: (f:%d) cfi (2) CFIViolation \"CFI violation!\""
 		    " (tid=%d,badretaddr=0x%"PRIxADDR",oldretaddr=0x%"PRIxADDR","
-		    " depth=%d,violations=%d,stack=%s)\n",
+		    " depth=%d,violations=%d,stack=%s) ::RESULT\n",
 		    ++i,(int)(uintptr_t)key,
 		    cts->status.newretaddr,cts->status.oldretaddr,
 		    array_list_len(cts->shadow_stack),cts->status.violations,buf);
@@ -138,8 +138,8 @@ void cfi_check_print_final_results(struct probe *probe) {
 	else if (array_list_len(cts->shadow_stack)) {
 	    buf = cfi_thread_backtrace(cfi,cts," | ");
 	    fprintf(stdout,
-		    "RESULT(f:%d): cfi (3) CFIStackRemainingViolation \"CFI violation -- inferred due to remaining shadow stack items!\""
-		    " (tid=%d,depth=%d,violations=%d,stack=%s)\n",
+		    "RESULT:: (f:%d) cfi (3) CFIStackRemainingViolation \"CFI violation -- inferred due to remaining shadow stack items!\""
+		    " (tid=%d,depth=%d,violations=%d,stack=%s) ::RESULT\n",
 		    ++i,(int)(uintptr_t)key,
 		    array_list_len(cts->shadow_stack),cts->status.violations,buf);
 	    fflush(stdout);
@@ -147,8 +147,8 @@ void cfi_check_print_final_results(struct probe *probe) {
 	}
 	else {
 	    fprintf(stdout,
-		    "RESULT(f:%d): cfi (0) CFIClean \"CFI clean!\""
-		    " (tid=%d,violations=%d)\n",
+		    "RESULT:: (f:%d) cfi (0) CFIClean \"CFI clean!\""
+		    " (tid=%d,violations=%d) ::RESULT\n",
 		    ++i,(int)(uintptr_t)key,cts->status.violations);
 	    fflush(stdout);
 	}

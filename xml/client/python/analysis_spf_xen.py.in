@@ -84,10 +84,16 @@ aspec.reportStdoutIntermediateResults = True
 aspec.reportStderrIntermediateResults = True
 aspec.autoparseSimpleResults = True
 spf_conf_xen = """
-ProbeFilter sys_recvfrom id(recvfrom) when(pre) report(rt=f,tn=syscall,tid=0,rv=recvfrom,msg=sys_recvfrom,ttdetail=2)
+ProbeFilter sys_execve id(sys_execve) when(pre) tfilter=(name=/ls/) report(rt=i,tn=syscall,rv=sys_execve,msg=sys_execve,ttctx=self,bt=1,ttdetail=2)
+ProbeFilter sys_open id(sys_open) when(pre) tfilter=(name=/ls/) report(rt=i,tn=syscall,rv=sys_open,msg=sys_open,ttctx=self,bt=1,ttdetail=2)
+ProbeFilter sys_write id(sys_write) when(pre) tfilter=(name=/ls/) report(rt=i,tn=syscall,rv=sys_write,msg=sys_write,ttctx=self,bt=1,ttdetail=2)
+ProbeFilter sys_read id(sys_read) when(pre) tfilter=(name=/ls/) report(rt=i,tn=syscall,rv=sys_read,msg=sys_read,ttctx=self,bt=1,ttdetail=2)
 """
-#ProbeFilter sys_open id(openFiltered) when(pre) report(rt=i,tn=syscall,tid=0,rv=open,msg="file open") abort(1)
-#ProbeFilter sys_open id(openExit) when(pre) vfilter(filename=/vmi.exit/) print() exit(0)
+#spf_conf_xen = """
+#ProbeFilter sys_recvfrom id(recvfrom) when(pre) report(rt=f,tn=syscall,tid=0,rv=recvfrom,msg=sys_recvfrom,ttdetail=2)
+#"""
+##ProbeFilter sys_open id(openFiltered) when(pre) report(rt=i,tn=syscall,tid=0,rv=open,msg="file open") abort(1)
+##ProbeFilter sys_open id(openExit) when(pre) vfilter(filename=/vmi.exit/) print() exit(0)
 
 supportFile = client.factory.create('SupportFileT')
 #supportFile.name = "spf.conf"

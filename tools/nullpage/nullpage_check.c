@@ -171,21 +171,21 @@ result_t np_handler(struct probe *probe,tid_t tid,void *data,
 
     if (NP_IS_MMAP(trigger,nps)) {
 	fprintf(stdout,
-		"RESULT(i:%d): np (30) NullPageUsageMmap"
+		"RESULT:: (i:%d) np (30) NullPageUsageMmap"
 		" \"NULL Page Usage (mmap)!\""
 		" (mmap_violations=%d,",
 		nps->total_violations,nps->mmap_violations);
     }
     else if (NP_IS_MPROTECT(trigger,nps)) {
 	fprintf(stdout,
-		"RESULT(i:%d): np (31) NullPageUsageMprotect"
+		"RESULT:: (i:%d) np (31) NullPageUsageMprotect"
 		" \"NULL Page Usage (mprotect)!\""
 		" (mprotect_violations=%d,",
 		nps->total_violations,nps->mprotect_violations);
     }
     else if (NP_IS_PGFAULT(trigger,nps)) {
 	fprintf(stdout,
-		"RESULT(i:%d): np (32) NullPageUsagePageFault"
+		"RESULT:: (i:%d) np (32) NullPageUsagePageFault"
 		" \"NULL Page Usage (Page Fault)!\""
 		" (mmap_violations=%d,",
 		nps->total_violations,nps->pgfault_violations);
@@ -198,7 +198,7 @@ result_t np_handler(struct probe *probe,tid_t tid,void *data,
     print_thread_context(stdout,probe->target,tid,
 			 nps->config->ttctx,nps->config->ttdetail,
 			 1,";",":","thread=",",");
-    fputs(")\n",stdout);
+    fputs(") ::RESULT\n",stdout);
     fflush(stdout);
 
     return 0;

@@ -112,11 +112,12 @@ result_t rop_handler(struct probe *probe,tid_t tid,void *data,
     if (rop_status->isviolation) {
 	if (!oldformat) {
 	    fprintf(stdout,
-		    "RESULT(i:%d): rop (2) CFIViolation \"CFI violation!\""
+		    "RESULT:: (i:%d) rop (2) CFIViolation \"CFI violation!\""
 		    " (retaddr=0x%"PRIxADDR",violations=%d,total=%d,"
 		    "fpviolations=%d,jmpfpviolations=%d,jccfpviolations=%d,"
 		    "isfpviolation=%d,gadgetstart=0x%"PRIxADDR","
-		    "gadgetend=0x%"PRIxADDR",gadgetcontinstr=0x%"PRIxADDR")\n",
+		    "gadgetend=0x%"PRIxADDR",gadgetcontinstr=0x%"PRIxADDR
+		    ") ::RESULT\n",
 		    ++result_counter,rop_status->current_ret_addr,
 		    rop_status->violations,rop_status->total,
 		    rop_status->fpviolations,rop_status->jmpfpviolations,
@@ -138,11 +139,12 @@ result_t rop_handler(struct probe *probe,tid_t tid,void *data,
     }
     else {
 	if (!oldformat) {
-	    fprintf(stdout,"RESULT(i:%d): rop (0) CFIClean \"CFI clean\""
+	    fprintf(stdout,"RESULT:: (i:%d) rop (0) CFIClean \"CFI clean\""
 		    " (retaddr=0x%"PRIxADDR",violations=%d,total=%d,"
 		    "fpviolations=%d,jmpfpviolations=%d,jccfpviolations=%d,"
 		    "isfpviolation=%d,gadgetstart=0x%"PRIxADDR","
-		    "gadgetend=0x%"PRIxADDR",gadgetcontinstr=0x%"PRIxADDR")\n",
+		    "gadgetend=0x%"PRIxADDR",gadgetcontinstr=0x%"PRIxADDR
+		    ") ::RESULT\n",
 		    ++result_counter,rop_status->current_ret_addr,
 		    rop_status->violations,rop_status->total,
 		    rop_status->fpviolations,rop_status->jmpfpviolations,
@@ -502,7 +504,7 @@ int main(int argc,char **argv) {
  out:
     if (array_list_len(rop_violation_list)) {
 	if (!oldformat) 
-	    fprintf(stdout,"RESULT(f:%d): rop (1) Violations \"ROP violations detected.\"\n",
+	    fprintf(stdout,"RESULT:: (f:%d) rop (1) Violations \"ROP violations detected.\" ::RESULT\n",
 		    ++final_result_counter);
 	else {
 	    fprintf(stdout,"ROP violations detected!\n");
@@ -518,7 +520,7 @@ int main(int argc,char **argv) {
     }
     else {
 	if (!oldformat) 
-	    fprintf(stdout,"RESULT(f:%d): rop (0) NoViolations \"No ROP violations detected.\"\n",
+	    fprintf(stdout,"RESULT:: (f:%d) rop (0) NoViolations \"No ROP violations detected.\" ::RESULT\n",
 		    ++final_result_counter);
 	else
 	    fprintf(stdout,"No ROP violations detected!\n");

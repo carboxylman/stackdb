@@ -275,9 +275,8 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
     char *pbuf_next;
     int saved = 0;
     int new_alen = 0;
-    char *token_end,*token_middle;
-    int bcount;
-    int i;
+    char *token,*token_end,*token_middle;
+    int ccount;
     char *key,*key_end;
 
     vdebug(5,LA_XML,LF_RPC,"fd %d recv '%s' (%d)\n",fd,buf,len);
@@ -290,7 +289,7 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
 
     /*
      * If we're going to try to parse it, make sure we have at least one
-     * newline in our buffer.  Once we do, process as many lines as are
+     * RESULT:: and one ::RESULT in our buffer.  Once we do, process as many of these tag pairs as are
      * in the buffer.  If there is any stuff left, place it at the head
      * of the buffer for next time.
      *
@@ -339,9 +338,13 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
     /* One byte past the last char in buf. */
     ebuf = sbuf + remaining;
 
-    if ((pbuf_next = strchr(pbuf,'\n')) == NULL) {
+    pbuf_next = strstr(pbuf,"RESULT::");
+    if (pbuf_next)
+	pbuf_next = strstr(pbuf_next + 1,"::RESULT\n");
+
+    if (!pbuf_next) {
 	/*
-	 * No newline yet, save it off it we didn't do it already, and
+	 * No tag pair yet, save it off it we didn't do it already, and
 	 * return.
 	 */
 	if (!saved) {
@@ -355,13 +358,13 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
 	    a->stdout_buf[a->stdout_buf_len] = '\0';
 
 	    vdebug(8,LA_XML,LF_RPC,
-		   "no initial newline in direct buf; saved;"
+		   "no tag pair in direct buf; saved;"
 		   " next callback will start with '''%s'''\n",
 		   a->stdout_buf);
 	}
 	else {
 	    vdebug(8,LA_XML,LF_RPC,
-		   "no initial newline in direct buf; already saved;"
+		   "no tag pair in direct buf; already saved;"
 		   " next callback will start with '''%s'''\n",
 		   a->stdout_buf);
 	}
@@ -371,12 +374,13 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
     /*
      * Ok, we have at least one line; process until we're done.
      */
-    *pbuf_next = '\0';
+    *(pbuf_next - 1) = '\0';
     while (pbuf_next) {
 	rt = 0;
 	msg = value_str = name = result_value = NULL;
-	rc = sscanf(pbuf,"RESULT(%c:%d): %ms (%d) %ms \"%m[^\"]\" (%m[^)])",
-		    &rt,&id,&name,&type,&result_value,&msg,&value_str);
+	ccount = 0;
+	rc = sscanf(pbuf,"RESULT:: (%c:%d) %ms (%d) %ms \"%m[^\"]\" %n",
+		    &rt,&id,&name,&type,&result_value,&msg,&ccount);
 	if (rc >= 5) {
 	    /*
 	     * Don't bother to create an intermediate result if there are no
@@ -386,8 +390,6 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
 		&& generic_rpc_count_listeners(RPC_SVCTYPE_ANALYSIS,a->id) < 1) {
 		if (msg)
 		    free(msg);
-		if (value_str)
-		    free(value_str);
 		if (name)
 		    free(name);
 		if (result_value)
@@ -395,48 +397,135 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
 		goto do_continue;
 	    }
 
+	    if (ccount > 0) {
+		value_str = pbuf + ccount;
+		while (*value_str != '\0') {
+		    if (*value_str == '(') {
+			++value_str;
+			break;
+		    }
+		    ++value_str;
+		}
+		if (*value_str == '\0')
+		    value_str = NULL;
+	    }
+
 	    datum = analysis_create_simple_datum(a,id,name,type,result_value,
 						 msg,1);
 	    if (value_str) {
-		token_middle = value_str;
-		bcount = 0;
+		vdebug(8,LA_XML,LF_RPC,
+		       "trying to autoparse value_str '''%s'''\n",value_str);
+		token = value_str;
 		key = NULL;
 		key_end = NULL;
-		while ((token_end = index(token_middle,','))) {
-		    if (!key) {
-			key = token_middle;
-			key_end = index(token_middle,'=');
-			if (!key_end) {
-			    fprintf(stderr,
-				    "bad autoparse value token at '%s'; skipping!\n",
-				    token_middle);
-			    break;
+
+		int vo = 0;
+		int vc = 0;
+
+		while (*token != '\0') {
+		    key = token;
+		    key_end = index(token,'=');
+		    if (!key_end) {
+			fprintf(stderr,
+				"bad autoparse value token at '%s'; skipping!\n",
+				token);
+			break;
+		    }
+		    *key_end = '\0';
+		    token_middle = key_end + 1;
+
+		    int depth = 1;
+		    switch (*token_middle) {
+		    case '[': vo = '['; vc = ']'; break;
+		    case '{': vo = '{'; vc = '}'; break;
+		    case '"': vo = '"'; vc = '"'; break;
+		    case '\'': vo = '\''; vc = '\''; break;
+		    case '(': vo = '('; vc = ')'; break;
+		    case '`': vo = '`'; vc = '`'; break;
+		    case '<': vo = '<'; vc = '>'; break;
+		    case '|': vo = '|'; vc = '|'; break;
+		    default: vo = vc = 0; depth = 0; break;
+		    }
+
+		    /*
+		     * Find the end of the current value -- either by
+		     * finding a "vc" char match (and handling
+		     * nesting/escaping of the vo/vc chars).
+		     *
+		     * Then look for ',' or ')' to close the deal.
+		     */
+		    token_end = token_middle;
+		    if (depth > 0)
+			++token_end;
+		    //int depth = 0;
+		    int inesc = 0;
+		    while (*token_end != '\0') {
+			if (inesc) {
+			    inesc = 0;
 			}
-			*key_end = '\0';
+			else if (*token_end == '\\'
+				 && vo && vc
+				 && (*(token_end+1) == vo || *(token_end+1) == vc)) {
+			    inesc = 1;
+			}
+			else {
+			    /* Not in escape; count nesting first. */
+			    if ((token_end != token_middle)
+				&& vc && *token_end == vc) {
+				--depth;
+				if (depth == 0) {
+				    /* Done with this value */
+				    ++token_end;
+				    int oldtoken_end = *token_end;
+				    *token_end = '\0';
+				    vdebug(8,LA_XML,LF_RPC,
+					   "found '%s' = '%s'\n",key,token_middle);
+				    analysis_datum_add_simple_value(datum,key,
+								    token_middle,
+								    0);
+				    *token_end = oldtoken_end;
+				    token_middle = token_end;
+				    key = NULL;
 
-			//fprintf(stdout,"found key = '%s'\n",key);
+				    break;
+				}
+			    }
+			    else if ((token_end != token_middle)
+				     && vo && *token_end == vo)
+				++depth;
+			    else if (!vo && !vc && (*token_end == ','
+						    || *token_end == ')')) {
+				/* Done with this value */
+				int oldtoken_end = *token_end;
+				*token_end = '\0';
+				vdebug(8,LA_XML,LF_RPC,
+				       "found '%s' = '%s'\n",key,token_middle);
+				analysis_datum_add_simple_value(datum,key,
+								token_middle,
+								0);
+				*token_end = oldtoken_end;
+				token_middle = token_end;
+				key = NULL;
 
-			token_middle = key_end + 1;
+				break;
+			    }
+			}
+
+			++token_end;
 		    }
 
-		    for (i = 0; (token_middle + i) < token_end; ++i) {
-			if (token_middle[i] == '{')
-			    ++bcount;
-			else if (token_middle[i] == '}')
-			    --bcount;
-		    }
-		    if (bcount) {
-			token_middle = token_end + 1;
-			continue;
-		    }
-		    *token_end = '\0';
-		    vdebug(8,LA_XML,LF_RPC,
-			   "found '%s' = '%s'\n",key,key_end + 1);
-		    analysis_datum_add_simple_value(datum,key,key_end + 1,0);
-		    token_middle = token_end + 1;
-		    key = NULL;
+		    /*
+		     * When we get here, we're looking for the next ','
+		     * or ')'.
+		     */
+		    token = index(token_end,',');
+		    if (!token)
+			break;
+		    else
+			++token;
+		    //token = token_end;
 		}
-		free(value_str);
+
 	    }
 
 	    monitor_lock_objtype(MONITOR_OBJTYPE_ANALYSIS);
@@ -450,7 +539,7 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
 	}
 
     do_continue:
-	++pbuf_next;
+	pbuf_next += strlen("::RESULT\n");
 	remaining -= (pbuf_next - pbuf);
 	/* Skip to next newline-terminated segment, or break out. */
 	pbuf = pbuf_next;
@@ -459,7 +548,10 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
 	    break;
 	}
 	else {
-	    pbuf_next = strchr(pbuf,'\n');
+	    pbuf_next = strstr(pbuf,"RESULT::");
+	    if (pbuf_next)
+		pbuf_next = strstr(pbuf_next + 1,"::RESULT\n");
+	    //pbuf_next = strchr(pbuf,'\n');
 	    continue;
 	}
     }
