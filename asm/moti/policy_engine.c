@@ -78,6 +78,20 @@ unsigned long **function_prologue = NULL;
 char *res = NULL;
 ADDR syscall_table_vm;
 
+struct pe_argp_state {
+    char *app_file_path;
+    char *recovery_rules_file;
+    int wait_time;
+    int dump_timing;
+
+    int argc;
+    char **argv;
+    /* Grab this from the child parser. */
+    struct target_spec *tspec;
+};
+
+struct pe_argp_state opts;
+
 
 
 int save_sys_call_table_entries() {
@@ -227,7 +241,8 @@ int generate_snapshot() {
     static struct timeval tm2;
     gettimeofday(&tm2, NULL);
     unsigned long long t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    //fprintf(stdout,"INFO: Time taken to pause the target is %llu ms\n", t); 
+    if (opts.dump_timing)
+	fprintf(stderr,"INFO: Time taken to pause the target is %llu ms\n", t); 
 		    
     /* Start making calls to each of the VMI function */ 
      
@@ -240,9 +255,9 @@ int generate_snapshot() {
     }
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    //fprintf(stdout,"INFO: Time taken to get process info is %llu ms\n", t); 
+    if (opts.dump_timing)
+	fprintf(stderr,"INFO: Time taken to get process info is %llu ms\n", t); 
 
-    
     gettimeofday(&tm1, NULL);
     result =  file_info();
     if(result) {
@@ -252,7 +267,8 @@ int generate_snapshot() {
     }
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    //fprintf(stdout,"INFO: Time taken to get file info is %llu ms\n", t); 
+    if (opts.dump_timing)
+	fprintf(stderr,"INFO: Time taken to get file info is %llu ms\n", t); 
 
    /* 
     gettimeofday(&tm1, NULL);
@@ -309,7 +325,8 @@ int generate_snapshot() {
     }
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    //fprintf(stdout,"INFO: Time taken to get syscalltable info is %llu ms\n", t); 
+    if (opts.dump_timing)
+	fprintf(stderr,"INFO: Time taken to get syscalltable info is %llu ms\n", t); 
    
     gettimeofday(&tm1, NULL);
     result = commandline_info();
@@ -319,7 +336,8 @@ int generate_snapshot() {
     }
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    //fprintf(stdout,"INFO: Time taken to get commandline info is %llu ms\n", t); 
+    if (opts.dump_timing)
+	fprintf(stderr,"INFO: Time taken to get commandline info is %llu ms\n", t); 
     
     gettimeofday(&tm1, NULL);
     result = syscall_hooking_info();
@@ -329,7 +347,8 @@ int generate_snapshot() {
     }
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    //fprintf(stdout,"INFO: Time taken to check for hooked system calls is %llu ms\n", t); 
+    if (opts.dump_timing)
+	fprintf(stderr,"INFO: Time taken to check for hooked system calls is %llu ms\n", t); 
    
     
 resume:
@@ -343,31 +362,31 @@ resume:
     }
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    //fprintf(stdout,"INFO: Time taken to resume the target is %llu ms\n", t); 
+    if (opts.dump_timing)
+	fprintf(stderr,"INFO: Time taken to resume the target is %llu ms\n", t); 
 
     return result;
 }
 
 
+#define PE_ARGP_APP_FILE    0x474747
+#define PE_ARGP_REC_FILE    0x474748
+#define PE_ARGP_WAIT_TIME   0x474749
+#define PE_ARGP_DUMP_TIMING 0x47474a
 
-struct psa_argp_state {
-    int argc;
-    char **argv;
-    /* Grab this from the child parser. */
-    struct target_spec *tspec;
-};
-
-struct psa_argp_state opts;
-
-struct argp_option psa_argp_opts[] = {
+struct argp_option pe_argp_opts[] = {
+    { "pe-app-knowledge-file",PE_ARGP_APP_FILE,"FILE",0,"The application knowledge CLIPS file; defaults to ./application_knowledge.cls.",0 },
+    { "pe-recovery-rules-file",PE_ARGP_REC_FILE,"FILE",0,"The recovery rules CLIPS file; defaults to ./recovery_contructs.cls",0 },
+    { "pe-interval",PE_ARGP_WAIT_TIME,"SECONDS",0,"The wait time in between policy engine checks of the domain; defaults to 120 seconds",0 },
+    { "pe-dump-timing",PE_ARGP_DUMP_TIMING,NULL,0,"Dump timing info to stderr.",0 },
         { 0,0,0,0,0,0 },
 };
 
 
 
-error_t psa_argp_parse_opt(int key,char *arg,struct argp_state *state) {
-    struct psa_argp_state *opts = \
-	(struct psa_argp_state *)target_argp_driver_state(state);
+error_t pe_argp_parse_opt(int key,char *arg,struct argp_state *state) {
+    struct pe_argp_state *opts = \
+	(struct pe_argp_state *)target_argp_driver_state(state);
 	    
     switch (key) {
     case ARGP_KEY_ARG:
@@ -396,6 +415,19 @@ error_t psa_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case ARGP_KEY_FINI:
 	return 0;
 
+    case PE_ARGP_APP_FILE:
+	opts->app_file_path = arg;
+	break;
+    case PE_ARGP_REC_FILE:
+	opts->recovery_rules_file = arg;
+	break;
+    case PE_ARGP_WAIT_TIME:
+	opts->wait_time = atoi(arg);
+	break;
+    case PE_ARGP_DUMP_TIMING:
+	opts->dump_timing = 1;
+	break;
+
     default:
 	return ARGP_ERR_UNKNOWN;
     }
@@ -403,16 +435,13 @@ error_t psa_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     return 0;
 }
 
-struct argp psa_argp = {
-        psa_argp_opts,psa_argp_parse_opt,NULL,NULL,NULL,NULL,NULL,
+struct argp pe_argp = {
+        pe_argp_opts,pe_argp_parse_opt,NULL,NULL,NULL,NULL,NULL,
 };
 
 
 int main( int argc, char** argv) {
 
-    int wait_time = 0;
-    char *app_file_path = NULL;
-    char * recovery_rules_file = NULL;
     char recovery_fact_file[100];
     int result = 0;
     char targetstr[80];
@@ -424,21 +453,16 @@ int main( int argc, char** argv) {
 
 
     memset(&opts,0,sizeof(opts));
-    tspec = target_argp_driver_parse(NULL,NULL,argc,argv,TARGET_TYPE_XEN,1);
+    opts.app_file_path = "application_knowledge.cls";
+    opts.recovery_rules_file = "recovery_contructs.cls";
+    opts.wait_time = 120;
+    
+    tspec = target_argp_driver_parse(&pe_argp,&opts,argc,argv,TARGET_TYPE_XEN,1);
     if (!tspec) {
 	fprintf(stdout,"ERROR: Could not parse target arguments!\n");
 	exit(-1);
     }
-	        
-    /*if (opts.argc != 2) {
-	fprintf(stderr,"ERROR: Must supply the 2 arguments.\n 1. Application knowlege file\n 2. Wait time.\n");
-	exit(0);
-    }
-   */
-    app_file_path = "application_knowledge.cls"; //opts.argv[0];
-    recovery_rules_file = "recovery_contructs.cls";
-    wait_time = 120; //atoi(opts.argv[1]);
-    
+
     dwdebug_init();
     target_init();
     atexit(target_fini);
@@ -498,7 +522,7 @@ int main( int argc, char** argv) {
 	
 	fprintf(stdout,"============================ITERATION %d ============================\n",iteration++);
         fprintf(stdout,"INFO: Loading the application level rules\n");
-	result = Load(app_file_path);
+	result = Load(opts.app_file_path);
 	    if(result != 1) {
 	    fprintf(stdout,"ERROR: Failed to load the application rules file\n");
 	    exit(0);
@@ -598,7 +622,7 @@ int main( int argc, char** argv) {
 	// We have to run them through the recovery rules now.
 	
 	//fprintf(stdout,"INFO: Loading the  recovery rules file\n");
-	result = Load(recovery_rules_file);
+	result = Load(opts.recovery_rules_file);
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
 	   exit(0);
@@ -616,8 +640,8 @@ int main( int argc, char** argv) {
 	
 	Clear();
 	fprintf(stdout,"INFO: Clearing up all the facts and rules\n");
-	fprintf(stdout," Sleeping for %d seconds\n", wait_time);
-	sleep(wait_time);
+	fprintf(stdout," Sleeping for %d seconds\n", opts.wait_time);
+	sleep(opts.wait_time);
     }
 
 exit:
