@@ -98,6 +98,12 @@
 	++failures;							\
     }
 
+int __clrangesimple_print(ADDR start,ADDR end,void *data,void *hpriv) {
+    fprintf(stdout,"Range 0x%"PRIxADDR",0x%"PRIxADDR" %s\n",
+	    start,end,(char *)data);
+    return 0;
+}
+
 int main(int argc,char **argv) {
     clrangesimple_t cl = clrangesimple_create();
     char *retval;
@@ -130,10 +136,14 @@ int main(int argc,char **argv) {
     CHECKRANGE(cl,0xff,rc,retval,RANGE(0xff,0x300),failures);
     CHECKRANGE(cl,0x301,rc,retval,RANGE(0x300,0x400),failures);
 
+    clrangesimple_foreach(cl,__clrangesimple_print,NULL);
+
     REMOVERANGE(cl,0x300,end,retval);
 
     retval = NULL;
     CHECKNORANGE(cl,0x301,rc,retval,failures);
+
+    clrangesimple_foreach(cl,__clrangesimple_print,NULL);
 
     clrangesimple_free(cl,NULL);
 
