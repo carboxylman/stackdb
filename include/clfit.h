@@ -111,6 +111,10 @@ int clrangesimple_find(clrangesimple_t *clr,Word_t index,
 /* Removes only datums at *exactly* index. */
 int clrangesimple_remove(clrangesimple_t *clr,Word_t index,
 			 Word_t *end,void **data);
+typedef int (*clrangesimple_foreach_handler)(Word_t start,Word_t end,void *data,
+					     void *hpriv);
+int clrangesimple_foreach(clrangesimple_t clr,
+			  clrangesimple_foreach_handler handler,void *hpriv);
 typedef void (*clrangesimple_free_dtor)(Word_t start,Word_t end,void *data);
 void clrangesimple_free(clrangesimple_t clr,clrangesimple_free_dtor dtor);
 

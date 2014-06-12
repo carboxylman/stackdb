@@ -776,6 +776,31 @@ int clrangesimple_remove(clrangesimple_t *clr,Word_t index,
 	return 1;
 }
 
+int clrangesimple_foreach(clrangesimple_t clr,
+			  clrangesimple_foreach_handler handler,void *hpriv) {
+    Word_t idx = -1;
+    PWord_t pv = NULL;
+    struct clf_rangesimple_data *crd;
+
+    while (1) {
+	pv = NULL;
+	idx += 1;
+	JLF(pv,clr,idx);
+	if (pv == PJERR)
+	    return -1;
+	else if (pv == NULL)
+	    return 0;
+	else {
+	    crd = (struct clf_rangesimple_data *)*pv;
+
+	    if (handler)
+		handler(crd->start,crd->end,crd->data,hpriv);
+	}
+    }
+
+    return 0;
+}
+
 void clrangesimple_free(clrangesimple_t clr,clrangesimple_free_dtor dtor) {
     struct clf_rangesimple_data *crd = NULL;
     PWord_t pv;
