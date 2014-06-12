@@ -293,6 +293,7 @@ result_t retaddr_save(struct probe *probe,tid_t tid,void *handler_data,
     REGVAL sp;
     REGVAL ip;
     ADDR *retaddr;
+    char buf[512];
 
     fflush(stderr);
     fflush(stdout);
@@ -323,45 +324,28 @@ result_t retaddr_save(struct probe *probe,tid_t tid,void *handler_data,
 
     struct bsymbol *bsymbol = target_lookup_sym_addr(t,ip);
     if (!bsymbol) {
+	target_thread_snprintf(t,tid,buf,sizeof(buf),10,",","=");
 	fprintf(stdout,
 		"(SAVE) call 0x%"PRIxADDR" (<UNKNOWN>)"
 		" (from within %s): retaddr = 0x%"PRIxADDR
 		" (skipping unknown function!)"
-		" (handler_data = %s) (stack depth = %d)\n",
+		" (handler_data = %s) (stack depth = %d) (thread = %s)\n",
 		ip,bsymbol_get_name(probe->bsymbol),*retaddr,
-		(char *)handler_data,array_list_len(shadow_stack));
+		(char *)handler_data,array_list_len(shadow_stack),buf);
 	free(retaddr);
-	fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
-
-#ifdef ENABLE_XENSUPPORT
-	if (target_type(t) == TARGET_TYPE_XEN) {
-	    struct value *value = linux_load_current_task(t,0);
-	    fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
-	    value_free(value);
-	}
-	fflush(stderr);
-	fflush(stdout);
-#endif
 	return RESULT_SUCCESS;
     }
     else {
+	target_thread_snprintf(t,tid,buf,sizeof(buf),10,",","=");
 	fprintf(stdout,
 		"(SAVE) call 0x%"PRIxADDR" (%s)"
 		" (from within %s): retaddr = 0x%"PRIxADDR
-		" (handler_data = %s) (stack depth = %d)\n",
+		" (handler_data = %s) (stack depth = %d) (thread = %s)\n",
 		ip,bsymbol_get_name(bsymbol),
 		bsymbol_get_name(probe->bsymbol),
-		*retaddr,(char *)handler_data,array_list_len(shadow_stack));
-	
-#ifdef ENABLE_XENSUPPORT
-	if (target_type(t) == TARGET_TYPE_XEN) {
-	    struct value *value = linux_load_current_task(t,0);
-	    fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
-	    value_free(value);
-	}
+		*retaddr,(char *)handler_data,array_list_len(shadow_stack),buf);
 	fflush(stderr);
 	fflush(stdout);
-#endif
     }
 
     fflush(stderr);
@@ -384,6 +368,7 @@ result_t retaddr_check(struct probe *probe,tid_t tid,void *handler_data,
     REGVAL sp;
     ADDR newretaddr;
     ADDR *oldretaddr = NULL;
+    char buf[512];
 
     fflush(stderr);
     fflush(stdout);
@@ -413,33 +398,26 @@ result_t retaddr_check(struct probe *probe,tid_t tid,void *handler_data,
     }
 
     if (newretaddr != *oldretaddr) {
+	target_thread_snprintf(probe->target,tid,buf,sizeof(buf),10,",","=");
 	fprintf(stdout,
 		"(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
 		" oldretaddr = 0x%"PRIxADDR
-		" (handler_data = %s) (stack depth = %d) ---- STACK CORRUPTION!\n",
+		" (handler_data = %s) (stack depth = %d) (thread = %s)"
+		" ---- STACK CORRUPTION!\n",
 		bsymbol_get_name(probe->bsymbol),probe_addr(base),
 		newretaddr,*oldretaddr,
-		(char *)handler_data,array_list_len(shadow_stack));
+		(char *)handler_data,array_list_len(shadow_stack),buf);
     }
     else {
+	target_thread_snprintf(probe->target,tid,buf,sizeof(buf),10,",","=");
 	fprintf(stdout,
 		"(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
 		" oldretaddr = 0x%"PRIxADDR
-		" (handler_data = %s) (stack depth = %d)\n",
+		" (handler_data = %s) (stack depth = %d) (thread = %s)\n",
 		bsymbol_get_name(probe->bsymbol),probe_addr(base),
 		newretaddr,*oldretaddr,
-		(char *)handler_data,array_list_len(shadow_stack));
+		(char *)handler_data,array_list_len(shadow_stack),buf);
     }
-
-#ifdef ENABLE_XENSUPPORT
-    if (target_type(probe->target) == TARGET_TYPE_XEN) {
-	struct value *value = linux_load_current_task(probe->target,0);
-	fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(probe->target,value));
-	value_free(value);
-    }
-    fflush(stderr);
-    fflush(stdout);
-#endif
 
     if (doit) {
 	if (!target_write_addr(probe->target,(ADDR)sp,sizeof(ADDR),
@@ -1125,7 +1103,7 @@ int main(int argc,char **argv) {
     until_symbol = opts.until_symbol;
 
     if (opts.raw) {
-	word = malloc(t->wordsize);
+	word = malloc(t->arch->wordsize);
 	for (i = 0; i < opts.argc; ++i) {
 	    addrs[i] = strtoll(opts.argv[i],NULL,16);
 	}
@@ -1751,10 +1729,10 @@ int main(int argc,char **argv) {
 	    }
 	    else if (word) {
 		for (i = 0; i < opts.argc; ++i) {
-		    if (target_read_addr(t,addrs[i],t->wordsize,
+		    if (target_read_addr(t,addrs[i],t->arch->wordsize,
 					 (unsigned char *)word) != NULL) {
 			printf("0x%" PRIxADDR " = ",addrs[i]);
-			for (j = 0; j < t->wordsize; ++j) {
+			for (j = 0; j < t->arch->wordsize; ++j) {
 			    printf("%02hhx",word[j]);
 			}
 			printf("\n");

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2013 The University of Utah
+ * Copyright (c) 2011-2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -263,7 +263,7 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 	    case 2:  wordsize = 2; break;
 	    case 3:  wordsize = 4; break;
 	    case 4:  wordsize = 8; break;
-	    default: wordsize = debugfile->binfile->wordsize;
+	    default: wordsize = debugfile->binfile->arch->wordsize;
 	    }
 
 	    const unsigned char *base = readp;
@@ -870,7 +870,7 @@ int dwarf_load_cfa(struct debugfile *debugfile,
 	else
 	    cie_id = read_8ubyte_unaligned_inc(obo,readp);
 
-	wordsize = debugfile->binfile->wordsize;
+	wordsize = debugfile->binfile->arch->wordsize;
 
 	/* Read a CIE. */
 	if (cie_id == (ddi->is_eh_frame ? 0 : DW_CIE_ID_64)) {
@@ -963,7 +963,7 @@ int dwarf_load_cfa(struct debugfile *debugfile,
 		      unsigned int encoding = *readp++;
 		      personality = 0;
 		      readp = __read_encoded(encoding,
-					     debugfile->binfile->wordsize,
+					     debugfile->binfile->arch->wordsize,
 					     readp,readp - 1 + auglen,
 					     &personality,dbg);
 		    }
@@ -1037,7 +1037,7 @@ int dwarf_load_cfa(struct debugfile *debugfile,
 	    case 2:  wordsize = 2; break;
 	    case 3:  wordsize = 4; break;
 	    case 4:  wordsize = 8; break;
-	    default: wordsize = debugfile->binfile->wordsize;
+	    default: wordsize = debugfile->binfile->arch->wordsize;
 	    }
 
 	    const unsigned char *base = readp;

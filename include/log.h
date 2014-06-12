@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -91,6 +91,7 @@ typedef enum log_flag_bits_lib {
     LFB_MONITOR       = 5,
     LFB_ROP           = 6,
     LFB_CFI           = 7,
+    LFB_REGCACHE      = 8,
 } log_flag_bits_lib_t;
 typedef enum log_flags_lib {
     LF_CLMATCH        = 1 << LFB_CLMATCH,
@@ -101,6 +102,7 @@ typedef enum log_flags_lib {
     LF_MONITOR        = 1 << LFB_MONITOR,
     LF_ROP            = 1 << LFB_ROP,
     LF_CFI            = 1 << LFB_CFI,
+    LF_REGCACHE       = 1 << LFB_REGCACHE,
 } log_flags_lib_t;
 
 typedef enum log_flag_bits_debug {
@@ -151,6 +153,8 @@ typedef enum log_flag_bits_target {
     LFB_THREAD        = 13,
     LFB_OS            = 14,
     LFB_PROCESS       = 15,
+    LFB_APPLICATION   = 16,
+    LFB_OSLINUX       = 20,
 } log_flag_bits_target_t;
 typedef enum log_flags_target {
     LF_TARGET         = 1 << LFB_TARGET,
@@ -169,6 +173,8 @@ typedef enum log_flags_target {
     LF_THREAD         = 1 << LFB_THREAD,
     LF_OS             = 1 << LFB_OS,
     LF_PROCESS        = 1 << LFB_PROCESS,
+    LF_APPLICATION    = 1 << LFB_APPLICATION,
+    LF_OSLINUX        = 1 << LFB_OSLINUX,
 } log_flags_target_t;
 
 typedef enum log_flag_bits_probe {
@@ -220,7 +226,7 @@ typedef enum log_flags_ {
  */
 /* Set every last bit for a specific area. */
 #define LF_ALL        INT_MAX
-#define LF_L_ALL (LF_CLMATCH | LF_CLRANGE | LF_RFILTER | LF_WAITPIPE | LF_EVLOOP | LF_MONITOR | LF_ROP | LF_CFI)
+#define LF_L_ALL (LF_CLMATCH | LF_CLRANGE | LF_RFILTER | LF_WAITPIPE | LF_EVLOOP | LF_MONITOR | LF_ROP | LF_CFI | LF_REGCACHE)
 #define LF_D_ALL (LF_DFILE | LF_SYMBOL | LF_SCOPE | LF_DLOC \
 		  | LF_DLOOKUP | LF_DWARF | LF_DWARFATTR	\
 		  | LF_DWARFSOPS | LF_DWARFOPS | LF_DCFA | LF_DOTHER \

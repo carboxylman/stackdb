@@ -16,6 +16,8 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include "config.h"
+
 #include <errno.h>
 #include <assert.h>
 #include <ctype.h>
@@ -31,19 +33,17 @@
 #define UNIX_PATH_MAX (size_t)sizeof(((struct sockaddr_un *) 0)->sun_path)
 #endif
 #include <libgen.h>
-
 #include <endian.h>
-
 #include <gelf.h>
 #include <elf.h>
 #include <libelf.h>
 #include <argp.h>
 
-#include "config.h"
 #include "common.h"
-
+#include "arch.h"
+#include "arch_x86.h"
+#include "arch_x86_64.h"
 #include "evloop.h"
-
 #include "binfile.h"
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
@@ -52,12 +52,12 @@
 #include "target_os.h"
 #include "probe_api.h"
 
-#include <xenctrl.h>
-#include <xs.h>
 #ifdef ENABLE_XENACCESS
 #include <xenaccess/xenaccess.h>
 #include <xenaccess/xa_private.h>
 #endif
+#include <xenctrl.h>
+#include <xs.h>
 
 #include "target_xen_vm.h"
 #include "target_xen_vm_vmp.h"
@@ -79,11 +79,8 @@ static int xen_vm_fini(struct target *target);
 static int xen_vm_kill(struct target *target,int sig);
 static int xen_vm_loadspaces(struct target *target);
 static int xen_vm_loadregions(struct target *target,struct addrspace *space);
-static int xen_vm_updateregions(struct target *target,
-				struct addrspace *space);
 static int xen_vm_loaddebugfiles(struct target *target,struct addrspace *space,
 				 struct memregion *region);
-static target_kind_t xen_vm_loadkind(struct target *target);
 static int xen_vm_postloadinit(struct target *target);
 static int xen_vm_postopened(struct target *target);
 static int xen_vm_set_active_probing(struct target *target,
@@ -121,7 +118,7 @@ static unsigned long xen_vm_write(struct target *target,ADDR addr,
 /*
  * NB: initially, we will use VM phys addrs here.  We could have also
  * used Xen machine addrs; but for now, given the current
- * xenaccess/libvmi code, using VM phys addrs is easiest.  Later on,
+ * libvmi code, using VM phys addrs is easiest.  Later on,
  * machine addrs will probably be *faster*.  The risk with that approach
  * is if the VM pfn/mfn mapping ever changes out from under us.
  */
@@ -131,9 +128,6 @@ static unsigned char *xen_vm_read_phys(struct target *target,ADDR paddr,
 				       unsigned long length,unsigned char *buf);
 static unsigned long xen_vm_write_phys(struct target *target,ADDR paddr,
 				       unsigned long length,unsigned char *buf);
-static char *xen_vm_reg_name(struct target *target,REG reg);
-static REG xen_vm_dwregno_targetname(struct target *target,char *name);
-static REG xen_vm_dw_reg_no(struct target *target,common_reg_t reg);
 
 static tid_t xen_vm_gettid(struct target *target);
 static void xen_vm_free_thread_state(struct target *target,void *state);
@@ -148,11 +142,12 @@ static int xen_vm_pause_thread(struct target *target,tid_t tid,int nowait);
 static int xen_vm_flush_thread(struct target *target,tid_t tid);
 static int xen_vm_flush_current_thread(struct target *target);
 static int xen_vm_flush_all_threads(struct target *target);
-static int xen_vm_invalidate_all_threads(struct target *target);
+static int xen_vm_invalidate_thread(struct target *target,
+				    struct target_thread *tthread);
 static int xen_vm_thread_snprintf(struct target_thread *tthread,
 				  char *buf,int bufsiz,
 				  int detail,char *sep,char *key_val_sep);
-
+/*
 static REGVAL xen_vm_read_reg(struct target *target,tid_t tid,REG reg);
 static int xen_vm_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value);
 static GHashTable *xen_vm_copy_registers(struct target *target,tid_t tid);
@@ -161,6 +156,7 @@ REGVAL xen_vm_read_reg_tidctxt(struct target *target,
 int xen_vm_write_reg_tidctxt(struct target *target,
 			     tid_t tid,thread_ctxt_t tidctxt,
 			     REG reg,REGVAL value);
+*/
 static REG xen_vm_get_unused_debug_reg(struct target *target,tid_t tid);
 static int xen_vm_set_hw_breakpoint(struct target *target,tid_t tid,REG num,ADDR addr);
 static int xen_vm_set_hw_watchpoint(struct target *target,tid_t tid,REG num,ADDR addr,
@@ -189,7 +185,15 @@ int xen_vm_disable_feature(struct target *target,int feature);
 int xen_vm_instr_can_switch_context(struct target *target,ADDR addr);
 
 /* Internal prototypes. */
-static int __xen_vm_cr3(struct target *target,tid_t tid,uint64_t *cr3);
+static int __xen_vm_pgd(struct target *target,tid_t tid,uint64_t *pgd);
+int __xen_vm_vcpu_to_thread_regcache(struct target *target,
+				     struct vcpu_guest_context *context,
+				     struct target_thread *tthread,
+				     thread_ctxt_t tctxt);
+int __xen_vm_thread_regcache_to_vcpu(struct target *target,
+				     struct target_thread *tthread,
+				     thread_ctxt_t tctxt,
+				     struct vcpu_guest_context *context);
 static result_t xen_vm_active_memory_handler(struct probe *probe,tid_t tid,
 					     void *handler_data,
 					     struct probe *trigger,
@@ -273,7 +277,6 @@ struct target_ops xen_vm_ops = {
     .loadspaces = xen_vm_loadspaces,
     .loadregions = xen_vm_loadregions,
     .loaddebugfiles = xen_vm_loaddebugfiles,
-    .loadkind = xen_vm_loadkind,
     .postloadinit = xen_vm_postloadinit,
     .postopened = xen_vm_postopened,
     .set_active_probing = xen_vm_set_active_probing,
@@ -299,9 +302,6 @@ struct target_ops xen_vm_ops = {
     .addr_v2p = xen_vm_addr_v2p,
     .read_phys = xen_vm_read_phys,
     .write_phys = xen_vm_write_phys,
-    .regname = xen_vm_reg_name,
-    .dwregno_targetname = xen_vm_dwregno_targetname,
-    .dwregno = xen_vm_dw_reg_no,
 
     .gettid = xen_vm_gettid,
     .free_thread_state = xen_vm_free_thread_state,
@@ -314,17 +314,18 @@ struct target_ops xen_vm_ops = {
     .flush_thread = xen_vm_flush_thread,
     .flush_current_thread = xen_vm_flush_current_thread,
     .flush_all_threads = xen_vm_flush_all_threads,
-    .invalidate_all_threads = xen_vm_invalidate_all_threads,
+    .invalidate_thread = xen_vm_invalidate_thread,
     .thread_snprintf = xen_vm_thread_snprintf,
 
     .attach_evloop = xen_vm_attach_evloop,
     .detach_evloop = xen_vm_detach_evloop,
 
-    .readreg = xen_vm_read_reg,
-    .writereg = xen_vm_write_reg,
-    .copy_registers = xen_vm_copy_registers,
-    .readreg_tidctxt = xen_vm_read_reg_tidctxt,
-    .writereg_tidctxt = xen_vm_write_reg_tidctxt,
+    .readreg = target_regcache_readreg,
+    .writereg = target_regcache_writereg,
+    .copy_registers = target_regcache_copy_registers,
+    .readreg_tidctxt = target_regcache_readreg_tidctxt,
+    .writereg_tidctxt = target_regcache_writereg_tidctxt,
+
     .get_unused_debug_reg = xen_vm_get_unused_debug_reg,
     .set_hw_breakpoint = xen_vm_set_hw_breakpoint,
     .set_hw_watchpoint = xen_vm_set_hw_watchpoint,
@@ -359,7 +360,6 @@ struct argp_option xen_vm_argp_opts[] = {
           "virtual CPU info.",-4 },
     { "configfile",'c',"FILE",0,"The Xen config file.",-4 },
     { "replaydir",'r',"DIR",0,"The XenTT replay directory.",-4 },
-    { "xenlib-debug",'x',"LEVEL",0,"Increase/set the XenAccess/OpenVMI debug level.",-4 },
     { "no-use-multiplexer",'M',NULL,0,"Do not spawn/attach to the Xen multiplexer server",-4 },
     { "dominfo-timeout",'T',"MICROSECONDS",0,"If libxc gets a \"NULL\" dominfo status, the number of microseconds we should keep retrying",-4 },
     { 0,0,0,0,0,0 }
@@ -410,7 +410,7 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	av[j++] = strdup(xspec->kernel_filename);
     }
     if (xspec->no_hw_debug_reg_clear) {
-	av[j++] = strdup("--clear-libvmi-caches-each-rw");
+	av[j++] = strdup("--no-clear-hw-debug-regs");
     }
     if (xspec->no_hvm_setcontext) {
 	av[j++] = strdup("--no-hvm-setcontext");
@@ -541,19 +541,6 @@ error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case 'r':
 	xspec->replay_dir = strdup(arg);
 	break;
-    case 'x':
-#if defined(ENABLE_XENACCESS)
-#if defined(XA_DEBUG)
-	if (arg)
-	    xa_set_debug_level(atoi(arg));
-	else
-	    xa_set_debug_level(xa_get_debug_level() + 1);
-#endif
-#else
-	verror("Xen support not compiled in!\n");
-	return EINVAL;
-#endif
-	break;
     case 'M':
 	xspec->no_use_multiplexer = 1;
 	break;
@@ -619,13 +606,7 @@ struct target *xen_vm_attach(struct target_spec *spec,
     unsigned int size;
     unsigned int i;
     int have_id = 0;
-    unsigned int slen;
     char *domain;
-    char pbuf[PATH_MAX];
-    char *k,*v;
-    FILE *cf;
-    char *major = NULL,*minor = NULL,*patch = NULL;
-    REFCNT trefcnt;
 
     domain = xspec->domain;
     
@@ -690,22 +671,32 @@ struct target *xen_vm_attach(struct target_spec *spec,
 		if (errno) {
 		    if (have_id) {
 			free(tmp);
+			tmp = NULL;
 			break;
 		    }
-		    verror("matching domain name for %s; but bad domain id %s: %s\n",
-			   tmp,domains[i],strerror(errno));
-		    free(tmp);
-		    goto errout;
+		    else {
+			verror("matching domain name for %s; but bad"
+			       " domain id %s: %s\n",
+			       tmp,domains[i],strerror(errno));
+			free(tmp);
+			tmp = NULL;
+			goto errout;
+		    }
 		}
-		if (have_id)
-		    free(xstate->name);
-		xstate->name = strdup(tmp);
-		have_id = 1;
-		vdebug(4,LA_TARGET,LF_XV,"dom %d (from %s) matches id\n",
-		       xstate->id,domain);
+		else {
+		    if (have_id)
+			free(xstate->name);
+		    xstate->name = strdup(tmp);
+		    have_id = 1;
+		    vdebug(4,LA_TARGET,LF_XV,"dom %d (from %s) matches id\n",
+			   xstate->id,domain);
+		}
 	    }
-	    free(tmp);
-        }
+	    else if (tmp) {
+		free(tmp);
+		tmp = NULL;
+	    }
+	}
 
 	free(domains);
 	domains = NULL;
@@ -729,35 +720,54 @@ struct target *xen_vm_attach(struct target_spec *spec,
     /* Now try to find vmpath. */
     snprintf(buf,PATH_MAX,"/local/domain/%d/vm",xstate->id);
     xstate->vmpath = xs_read(xsh,xth,buf,NULL);
-    if (!xstate->vmpath) 
+    if (!xstate->vmpath)
 	vwarn("could not read vmpath for dom %d; may cause problems!\n",
 	      xstate->id);
-
-    if (xstate->vmpath) {
+    else {
 	snprintf(buf,PATH_MAX,"%s/image/ostype",xstate->vmpath);
 	xstate->ostype = xs_read(xsh,xth,buf,NULL);
-	if (!xstate->ostype) 
+	if (!xstate->ostype) {
 	    vwarn("could not read ostype for dom %d; may cause problems!\n",
 		  xstate->id);
-	else if (strcmp(xstate->ostype,"hvm") == 0)
+	    g_hash_table_insert(target->config,strdup("VM_TYPE"),
+				strdup("paravirt"));
+	}
+	else if (strcmp(xstate->ostype,"hvm") == 0) {
 	    xstate->hvm = 1;
-    }
+	    g_hash_table_insert(target->config,strdup("VM_TYPE"),
+				strdup("hvm"));
+	}
+	else {
+	    g_hash_table_insert(target->config,strdup("OS_TYPE"),
+				strdup(xstate->ostype));
+	    g_hash_table_insert(target->config,strdup("VM_TYPE"),
+				strdup("paravirt"));
+	}
 
-    if (xstate->vmpath) {
 	snprintf(buf,PATH_MAX,"%s/image/kernel",xstate->vmpath);
 	xstate->kernel_filename = xs_read(xsh,xth,buf,NULL);
-	if (!xstate->kernel_filename) 
+	if (!xstate->kernel_filename)
 	    vwarn("could not read kernel for dom %d; may cause problems!\n",
 		  xstate->id);
+	else {
+	    g_hash_table_insert(target->config,strdup("OS_KERNEL_FILENAME"),
+				strdup(xstate->kernel_filename));
+	}
     }
 
     if (xspec->kernel_filename) {
 	vdebug(1,LA_TARGET,LF_XV,
 	       "using kernel filename %s (overrides %s from xenstore)\n",
-	       xspec->kernel_filename,xstate->kernel_filename);
+	       xspec->kernel_filename,xstate->kernel_filename ? xstate->kernel_filename : "''");
+
 	if (xstate->kernel_filename)
 	    free(xstate->kernel_filename);
+
 	xstate->kernel_filename = strdup(xspec->kernel_filename);
+
+	g_hash_table_remove(target->config,"OS_KERNEL_FILENAME");
+	g_hash_table_insert(target->config,strdup("OS_KERNEL_FILENAME"),
+			    strdup(xstate->kernel_filename));
     }
 
     if (xsh) {
@@ -767,6 +777,31 @@ struct target *xen_vm_attach(struct target_spec *spec,
 
     free(buf);
     buf = NULL;
+
+    /*
+     * Try to infer the personality.
+     */
+    if (!target->personality_ops
+	&& xstate->kernel_filename
+	&& (strstr(xstate->kernel_filename,"inux")
+	    || strstr(xstate->kernel_filename,"inuz"))) {
+	if (target_personality_attach(target,"os_linux_generic",NULL) == 0) {
+	    vdebug(3,LA_TARGET,LF_XV,
+		   "autoinitialized the os_linux_generic personality!\n");
+	}
+	else {
+	    verror("failed to autoinitialize the os_linux_generic personality!\n");
+	    goto errout;
+	}
+    }
+    else {
+	vwarn("cannot initialize a personality!\n");
+    }
+
+    target->live = 1;
+    target->writeable = 1;
+    target->mmapable = 0; /* XXX: change this once we get mmap API
+			     worked out. */
 
     /*
      * Now load up our {xa|vmi}_instance as much as we can now; we'll
@@ -789,246 +824,8 @@ struct target *xen_vm_attach(struct target_spec *spec,
     }
 #endif
 
-    target->live = 1;
-    target->writeable = 1;
-    target->mmapable = 0; /* XXX: change this once we get mmap API
-			     worked out. */
-
-    if (xstate->kernel_filename) {
-	/* First, parse out its version.  We look for the first number
-	 * followed by a dot.
-	 */
-	slen = strlen(xstate->kernel_filename);
-	for (i = 0; i < slen; ++i) {
-	    if (isdigit(xstate->kernel_filename[i])
-		&& (i + 1) < slen
-		&& xstate->kernel_filename[i + 1] == '.') {
-		xstate->kernel_version = &xstate->kernel_filename[i];
-		break;
-	    }
-	}
-
-	if (!xstate->kernel_version) {
-	    verror("could not parse kernel version info for %s!\n",
-		   xstate->kernel_filename);
-	    goto errout;
-	}
-
-	/*
-	 * Figure out where the real ELF file is.  We look in four
-	 * places:
-	 *   /usr/lib/debug/lib/modules/<kernel_version>/vmlinux
-	 *   /usr/lib/debug/boot/vmlinux-<kernel_version>
-	 *   /boot/vmlinux-<kernel_version>
-	 *   /boot/vmlinux-syms-<kernel_version> (old A3 style)
-	 */
-	xstate->kernel_elf_filename = malloc(PATH_MAX);
-	xstate->kernel_elf_filename[0] = '\0';
-
-	if (xstate->kernel_elf_filename[0] == '\0') {
-	    snprintf(xstate->kernel_elf_filename,PATH_MAX,
-		     "%s/usr/lib/debug/lib/modules/%s/vmlinux",
-		     (target->spec->debugfile_root_prefix)		\
-		         ? target->spec->debugfile_root_prefix : "",
-		     xstate->kernel_version);
-	    if (access(xstate->kernel_elf_filename,R_OK))
-		xstate->kernel_elf_filename[0] = '\0';
-	}
-	if (xstate->kernel_elf_filename[0] == '\0') {
-	    snprintf(xstate->kernel_elf_filename,PATH_MAX,
-		     "%s/usr/lib/debug/boot/vmlinux-%s",
-		     (target->spec->debugfile_root_prefix)		\
-		         ? target->spec->debugfile_root_prefix : "",
-		     xstate->kernel_version);
-	    if (access(xstate->kernel_elf_filename,R_OK))
-		xstate->kernel_elf_filename[0] = '\0';
-	}
-	if (xstate->kernel_elf_filename[0] == '\0') {
-	    snprintf(xstate->kernel_elf_filename,PATH_MAX,
-		     "%s/boot/vmlinux-%s",
-		     (target->spec->debugfile_root_prefix)		\
-		         ? target->spec->debugfile_root_prefix : "",
-		     xstate->kernel_version);
-	    if (access(xstate->kernel_elf_filename,R_OK))
-		xstate->kernel_elf_filename[0] = '\0';
-	}
-	if (xstate->kernel_elf_filename[0] == '\0') {
-	    snprintf(xstate->kernel_elf_filename,PATH_MAX,
-		     "%s/boot/vmlinux-syms-%s",
-		     (target->spec->debugfile_root_prefix)		\
-		         ? target->spec->debugfile_root_prefix : "",
-		     xstate->kernel_version);
-	    if (access(xstate->kernel_elf_filename,R_OK))
-		xstate->kernel_elf_filename[0] = '\0';
-	}
-
-	if (xstate->kernel_elf_filename[0] == '\0') {
-	    verror("could not find vmlinux binary for %s!\n",
-		   xstate->kernel_version);
-	    goto errout;
-	}
-
-	/*
-	 * Figure out where the System.map file is.  We look in two
-	 * places:
-	 *   /lib/modules/<kernel_version>/System.map 
-	 *   /boot/System.map-<kernel_version>
-	 */
-	xstate->kernel_sysmap_filename = malloc(PATH_MAX);
-	xstate->kernel_sysmap_filename[0] = '\0';
-
-	if (xstate->kernel_sysmap_filename[0] == '\0') {
-	    snprintf(xstate->kernel_sysmap_filename,PATH_MAX,
-		     "%s/lib/modules/%s/System.map",
-		     (target->spec->debugfile_root_prefix)		\
-		         ? target->spec->debugfile_root_prefix : "",
-		     xstate->kernel_version);
-	    if (access(xstate->kernel_sysmap_filename,R_OK))
-		xstate->kernel_sysmap_filename[0] = '\0';
-	}
-	if (xstate->kernel_sysmap_filename[0] == '\0') {
-	    snprintf(xstate->kernel_sysmap_filename,PATH_MAX,
-		     "%s/boot/System.map-%s",
-		     (target->spec->debugfile_root_prefix)		\
-		         ? target->spec->debugfile_root_prefix : "",
-		     xstate->kernel_version);
-	    if (access(xstate->kernel_sysmap_filename,R_OK))
-		xstate->kernel_sysmap_filename[0] = '\0';
-	}
-
-	if (xstate->kernel_sysmap_filename[0] == '\0') {
-	    verror("could not find System.map file for %s!\n",
-		   xstate->kernel_version);
-	    goto errout;
-	}
-
-	/* Figure out where the modules are. */
-	if ((tmp = strstr(xstate->kernel_filename,"vmlinuz-"))) {
-	    xstate->kernel_module_dir = malloc(PATH_MAX);
-	    snprintf(xstate->kernel_module_dir,PATH_MAX,
-		     "/lib/modules/%s",tmp+strlen("vmlinuz-"));
-	}
-
-	if (sscanf(xstate->kernel_version,"%m[0-9].%m[0-9].%m[0-9]",
-		   &major,&minor,&patch) == 3) {
-	    g_hash_table_insert(target->config,strdup("__VERSION_MAJOR"),major);
-	    g_hash_table_insert(target->config,strdup("__VERSION_MINOR"),minor);
-	    g_hash_table_insert(target->config,strdup("__VERSION_PATCH"),patch);
-	}
-	else {
-	    if (major) 
-		free(major);
-	    if (minor)
-		free(minor);
-	    if (patch)
-		free(patch);
-	}
-
-	/*
-	 * Load the config file.  We look only in /boot .
-	 */
-	snprintf(pbuf,sizeof(pbuf),"/boot/config-%s",xstate->kernel_version);
-	if (access(pbuf,R_OK) == 0) {
-	    cf = fopen(pbuf,"r");
-	    if (!cf) 
-		verror("fopen(%s): %s\n",pbuf,strerror(errno));
-	    else {
-		/* scanf to look for normal lines. */
-		while (1) {
-		    if (!fgets(pbuf,sizeof(pbuf),cf))
-			break;
-		    if (*pbuf == '#')
-			continue;
-
-		    k = v = NULL;
-		    if (sscanf(pbuf,"%m[^ \t=]=\"%ms\"",&k,&v) == 2) {
-			g_hash_table_insert(target->config,k,v);
-			continue;
-		    }
-		    else {
-			if (k)
-			    free(k);
-			if (v) 
-			    free(v);
-		    }
-
-		    k = v = NULL;
-		    if (sscanf(pbuf,"%m[^ \t=]=%ms",&k,&v) == 2) {
-			g_hash_table_insert(target->config,k,v);
-			continue;
-		    }
-		    else {
-			if (k)
-			    free(k);
-			if (v) 
-			    free(v);
-		    }
-		}
-		fclose(cf);
-	    }
-	}
-    }
-
-    if (!xstate->kernel_elf_filename) {
-	verror("could not infer kernel ELF file (vmlinux) from %s; aborting!\n",
-	       xstate->kernel_filename);
-	goto errout;
-    }
-
-    /* Then grab stuff from the ELF binary itself. */
-    target->binfile = 
-	binfile_open(xstate->kernel_elf_filename,
-		     target->spec->debugfile_root_prefix,NULL);
-    if (!target->binfile) {
-	verror("binfile_open %s: %s\n",
-	       xstate->kernel_elf_filename,strerror(errno));
-	goto errout;
-    }
-
-    RHOLD(target->binfile,target);
-    /* Drop the self-ref that binfile_open held on our behalf. */
-    RPUT(target->binfile,binfile,target->binfile,trefcnt);
-
-    target->wordsize = target->binfile->wordsize;
-    target->endian = target->binfile->endian;
-    target->ptrsize = target->wordsize;
-
-    vdebug(3,LA_TARGET,LF_XV,
-	   "loaded ELF arch info for %s (wordsize=%d;endian=%s\n",
-	   xstate->kernel_elf_filename,target->wordsize,
-	   (target->endian == DATA_LITTLE_ENDIAN ? "LSB" : "MSB"));
-
-    /* Which register is the fbreg is dependent on host cpu type, not
-     * target cpu type.
-     */
-#if __WORDSIZE == 64
-    target->fbregno = 6;
-    target->spregno = 7;
-    target->ipregno = 16;
-#else
-    target->fbregno = 5;
-    target->spregno = 4;
-    target->ipregno = 8;
-#endif
-
-    target->breakpoint_instrs = malloc(1);
-    *(char *)(target->breakpoint_instrs) = 0xcc;
-    target->breakpoint_instrs_len = 1;
-    target->breakpoint_instr_count = 1;
-
-    target->ret_instrs = malloc(1);
-    /* RET */
-    *(char *)(target->ret_instrs) = 0xc3;
-    target->ret_instrs_len = 1;
-    target->ret_instr_count = 1;
-
-    target->full_ret_instrs = malloc(2);
-    /* LEAVE */
-    *(char *)(target->full_ret_instrs) = 0xc9;
-    /* RET */
-    *(((char *)(target->full_ret_instrs))+1) = 0xc3;
-    target->full_ret_instrs_len = 2;
-    target->full_ret_instr_count = 2;
+    /* Our threads can have two contexts -- kernel and user spaces. */
+    target->max_thread_ctxt = THREAD_CTXT_USER;
 
     if (evloop && xstate->evloop_fd < 0) {
 	/*
@@ -1036,9 +833,6 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	 */
 	target->evloop = evloop;
     }
-
-    xstate->task_struct_addr_to_thread = 
-	g_hash_table_new(g_direct_hash,g_direct_equal);
 
     vdebug(5,LA_TARGET,LF_XV,"opened dom %d\n",xstate->id);
 
@@ -1051,30 +845,27 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	}
 	free(domains);
     }
-    if (xstate->task_struct_addr_to_thread) 
-	g_hash_table_destroy(xstate->task_struct_addr_to_thread);
-    if (xstate->vmpath)
+    if (xstate->vmpath) {
 	free(xstate->vmpath);
-    if (xstate->ostype)
+	xstate->vmpath = NULL;
+    }
+    if (xstate->ostype) {
 	free(xstate->ostype);
-    if (xstate->kernel_filename)
-	free(xstate->kernel_filename);
-    if (xstate->kernel_elf_filename)
-	free(xstate->kernel_elf_filename);
-    if (xstate->kernel_sysmap_filename)
-	free(xstate->kernel_sysmap_filename);
-    if (xstate->kernel_module_dir)
-	free(xstate->kernel_module_dir);
-    if (xstate->name)
+	xstate->ostype = NULL;
+    }
+    if (xstate->name) {
 	free(xstate->name);
+	xstate->name = NULL;
+    }
     if (xsh)
 	xs_daemon_close(xsh);
-    if (xstate->default_tlctxt)
-	target_location_ctxt_free(xstate->default_tlctxt);
-    if (xstate)
+    if (xstate) {
 	free(xstate);
+	if (target)
+	    target->state = NULL;
+    }
     if (target)
-	free(target);
+	target_free(target);
 
     return NULL;
 }
@@ -1153,7 +944,7 @@ static int xen_vm_load_dominfo(struct target *target) {
 	 */
 	if (unlikely(!xstate->live_shinfo)) {
 	    xstate->live_shinfo = 
-		xc_map_foreign_range(xc_handle,xstate->id,PAGE_SIZE,PROT_READ,
+		xc_map_foreign_range(xc_handle,xstate->id,__PAGE_SIZE,PROT_READ,
 				     xstate->dominfo.shared_info_frame);
 	    if (!xstate->live_shinfo) {
 		verror("could not mmap shared_info frame 0x%lx!\n",
@@ -1184,8 +975,8 @@ static int xen_vm_load_dominfo(struct target *target) {
     return 0;
 }
 
-static struct target_thread *xen_vm_load_cached_thread(struct target *target,
-						       tid_t tid) {
+static struct target_thread *__xen_vm_load_cached_thread(struct target *target,
+							 tid_t tid) {
     struct target_thread *tthread;
 
     tthread = target_lookup_thread(target,tid);
@@ -1198,854 +989,67 @@ static struct target_thread *xen_vm_load_cached_thread(struct target *target,
     return tthread;
 }
 
-static int xen_get_cpl(struct target *target,tid_t tid) {
-    REGVAL cs;
-    struct target_thread *tthread;
+static int __xen_vm_in_userspace(struct target *target,int cpl,REGVAL ipval) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
 
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
-	if (!errno) 
-	    errno = EINVAL;
-	verror("could not load cached thread %"PRIiTID"\n",tid);
-	return 0;
+    /*
+     * This is a real pain.  We have to use kernel_start_addr because on
+     * at least some Xen hypervisors, %cs is zeroed out, so we cannot
+     * extract the CPL.  From my reading of the x86 and amd64 manuals,
+     * it should not be zeroed out -- the segment selector registers are
+     * only used for privilege levels in long mode.
+     */
+    if (xstate->kernel_start_addr && xstate->kernel_start_addr < ADDRMAX) {
+	if (ipval < xstate->kernel_start_addr)
+	    return 1;
+	else
+	    return 0;
     }
+    else {
+	if (cpl == 3)
+	    return 1;
+	else
+	    return 0;
+    }
+}
+
+static int __xen_get_cpl_thread(struct target *target,
+				struct target_thread *tthread) {
+    REG csr = -1;
+    REGVAL cs;
+
+    if (target->arch->type == ARCH_X86)
+	csr = REG_X86_CS;
+    else if (target->arch->type == ARCH_X86_64)
+	csr = REG_X86_64_CS;
 
     /* Load the CPL. */
     errno = 0;
-    cs = 0x3 & xen_vm_read_reg(target,tthread->tid,
-			       xen_vm_dw_reg_no(target,CREG_CS));
+    cs = 0x3 & target_read_reg(target,tthread->tid,csr);
     if (errno) {
 	verror("could not read CS register to find CPL!\n");
-	return -1;
-    }
-
-    if (cs > 3) {
-	verror("bogus CPL %"PRIxREGVAL"!\n",cs);
-	errno = EFAULT;
 	return -1;
     }
 
     return (int)cs;
 }
 
-struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
-						      struct value *taskv) {
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+static int __xen_get_cpl(struct target *target,tid_t tid) {
     struct target_thread *tthread;
-    struct target_thread *ptthread;
-    struct xen_vm_thread_state *tstate = NULL;
-    tid_t tid;
-    tid_t ptid = -1;
-    num_t tgid = 0;
-    unum_t task_flags = 0;
-    ADDR group_leader;
-    struct value *threadinfov = NULL;
-    unum_t tiflags = 0;
-    num_t preempt_count = 0;
-    struct value *threadv = NULL;
-    struct value *v = NULL;
-    int iskernel = 0;
-    int inkernel = 0;
-    ADDR stack_top;
-    char *comm = NULL;
-    ADDR stack_member_addr;
-    int i;
-    int ip_offset;
-    int uid;
-    int gid;
 
-    vdebug(5,LA_TARGET,LF_XV,"loading\n");
-
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 taskv,"pid",NULL,LOAD_FLAG_NONE);
-    if (!v) {
-	verror("could not load pid in task value; BUG?\n");
-	/* errno should be set for us. */
-	goto errout;
-    }
-    tid = v_i32(v);
-    value_free(v);
-    v = NULL;
-
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 taskv,"parent",NULL,LOAD_FLAG_NONE);
-    if (!v) {
-	verror("could not load parent in task value; BUG?\n");
-	/* errno should be set for us. */
-	goto errout;
-    }
-    else if (v_addr(v) != value_addr(taskv)) {
-	ptthread = (struct target_thread *)			\
-	    g_hash_table_lookup(xstate->task_struct_addr_to_thread,
-				(gpointer)v_addr(v));
-	if (!ptthread) {
-	    /* Gotta load it. */
-	    value_free(v);
-	    v = target_load_value_member(target,xstate->default_tlctxt,
-					 taskv,"parent",NULL,
-					 LOAD_FLAG_AUTO_DEREF);
-	    if (!v) {
-		verror("could not load parent value from task;"
-		       " ptid will be invalid!\n");
-	    }
-	    else {
-		ptthread = __xen_vm_load_thread_from_value(target,v);
-		if (!ptthread) {
-		    verror("could not load parent thread from value;"
-			   " ptid will be invalid!\n");
-		}
-		else {
-		    vdebug(9,LA_TARGET,LF_XV,
-			   "loaded tid %"PRIiTID" parent %"PRIiTID"\n",
-			   tid,ptthread->tid);
-		    /* Don't free it! */
-		    v = NULL;
-		}
-	    }
-	}
-	else 
-	    vdebug(9,LA_TARGET,LF_XV,
-		   "tid %"PRIiTID" parent %"PRIiTID" already loaded\n",
-		   tid,ptthread->tid);
-
-	if (ptthread)
-	    ptid = ptthread->tid;
-    }
-    else if (tid != 0) {
-	/* The parent of 0 is 0, so that is ok. */
-	vwarn("tid %"PRIiTID" ->parent is itself!\n",tid);
-    }
-    if (v) {
-	value_free(v);
-	v = NULL;
+    if (!(tthread = __xen_vm_load_cached_thread(target,tid))) {
+	if (!errno) 
+	    errno = EINVAL;
+	verror("could not load cached thread %"PRIiTID"\n",tid);
+	return 0;
     }
 
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 taskv,xstate->task_uid_member_name,
-				 NULL,LOAD_FLAG_NONE);
-    if (!v) {
-	verror("could not load %s in task value; BUG?\n",
-	       xstate->task_uid_member_name);
-	uid = -1;
-    }
-    else {
-	uid = v_i32(v);
-	value_free(v);
-	v = NULL;
-    }
-
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 taskv,xstate->task_gid_member_name,
-				 NULL,LOAD_FLAG_NONE);
-    if (!v) {
-	verror("could not load %s in task value; BUG?\n",
-	       xstate->task_gid_member_name);
-	gid = -1;
-    }
-    else {
-	gid = v_i32(v);
-	value_free(v);
-	v = NULL;
-    }
-
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 taskv,"comm",NULL,LOAD_FLAG_NONE);
-    if (!v) {
-	verror("could not load comm in task value; BUG?\n");
-	/* errno should be set for us. */
-	goto errout;
-    }
-    comm = strndup(v->buf,v->bufsiz);
-    value_free(v);
-    v = NULL;
-
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 taskv,"tgid",NULL,LOAD_FLAG_NONE);
-    if (!v) {
-	verror("could not load tgid in task %"PRIiTID"; BUG?\n",tid);
-	/* errno should be set for us. */
-	goto errout;
-    }
-    tgid = v_num(v);
-    value_free(v);
-    v = NULL;
-
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 taskv,"flags",NULL,LOAD_FLAG_NONE);
-    if (!v) {
-	verror("could not load flags in task %"PRIiTID"; BUG?\n",tid);
-	/* errno should be set for us. */
-	goto errout;
-    }
-    task_flags = v_unum(v);
-    value_free(v);
-    v = NULL;
-
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 taskv,"group_leader",NULL,LOAD_FLAG_NONE);
-    if (!v) {
-	verror("could not load group_leader in task %"PRIiTID"; BUG?\n",tid);
-	/* errno should be set for us. */
-	goto errout;
-    }
-    group_leader = v_addr(v);
-    value_free(v);
-    v = NULL;
-
-    /*
-     * Before loading anything else, check the cache.
-     */
-    tthread = target_lookup_thread(target,tid);
-    if (tthread) {
-	tstate = (struct xen_vm_thread_state *)tthread->state;
-
-	/* Check if this is a cached entry for an old task */
-	if (tstate->tgid != tgid 
-	    || tstate->task_struct_addr != value_addr(taskv)) {
-	    target_add_state_change(target,tid,TARGET_STATE_CHANGE_THREAD_EXITED,
-				    0,0,0,0,NULL);
-	    target_delete_thread(target,tthread,0);
-	    tstate = NULL;
-	    tthread = NULL;
-	}
-    }
-
-    if (!tthread) {
-	/* Build a new one. */
-	tstate = (struct xen_vm_thread_state *)calloc(1,sizeof(*tstate));
-
-	tthread = target_create_thread(target,tid,tstate);
-	g_hash_table_insert(xstate->task_struct_addr_to_thread,
-			    (gpointer)value_addr(taskv),tthread);
-
-	target_add_state_change(target,tid,TARGET_STATE_CHANGE_THREAD_CREATED,
-				0,0,0,0,NULL);
-    }
-    else {
-	/*
-	 * If this is the current thread, we cannot load it from its
-	 * task_struct value (especially its register state!).  The
-	 * current_thread should have been loaded by now, so if it has
-	 * been loaded, don't reload from the thread stack (because the
-	 * thread stack does not have saved registers because the thread
-	 * is running!).
-	 *
-	 * XXX: to support SMP, we would have to check the task_struct's
-	 * running status, and only load from CPU in those cases.
-	 */
-	if (tthread == target->current_thread
-	    && target->current_thread->valid) {
-	    vdebug(8,LA_TARGET,LF_XV,
-		   "not loading running, valid current thread %"PRIiTID" from"
-		   " task_struct 0x%"PRIxADDR"; loaded from CPU of course\n",
-		   tid,value_addr(taskv));
-	    return target->current_thread;
-	}
-    }
-
-    if (xstate->task_struct_has_thread_info) {
-	threadinfov = target_load_value_member(target,xstate->default_tlctxt,
-					       taskv,"thread_info",NULL,
-					       LOAD_FLAG_AUTO_DEREF);
-	if (!threadinfov) {
-	    verror("could not load thread_info in task %"PRIiTID"; BUG?\n",tid);
-	    /* errno should be set for us. */
-	    goto errout;
-	}
-    }
-    else if (xstate->task_struct_has_stack) {
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     taskv,"stack",NULL,LOAD_FLAG_NONE);
-	if (!v) {
-	    verror("could not load stack (thread_info) in task %"PRIiTID";"
-		   " BUG?\n",tid);
-	    /* errno should be set for us. */
-	    goto errout;
-	}
-	stack_member_addr = v_addr(v);
-	value_free(v);
-	v = NULL;
-
-	threadinfov = target_load_type(target,xstate->thread_info_type,
-				       stack_member_addr,LOAD_FLAG_NONE);
-	if (!threadinfov) {
-	    verror("could not load stack (thread_info) in task %"PRIiTID";"
-		   " BUG?\n",tid);
-	    goto errout;
-	}
-    }
-    else {
-	verror("cannot load thread_info/stack; no thread support!\n");
-	goto errout;
-    }
-
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 threadinfov,"flags",NULL,LOAD_FLAG_NONE);
-    if (!v) {
-	verror("could not load thread_info.flags in task %"PRIiTID"; BUG?\n",tid);
-	/* errno should be set for us. */
-	goto errout;
-    }
-    tiflags = v_unum(v);
-    value_free(v);
-    v = NULL;
-
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 threadinfov,"preempt_count",NULL,LOAD_FLAG_NONE);
-    if (!v) {
-	verror("could not load thread_info.preempt_count in task %"PRIiTID";"
-	       " BUG?\n",tid);
-	/* errno should be set for us. */
-	goto errout;
-    }
-    preempt_count = v_num(v);
-    value_free(v);
-    v = NULL;
-
-    tstate->task_struct_addr = value_addr(taskv);
-    tstate->task_struct = taskv;
-    tthread->ptid = ptid;
-    tthread->uid = uid;
-    tthread->gid = gid;
-    tstate->tgid = tgid;
-    tstate->task_flags = task_flags;
-    tstate->group_leader = group_leader;
-    tstate->thread_info = threadinfov;
-    tstate->thread_info_flags = tiflags;
-    tstate->thread_info_preempt_count = preempt_count;
-
-    /*
-     * If we have the thread, we can load as much of the stuff in the
-     * vcpu_guest_context struct as the kernel contains!
-     */
-    memset(&tstate->context,0,sizeof(vcpu_guest_context_t));
-
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 taskv,"mm",NULL,LOAD_FLAG_NONE);
-    if (!v) {
-	verror("could not see if thread %"PRIiTID" was kernel or user\n",tid);
-	goto errout;
-    }
-    tstate->mm_addr = v_addr(v);
-    if (tstate->mm_addr == 0)
-	iskernel = 1;
-    value_free(v);
-    v = NULL;
-
-    if (tstate->mm_addr) {
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     taskv,"mm.pgd",NULL,LOAD_FLAG_NONE);
-	if (!v) {
-	    verror("could not load thread %"PRIiTID" (mm) pgd (for cr3 tracking)\n",
-		   tid);
-	    goto errout;
-	}
-	/* Load a unum, so we get the right number of bytes read. */
-	tstate->pgd = (uint64_t)v_unum(v);
-	value_free(v);
-	v = NULL;
-
-	/* If pgd was NULL, try task_struct.active_mm.pgd */
-	if (tstate->pgd == 0) {
-	    v = target_load_value_member(target,xstate->default_tlctxt,
-					 taskv,"active_mm.pgd",NULL,
-					 LOAD_FLAG_NONE);
-	    if (!v) {
-		vwarn("could not load thread %"PRIiTID" (active_mm) pgd (for cr3 tracking)\n",
-		      tid);
-		goto errout;
-	    }
-	    /* Load a unum, so we get the right number of bytes read. */
-	    tstate->pgd = (uint64_t)v_unum(v);
-	    value_free(v);
-	    v = NULL;
-	}
-    }
-
-    /*
-     * In our world, a Linux thread will not be executing an interrupt
-     * top/bottom half (ISR or softirq) if it is not running (i.e.,
-     * ISRs/softirqs are not preemptible).  So, if the sleeping thread
-     * is in kernel context, the task's state (registers) are on the
-     * stack in the right place, unless we are in a section of the code
-     * that is setting up the stack or tearing it down (i.e., preempted
-     * during syscall init or something -- unless this is not possible
-     * if the kernel disables interrupts in those critical
-     * sections...).  BUT, even if this is true, the current machine
-     * state will have been pushed on the stack to handle the interrupt
-     * (and perhaps the following context switch, if there is one after
-     * servicing the ISR/softirq(s)).
-     *
-     * Thus, we don't have to check what the thread is executing.
-     *
-     * It doesn't matter whether the thread is a kernel thread or not.
-     */
-    if (iskernel) {
-	target_thread_set_status(tthread,THREAD_STATUS_RETURNING_KERNEL);
-	tthread->supported_overlay_types = TARGET_TYPE_NONE;
-
-	tthread->tidctxt = THREAD_CTXT_KERNEL;
-    }
-    else {
-	target_thread_set_status(tthread,THREAD_STATUS_RETURNING_USER);
-	tthread->supported_overlay_types = TARGET_TYPE_XEN_PROCESS;
-
-	tthread->tidctxt = THREAD_CTXT_USER;
-    }
-
-    if (tthread->name)
-	free(tthread->name);
-    tthread->name = comm;
-    comm = NULL;
-
-    /*
-     * Load the stored registers from the kernel stack; except fs/gs and
-     * the debug regs are in the task_struct->thread thread_struct
-     * struct.
-     */
-    threadv = target_load_value_member(target,xstate->default_tlctxt,
-				       taskv,"thread",NULL,LOAD_FLAG_NONE);
-    if (!threadv) {
-	verror("could not load thread_struct for task %"PRIiTID"!\n",tid);
-	goto errout;
-    }
-
-    tstate->thread_struct = threadv;
-
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 threadv,xstate->thread_sp_member_name,
-				 NULL,LOAD_FLAG_NONE);
-    if (!v) {
-	verror("could not load thread.%s for task %"PRIiTID"!\n",
-	       xstate->thread_sp_member_name,tid);
-	goto errout;
-    }
-    tstate->esp = v_addr(v);
-    value_free(v);
-    v = NULL;
-
-    /* The stack base is also the value of the task_struct->thread_info ptr. */
-    tstate->stack_base = value_addr(threadinfov);
-    stack_top = tstate->stack_base + THREAD_SIZE;
-
-    /* See include/asm-i386/processor.h .  And since it doesn't explain
-     * why it is subtracting 8, it's because fs/gs are not pushed on the
-     * stack, so the ptrace regs struct doesn't really match with what's
-     * on the stack ;).
-     */
-    if (iskernel && preempt_count) {
-	if (target->wordsize == 8) {
-	    tstate->ptregs_stack_addr = 
-		stack_top - 0 - symbol_get_bytesize(xstate->pt_regs_type);
-	}
-	else {
-	    tstate->ptregs_stack_addr = 
-		stack_top - 8 - symbol_get_bytesize(xstate->pt_regs_type);
-	}
-	//tstate->ptregs_stack_addr = tstate->esp - 8 - 15 * 4;
-	// + 8 - 7 * 4; // - 8 - 15 * 4;
-    }
-    /*
-     * Registers are not saved if it's a sleeping, non-preempted kernel
-     * thread.  All that was saved is the esp and eip, and fs/gs, in the
-     * thread struct.  Registers are only saved on kernel interrupt, or
-     * mode switch from user to kernel mode.  The best we could do is
-     * look into schedule()'s frame and look at its saved registers so
-     * that we could see what schedule's caller will have -- and then
-     * look and see what the caller saved.  Anything else is trashed.
-     */
-    else if (iskernel) {
-	tstate->ptregs_stack_addr = 0;
-	/*
-	v = target_load_addr_real(target,esp0,LOAD_FLAG_NONE,32*4);
-	int i;
-	for (i = 0; i < 32; ++i) {
-	    vwarn("%d esp[%d] = 0x%x\n",tid,i,((int *)v->buf)[i]);
-	}
-	value_free(v);
-	v = NULL;
-	*/
-    }
-    else if (target->wordsize == 8) {
-	tstate->ptregs_stack_addr = 
-	    stack_top - 0 - symbol_get_bytesize(xstate->pt_regs_type);
-    }
-    else {
-	tstate->ptregs_stack_addr = 
-	    stack_top - 8 - symbol_get_bytesize(xstate->pt_regs_type);
-    }
-
-    vdebug(5,LA_TARGET,LF_XV,
-	   "esp=%"PRIxADDR",stack_base=%"PRIxADDR",stack_top=%"PRIxADDR
-	   ",ptregs_stack_addr=%"PRIxADDR"\n",
-	   tstate->esp,stack_top,tstate->stack_base,tstate->ptregs_stack_addr);
-
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 threadv,xstate->thread_sp0_member_name,
-				 NULL,LOAD_FLAG_NONE);
-    if (!v) 
-	vwarn("could not load thread.%s for task %"PRIiTID"!\n",
-	      xstate->thread_sp0_member_name,tid);
-    tstate->esp0 = v_addr(v);
-    value_free(v);
-    v = NULL;
-
-    /*
-     * On x86_64, %ip is not tracked -- there's no point anyway --
-     * either it's in the scheduler at context switch, or it's at
-     * ret_from_fork -- no point loading.  But still, it's on the kernel
-     * stack at *(thread.sp - 8).  That's how we load it.
-     */
-    if (xstate->thread_ip_member_name) {
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     threadv,xstate->thread_ip_member_name,
-				     NULL,LOAD_FLAG_NONE);
-	if (!v) 
-	    vwarn("could not load thread.%s for task %"PRIiTID"!\n",
-		  xstate->thread_ip_member_name,tid);
-	else {
-	    tstate->eip = v_addr(v);
-	    value_free(v);
-	    v = NULL;
-	}
-    }
-    else {
-	v = target_load_addr_real(target,tstate->esp + 3 * target->wordsize,
-				  LOAD_FLAG_NONE,target->wordsize);
-	if (!v) 
-	    vwarn("could not 64-bit IP (thread.ip) for task %"PRIiTID"!\n",
-		  tid);
-	else {
-	    tstate->eip = v_addr(v);
-	    value_free(v);
-	    v = NULL;
-	}
-    }
-
-    /*
-     * For old i386 stuff, fs/gs are in the thread data structure.
-     * For newer x86 stuff, only gs is saved in thread_struct; fs is on
-     * the stack.
-     *
-     * For x86_64, ds/es are saved in thread_struct; some threads have
-     * 64-bit fs/gs bases in thread_struct; the fs/gs segment selectors
-     * are saved in fsindex/gsindex.  Not sure how to expose fs/gs in
-     * this model... for now we ignore fsindex/gsindex.
-     */
-    if (xstate->thread_struct_has_fs) {
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     threadv,"fs",NULL,LOAD_FLAG_NONE);
-	if (!v) {
-	    vwarn("could not load thread.fs for task %"PRIiTID"!\n",tid);
-	    goto errout;
-	}
-	else {
-	    tstate->fs = tstate->context.user_regs.fs = v_u16(v);
-	    value_free(v);
-	    v = NULL;
-	}
-    }
-    else {
-	/* Load this from pt_regs below if we can. */
-	tstate->fs = tstate->context.user_regs.fs = 0;
-    }
-
-    /* Everybody always has gs. */
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 threadv,"gs",NULL,LOAD_FLAG_NONE);
-    if (!v) {
-	verror("could not load thread.gs for task %"PRIiTID"!\n",tid);
-	goto errout;
-    }
-    else {
-	tstate->gs = tstate->context.user_regs.gs = v_u16(v);
-	value_free(v);
-	v = NULL;
-    }
-
-    if (xstate->thread_struct_has_ds_es) {
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     threadv,"ds",NULL,LOAD_FLAG_NONE);
-	if (!v) {
-	    vwarn("could not load thread.ds for task %"PRIiTID"!\n",tid);
-	    goto errout;
-	}
-	else {
-	    if (target->wordsize == 8)
-		tstate->context.user_regs.ds = v_u64(v);
-	    else 
-		tstate->context.user_regs.ds = v_u32(v);
-	    value_free(v);
-	    v = NULL;
-	}
-
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     threadv,"es",NULL,LOAD_FLAG_NONE);
-	if (!v) {
-	    vwarn("could not load thread.es for task %"PRIiTID"!\n",tid);
-	    goto errout;
-	}
-	else {
-	    if (target->wordsize == 8)
-		tstate->context.user_regs.es = v_u64(v);
-	    else 
-		tstate->context.user_regs.es = v_u32(v);
-	    value_free(v);
-	    v = NULL;
-	}
-    }
-    else {
-	/* Load this from pt_regs below if we can. */
-	tstate->context.user_regs.ds = 0;
-	tstate->context.user_regs.es = 0;
-    }
-
-    if (tstate->ptregs_stack_addr) {
-	/*
-	 * The xen cpu_user_regs struct, and pt_regs struct, tend to
-	 * align (no pun intended) reasonably well.  On i386, we can
-	 * copy pt_regs::(e)bx--(e)ax directly to cpu_user_regs::ebx--eax;
-	 * then copy pt_regs::(e)ip--(x)ss to cpu_user_regs::eip--ss.
-	 * For x86_64, the same is basically true; the ranges are
-	 * r15--(r)di, and (r)ip--ss.
-	 *
-	 * (The (X) prefixes are because the Linux kernel x86 and x86_64
-	 * struct pt_regs member names have changed over the years; but
-	 * by just doing this brutal copying, we can ignore all that --
-	 * which is faster from a value-loading perspective.)
-	 *
-	 * (This all works because Xen's cpu_user_regs has been
-	 * carefully mapped to x86 and x86_64 pt_regs structs, in the
-	 * specific register ranges listed (the Xen structs have some
-	 * other things in the middle and es/ds/fs/gs regs at the end,
-	 * so it's not a complete alignment.)
-	 */
-	v = target_load_addr_real(target,tstate->ptregs_stack_addr,
-				  LOAD_FLAG_NONE,
-				  symbol_get_bytesize(xstate->pt_regs_type));
-	if (!v) {
-	    verror("could not load stack register save frame task %"PRIiTID"!\n",
-		   tid);
-	    goto errout;
-	}
-
-	/* Copy the first range. */
-	if (target->wordsize == 8)
-	    memcpy(&tstate->context.user_regs,v->buf,8 * 15);
-	else
-	    memcpy(&tstate->context.user_regs,v->buf,4 * 7);
-
-	/* Copy the second range. */
-	/**
-	 ** WARNING: esp and ss may not be valid if the sleeping thread was
-	 ** interrupted while it was in the kernel, because the interrupt
-	 ** gate does not push ss and esp; see include/asm-i386/processor.h .
-	 **/
-#if __WORDSIZE == 64
-	ip_offset = offsetof(struct vcpu_guest_context,user_regs.rip);
-#else
-	ip_offset = offsetof(struct vcpu_guest_context,user_regs.eip);
-#endif
-	if (target->wordsize == 8)
-	    memcpy(((char *)&tstate->context) + ip_offset,
-		   v->buf + xstate->pt_regs_ip_offset,8 * 5);
-	else
-	    memcpy(((char *)&tstate->context) + ip_offset,
-		   v->buf + xstate->pt_regs_ip_offset,4 * 5);
-
-	/*
-	 * ds, es, fs, gs are all special; see other comments.
-	 */
-	if (!xstate->thread_struct_has_ds_es && xstate->pt_regs_has_ds_es) {
-	    /* XXX: this works because we know the location of (x)ds/es;
-	     * it's only on i386/x86; and because Xen pads its
-	     * cpu_user_regs structs from u16s to ulongs for segment
-	     * registers.  :)
-	     */
-	    memcpy(&tstate->context.user_regs.ds,
-		   (char *)v->buf + 7 * target->wordsize,v->bufsiz);
-	    memcpy(&tstate->context.user_regs.es,
-		   (char *)v->buf + 8 * target->wordsize,v->bufsiz);
-	}
-	if (!xstate->thread_struct_has_fs && xstate->pt_regs_has_fs_gs) {
-	    /* XXX: this is only true on newer x86 stuff; x86_64 and old
-	     * i386 stuff did not save it on the stack.
-	     */
-	    memcpy(&tstate->context.user_regs.fs,
-		   (char *)v->buf + 9 * target->wordsize,v->bufsiz);
-	}
-
-	value_free(v);
-	v = NULL;
-    }
-    else {
-	/*
-	 * Either we could not load pt_regs due to lack of type info; or
-	 * this thread was just context-switched out, not interrupted
-	 * nor preempted, so we can't get its GP registers.  Get what we
-	 * can...
-	 */
-	memset(&tstate->context,0,sizeof(vcpu_guest_context_t));
-	tstate->context.user_regs.eip = tstate->eip;
-	tstate->context.user_regs.esp = tstate->esp;
-	tstate->context.user_regs.fs = tstate->fs;
-	tstate->context.user_regs.gs = tstate->gs;
-
-	/* eflags and ebp are on the stack. */
-	v = target_load_addr_real(target,tstate->esp,LOAD_FLAG_NONE,
-				  2 * target->wordsize);
-	if (target->wordsize == 8) {
-	    tstate->eflags = ((uint64_t *)v->buf)[1];
-	    tstate->ebp = ((uint64_t *)v->buf)[0];
-	}
-	else {
-	    tstate->eflags = ((uint32_t *)v->buf)[1];
-	    tstate->ebp = ((uint32_t *)v->buf)[0];
-	}		
-	value_free(v);
-	v = NULL;
-
-	tstate->context.user_regs.eflags = tstate->eflags;
-	tstate->context.user_regs.ebp = tstate->ebp;
-    }
-
-    /*
-     * Load the current debug registers from the thread.
-     */
-    if (xstate->thread_struct_has_debugreg) {
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     threadv,"debugreg",NULL,
-				     LOAD_FLAG_AUTO_DEREF);
-	if (!v) {
-	    verror("could not load thread->debugreg for task %"PRIiTID"\n",tid);
-	    goto errout;
-	}
-	if (target->wordsize == 8) {
-	    tstate->context.debugreg[0] = ((uint64_t *)v->buf)[0];
-	    tstate->context.debugreg[1] = ((uint64_t *)v->buf)[1];
-	    tstate->context.debugreg[2] = ((uint64_t *)v->buf)[2];
-	    tstate->context.debugreg[3] = ((uint64_t *)v->buf)[3];
-	    tstate->context.debugreg[6] = ((uint64_t *)v->buf)[6];
-	    tstate->context.debugreg[7] = ((uint64_t *)v->buf)[7];
-	}
-	else {
-	    tstate->context.debugreg[0] = ((uint32_t *)v->buf)[0];
-	    tstate->context.debugreg[1] = ((uint32_t *)v->buf)[1];
-	    tstate->context.debugreg[2] = ((uint32_t *)v->buf)[2];
-	    tstate->context.debugreg[3] = ((uint32_t *)v->buf)[3];
-	    tstate->context.debugreg[6] = ((uint32_t *)v->buf)[6];
-	    tstate->context.debugreg[7] = ((uint32_t *)v->buf)[7];
-	}
-	value_free(v);
-	v = NULL;
-    }
-    else if (xstate->thread_struct_has_debugreg0) {
-	/*
-	 * This is old x86_64 style.
-	 */
-	static const char *dregmembers[8] = {
-	    "debugreg0","debugreg1","debugreg2","debugreg3",
-	    NULL,NULL,
-	    "debugreg6","debugreg7"
-	};
-
-	for (i = 0; i < 8; ++i) {
-	    if (!dregmembers[i])
-		continue;
-
-	    v = target_load_value_member(target,xstate->default_tlctxt,
-					 threadv,dregmembers[i],NULL,
-					 LOAD_FLAG_AUTO_DEREF);
-	    if (!v) {
-		verror("could not load thread->%s for task %"PRIiTID"\n",
-		       dregmembers[i],tid);
-		goto errout;
-	    }
-	    if (target->wordsize == 8) 
-		tstate->context.debugreg[i] = *(uint64_t *)v->buf;
-	    else
-		tstate->context.debugreg[i] = *(uint32_t *)v->buf;
-	    value_free(v);
-	    v = NULL;
-	}
-    }
-    else if (xstate->thread_struct_has_perf_debugreg) {
-	/*
-	 * XXX: still need to load perf_events 0-3.
-	 */
-
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     threadv,"debugreg6",NULL,
-				     LOAD_FLAG_AUTO_DEREF);
-	if (!v) {
-	    verror("could not load thread->debugreg6 for task %"PRIiTID"\n",tid);
-	    goto errout;
-	}
-	if (target->wordsize == 8) 
-	    tstate->context.debugreg[6] = *(uint64_t *)v->buf;
-	else
-	    tstate->context.debugreg[6] = *(uint32_t *)v->buf;
-	value_free(v);
-	v = NULL;
-
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     threadv,"ptrace_dr7",NULL,
-				     LOAD_FLAG_AUTO_DEREF);
-	if (!v) {
-	    verror("could not load thread->ptrace_dr7 for task %"PRIiTID"\n",tid);
-	    goto errout;
-	}
-	if (target->wordsize == 8) 
-	    tstate->context.debugreg[7] = *(uint64_t *)v->buf;
-	else
-	    tstate->context.debugreg[7] = *(uint32_t *)v->buf;
-	value_free(v);
-	v = NULL;
-
-    }
-    else {
-	vwarn("could not load debugreg for tid %d; no debuginfo!\n",tid);
-    }
-
-    vdebug(4,LA_TARGET,LF_XV,
-	   "debug registers (kernel context): 0x%"PRIxADDR",0x%"PRIxADDR
-	   ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
-	   tstate->context.debugreg[0],tstate->context.debugreg[1],
-	   tstate->context.debugreg[2],tstate->context.debugreg[3],
-	   tstate->context.debugreg[6],tstate->context.debugreg[7]);
-
-    if (v) 
-	value_free(v);
-    if (comm)
-	free(comm);
-
-    tthread->valid = 1;
-
-    return tthread;
-
- errout:
-    if (v) 
-	value_free(v);
-    if (comm)
-	free(comm);
-    if (threadinfov) 
-	value_free(threadinfov);
-    if (threadv)
-	value_free(threadv);
-    if (tstate) {
-	tstate->thread_info = NULL;
-	tstate->thread_struct = NULL;
-	tstate->task_struct = NULL;
-    }
-
-    return NULL;
+    return __xen_get_cpl_thread(target,tthread);
 }
 
 static struct target_thread *xen_vm_load_thread(struct target *target,
 						tid_t tid,int force) {
     struct target_thread *tthread = NULL;
-    struct xen_vm_thread_state *xtstate;
-    struct value *taskv = NULL;
-    int taskv_loaded;
 
     /*
      * If we are asking for the global thread (TID_GLOBAL), do that
@@ -2103,183 +1107,11 @@ static struct target_thread *xen_vm_load_thread(struct target *target,
      *
      * At this point, we can be sure that we are loading a thread that
      * is not running; thus, its CPU state is on the kernel stack.
+     *
+     * This means we must ask the personality to do it, because only the
+     * personality can interpret the kernel stack.
      */
-
-    /* 
-     * We need to find the task on the kernel's task list that matches
-     * @tid.  If no match, but we had a thread with a matching @tid in
-     * our cache, we need to nuke that thread.  If there is a match, but
-     * its core data is different than what's in the cache, we have to
-     * nuke the old task from the cache and build a new one.  If the
-     * match matches, just reload its volatile data and context.
-     */
-
-    if (target_status(target) != TSTATUS_PAUSED) {
-	verror("target not paused; cannot load current task!\n");
-	errno = EBUSY;
-	return NULL;
-    }
-
-    /*
-     * If we didn't find a cached thread, or we're not live-tracking
-     * thread exit, check for stale thread!  If we have a cached thread,
-     * and we are tracking EXITs, we don't need to walk the task list.
-     */
-    if (!tthread 
-	|| !(target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)) {
-	taskv = linux_get_task(target,tid);
-	taskv_loaded = 1;
-
-	if (!taskv) {
-	    vwarn("no task matching %"PRIiTID"\n",tid);
-
-	    if (tthread) {
-		vdebug(3,LA_TARGET,LF_XV,
-		       "evicting old thread %"PRIiTID"; no longer exists!\n",tid);
-		target_add_state_change(target,tthread->tid,
-					TARGET_STATE_CHANGE_THREAD_EXITED,
-					0,0,0,0,NULL);
-		target_delete_thread(target,tthread,0);
-	    }
-
-	    return NULL;
-	}
-    }
-    else {
-	taskv_loaded = 0;
-	xtstate = (struct xen_vm_thread_state *)tthread->state;
-
-	if (!value_refresh(xtstate->task_struct,1)) {
-	    verror("could not refresh cached struct; aborting to manual update!\n");
-
-	    taskv = linux_get_task(target,tid);
-	    taskv_loaded = 1;
-
-	    if (!taskv) {
-		vwarn("no task matching %"PRIiTID"\n",tid);
-
-		if (tthread) {
-		    vdebug(3,LA_TARGET,LF_XV,
-			   "evicting old thread %"PRIiTID"; no longer exists!\n",
-			   tid);
-		    target_add_state_change(target,tthread->tid,
-					    TARGET_STATE_CHANGE_THREAD_EXITED,
-					    0,0,0,0,NULL);
-		    target_delete_thread(target,tthread,0);
-		}
-
-		return NULL;
-	    }
-	}
-    }
-
-    if (!(tthread = __xen_vm_load_thread_from_value(target,taskv)))
-	goto errout;
-
-    return tthread;
-
- errout:
-    if (taskv_loaded && taskv)
-	value_free(taskv);
-
-    return NULL;
-}
-
-static struct target_thread *
-__xen_vm_load_current_thread_from_userspace(struct target *target,int force) {
-    GHashTableIter iter;
-    gpointer vp;
-    struct target_thread *tthread = NULL;
-    struct xen_vm_thread_state *xtstate;
-    uint64_t cr3;
-    REGVAL ipval;
-
-#if __WORDSIZE == 64
-    /*
-     * libxc claims that for x86_64, pagetable is in CR1.
-     */
-    cr3 = (uint64_t)xen_vm_read_reg(target,TID_GLOBAL,XV_TSREG_CR1);
-#else
-    cr3 = (uint64_t)xen_vm_read_reg(target,TID_GLOBAL,XV_TSREG_CR3);
-#endif
-
-    ipval = xen_vm_read_reg(target,TID_GLOBAL,target->ipregno);
-
-    vdebug(5,LA_TARGET,LF_XV,
-	   "ip 0x%"PRIxADDR"; cr3/pgd = 0x%"PRIx64"\n",ipval,cr3);
-
-    /*
-     * First, we scan our current cache; if we find a cr3 hit, we're
-     * money.  Otherwise, we have load all tasks (well, at least until
-     * we find what we need).
-     */
-    g_hash_table_iter_init(&iter,target->threads);
-    while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&vp)) {
-	tthread = (struct target_thread *)vp;
-	xtstate = (struct xen_vm_thread_state *)tthread->state;
-
-	if (xtstate->pgd == cr3) 
-	    break;
-	else {
-	    tthread = NULL;
-	    xtstate = NULL;
-	}
-    }
-
-    if (!tthread) {
-	vdebug(5,LA_TARGET,LF_XV,
-	       "could not find task match for cr3 0x%"PRIx64";"
-	       " loading all tasks!\n",cr3);
-
-	/*
-	 * We really should just use a reverse init_task list traversal
-	 * here.  The task is most likely to be nearer the end.
-	 */
-	if (xen_vm_load_available_threads(target,force)) {
-	    verror("could not load all threads to match on cr3!\n");
-	    return NULL;
-	}
-
-	/* Search again. */
-	g_hash_table_iter_init(&iter,target->threads);
-	while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&vp)) {
-	    tthread = (struct target_thread *)vp;
-	    xtstate = (struct xen_vm_thread_state *)tthread->state;
-
-	    if (xtstate->pgd == cr3) 
-		break;
-	    else {
-		vdebug(8,LA_TARGET,LF_XV,
-		       "thread %"PRIiTID" with pgd 0x%"PRIx64" did not match!\n",
-		       tthread->tid,xtstate->pgd);
-		tthread = NULL;
-		xtstate = NULL;
-	    }
-	}
-
-	if (!tthread) {
-	    verror("could not find task match for cr3 0x%"PRIx64
-		   " after loading all tasks!\n",cr3);
-	    errno = ESRCH;
-	    return NULL;
-	}
-    }
-    else {
-	/* Reload its value. */
-	if (!tthread->valid 
-	    && !(tthread = __xen_vm_load_thread_from_value(target,
-							   xtstate->task_struct))) {
-	    verror("could not load cached thread %"PRIiTID" from value!",
-		   tthread->tid);
-	    return NULL;
-	}
-    }
-
-    vdebug(5,LA_TARGET,LF_XV,
-	   "ip 0x%"PRIxADDR"; cr3/pgd = 0x%"PRIx64" --> thread %"PRIiTID"\n",
-	   ipval,cr3,tthread->tid);
-
-    return tthread;
+    return target_personality_load_thread(target,tid,force);
 }
 
 #ifdef __x86_64__
@@ -2676,28 +1508,12 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 							  int force,
 							  int globalonly) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
-    tid_t tid = 0;
-    struct value *threadinfov = NULL;
-    int preempt_count;
-    unum_t tiflags;
-    struct value *taskv = NULL;
-    num_t tgid;
-    unum_t task_flags = 0;
-    ADDR group_leader;
     struct target_thread *tthread = NULL;
-    struct xen_vm_thread_state *tstate = NULL;;
+    struct xen_vm_thread_state *tstate = NULL;
     struct xen_vm_thread_state *gtstate;
-    struct value *v = NULL;
     REGVAL ipval;
-    ADDR mm_addr = 0;
     uint64_t pgd = 0;
-    REGVAL kernel_esp = 0;
-    char *comm = NULL;
-    uint64_t cr3 = 0;
-    struct target_thread *ptthread;
-    tid_t ptid = -1;
-    int uid = -1;
-    int gid = -1;
+    int cpl;
 
     /*
      * If the global thread has been loaded, and that's all the caller
@@ -2713,14 +1529,6 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     else if (!globalonly && !force
 	     && target->current_thread && target->current_thread->valid)
 	return target->current_thread;
-
-    /* Use the default thread, always, if we're single threaded. */
-    /*
-    if (target_is_singlethread(target)) {
-	tthread = target->global_thread;
-	tstate = (struct xen_vm_thread_state *)tthread->state;
-    }
-    */
 
     if (target_status(target) != TSTATUS_PAUSED) {
 	verror("target not paused; cannot load current task!\n");
@@ -2750,33 +1558,74 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	    verror("could not get vcpu context for %d\n",xstate->id);
 	    goto errout;
 	}
+    }
+
+    /*
+     * Load EIP for info, and CPL for user-mode check.
+     *
+     * NB: note that these two calls do *not* go through the target
+     * API.  They cannot, because the global thread has not been loaded
+     * yet.  And we can't finish loading the global thread yet, even
+     * though we have the machine state, because we don't know which
+     * thread context's regcache to put the machine state into (kernel
+     * or userspace).
+     */
+    errno = 0;
+#ifdef __x86_64__
+    ipval = gtstate->context.user_regs.rip;
+#else
+    ipval = gtstate->context.user_regs.eip;
+#endif
+
+    cpl = 0x3 & gtstate->context.user_regs.cs;
+
+    /* Keep loading the global thread... */
+    if(!target->global_thread->valid) {
+	if (__xen_vm_in_userspace(target,cpl,ipval))
+	    target->global_thread->tidctxt = THREAD_CTXT_USER;
+	else
+	    target->global_thread->tidctxt = THREAD_CTXT_KERNEL;
+
+	/*
+	 * Push the registers into the regcache!
+	 */
+	__xen_vm_vcpu_to_thread_regcache(target,&gtstate->context,
+					 target->global_thread,
+					 target->global_thread->tidctxt);
+
+	/*
+	 * Very important.  If thread is in userspace, we need to get
+	 * Xen's special kernel_sp register and set it as SP for the
+	 * kernel context so that personalities can load kernel threads
+	 * on i386 because they need kernel_sp to find the stack.  On
+	 * x86_64 this is not necessary.
+	 */
+	if (target->global_thread->tidctxt == THREAD_CTXT_USER) {
+	    target_regcache_init_reg_tidctxt(target,target->global_thread,
+					     THREAD_CTXT_KERNEL,target->spregno,
+					     gtstate->context.kernel_sp);
+	}
+
+	/*
+	 * NB: we must set the thread as valid now, because the next few
+	 * function calls are going to try to use the target API to read
+	 * registers from the global thread.  So even through we're
+	 * technically still loading it, mark it as valid now... it'll
+	 * be fully valid shortly!
+	 */
 	target->global_thread->valid = 1;
 	target_thread_set_status(target->global_thread,THREAD_STATUS_RUNNING);
     }
 
     /*
-     * Load EIP for later user-mode check.
-     */
-    errno = 0;
-    ipval = xen_vm_read_reg(target,TID_GLOBAL,target->ipregno);
-    if (errno) {
-	vwarn("could not read EIP for user-mode check; continuing anyway.\n");
-	errno = 0;
-    }
-
-    /*
      * Load CR3 for debug purposes.
      */
-    __xen_vm_cr3(target,TID_GLOBAL,&cr3);
+    __xen_vm_pgd(target,TID_GLOBAL,&pgd);
 
     vdebug(9,LA_TARGET,LF_XV,
-	   "loading current thread (ip = 0x%"PRIxADDR",cr3 = 0x%"PRIxADDR")\n",
-	   ipval,cr3);
-
-    if (ipval < xstate->kernel_start_addr) 
-	target->global_thread->tidctxt = THREAD_CTXT_USER;
-    else
-	target->global_thread->tidctxt = THREAD_CTXT_KERNEL;
+	   "loading current thread (ip = 0x%"PRIxADDR",pgd = 0x%"PRIxADDR","
+	   "cpl = %d,tidctxt = %d)\n",ipval,pgd,cpl,
+	   target->global_thread->tidctxt);
 
     /*
      * If only loading the global thread, stop here.
@@ -2785,612 +1634,64 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	return target->global_thread;
 
     /*
-     * We used to not load the current thread in this case, but now we
-     * do.  This is sort of misleading, because the thread is not
-     * exactly in kernel context.  BUT, the important thing to realize
-     * is that this target does not only provide service for in-kernel
-     * operations.  The difference between this target and the
-     * xen-process target is that the xen-process target has *extra*
-     * functionality for inspecting the guts of a process, using its
-     * symbols; this target can manipulate a process's CPU state, and it
-     * can write virtual memory that is paged in; but that's it.
-     *
-     * So -- this target has to realize that its CPU state currently
-     * corresponds to user state.  That means tricks like using the
-     * current esp to find the current thread, and the task, do not
-     * work.
-     *
-     * I'm not 100% happy about this; you have to check which context a
-     * thread is in before you access its stack, etc.  But it's good
-     * enough for now.
-     *
-     * Once we have loaded the global thread above, in this case, we
-     * call a different function.  We actually try to infer which task
-     * is running by checking cr3; we compare it to our existing, cached
-     * tasks, and try to load the cached thread that matches.  If there
-     * is no match, we have no choice but to load all the threads again
-     * so we find the match.
-     *
-     * Anyway, we do that in another function.
+     * Ask the personality to detect our current thread.
      */
-    if (ipval < xstate->kernel_start_addr) {
+    tthread = target_personality_load_current_thread(target,force);
+
+    /*
+     * Set the current thread (might be a real thread, or the global
+     * thread).  If the personality detects a current thread, use it;
+     * otherwise we have to just use the global thread!
+     */
+    if (tthread) {
+	target->current_thread = tthread;
+
 	/*
-	vdebug(9,LA_TARGET,LF_XV,
-	       "at user-mode EIP 0x%"PRIxADDR"; not loading current thread;"
-	       " returning global thread.\n",
-	       ipval);
-	return __xen_vm_load_current_thread_from_userspace(target,force);
-	*/
-
-	kernel_esp = gtstate->context.kernel_sp;
-	vdebug(9,LA_TARGET,LF_XV,
-	       "at user-mode EIP 0x%"PRIxADDR"; trying to load current kernel"
-	       " thread with kernel_sp 0x%"PRIxADDR"\n",
-	       ipval,kernel_esp);
-    }
-
-    /* We need to load in the current task_struct, AND if it's already
-     * in target->threads, CHECK if it really matches one of our cached
-     * threads.  If not, and there is an old thread in the cache, nuke
-     * that one and build a new one -- TIDs can of course be reused in
-     * Linux.
-     */
-
-    /*
-     * But first, we need to see if we're handling a hard or soft IRQ
-     * (and are ksoftirqd (?) -- but how do we check *which* kind of
-     * soft IRQ we are??).
-     *
-     * If we are, we just set out TID to TID_GLOBAL, and load state
-     * from Xen.
-     *
-     * If we are not, then, we can be safe to check the kernel's
-     * task_struct to see which thread we are.  But wait, since the
-     * kernel runs all softirqs in interrupt context, the current task
-     * is really pretty irrelevant (unless it's ksoftirqd; we could
-     * check and make a note of that...).
-     *
-     * So, we always set TID to TID_GLOBAL, and load state from Xen.
-     */
-
-    threadinfov = linux_load_current_thread_as_type(target,
-						    xstate->thread_info_type,
-						    kernel_esp);
-    if (!threadinfov) {
-	verror("could not load current thread info!  cannot get current TID!\n");
-	/* errno should be set for us. */
-	goto errout;
-    }
-
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 threadinfov,"preempt_count",NULL,
-				 LOAD_FLAG_NONE);
-    if (!v) {
-	verror("could not load thread_info->preempt_count (to check IRQ status)!\n");
-	/* errno should be set for us. */
-	goto errout;
-    }
-    preempt_count = v_num(v);
-    value_free(v);
-    v = NULL;
-
-    if (SOFTIRQ_COUNT(preempt_count) || HARDIRQ_COUNT(preempt_count)) {
-	vdebug(3,LA_TARGET,LF_XV,"in interrupt context (hardirq=%d,softirq=%d)\n",
-	       HARDIRQ_COUNT(preempt_count),SOFTIRQ_COUNT(preempt_count));
-	tid = TID_GLOBAL;
-	tgid = TID_GLOBAL;
-	taskv = NULL;
-
-	vdebug(5,LA_TARGET,LF_XV,
-	       "loading global thread cause in hard/soft irq (0x%"PRIx64")\n",
-	       preempt_count);
-    }
-    else {
-	/* Now, load the current task_struct. */
-	taskv = target_load_value_member(target,xstate->default_tlctxt,
-					 threadinfov,"task",NULL,
-					 LOAD_FLAG_AUTO_DEREF);
-
-	if (!taskv) {
-	    verror("could not load current task!  cannot get current TID!\n");
-	    /* errno should be set for us. */
-	    goto errout;
+	 * We want to set the current thread's context to whatever the
+	 * global thread was detected to be in.  Enforce our will, no
+	 * matter what the personality does!
+	 */
+	if (tthread->tidctxt != target->global_thread->tidctxt) {
+	    vwarn("personality set current thread context to %d; global thread"
+		  " context is %d; forcing current to global!\n",
+		  tthread->tidctxt,target->global_thread->tidctxt);
+	    tthread->tidctxt = target->global_thread->tidctxt;
 	}
 
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     taskv,"pid",NULL,LOAD_FLAG_NONE);
-	if (!v) {
-	    verror("could not load pid in current task; BUG?\n");
-	    /* errno should be set for us. */
-	    goto errout;
-	}
-	tid = v_i32(v);
-	value_free(v);
-	v = NULL;
-
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     taskv,"parent",NULL,LOAD_FLAG_NONE);
-	if (!v) {
-	    verror("could not load parent in task value; BUG?\n");
-	    /* errno should be set for us. */
-	    goto errout;
-	}
-	else if (v_addr(v) != value_addr(taskv)) {
-	    ptthread = (struct target_thread *)				\
-		g_hash_table_lookup(xstate->task_struct_addr_to_thread,
-				    (gpointer)v_addr(v));
-	    if (!ptthread) {
-		/* Gotta load it. */
-		value_free(v);
-		v = target_load_value_member(target,xstate->default_tlctxt,
-					     taskv,"parent",NULL,
-					     LOAD_FLAG_AUTO_DEREF);
-		if (!v) {
-		    verror("could not load parent value from task;"
-			   " ptid will be invalid!\n");
-		}
-		else {
-		    ptthread = __xen_vm_load_thread_from_value(target,v);
-		    if (!ptthread) {
-			verror("could not load parent thread from value;"
-			       " ptid will be invalid!\n");
-		    }
-		    else {
-			vdebug(9,LA_TARGET,LF_XV,
-			       "loaded tid %"PRIiTID" parent %"PRIiTID"\n",
-			       tid,ptthread->tid);
-			/* Don't free it! */
-			v = NULL;
-		    }
-		}
-	    }
-	    else 
-		vdebug(9,LA_TARGET,LF_XV,
-		       "tid %"PRIiTID" parent %"PRIiTID" already loaded\n",
-		       tid,ptthread->tid);
-
-	    if (ptthread)
-		ptid = ptthread->tid;
-	}
-	else if (tid != 0) {
-	    vwarn("tid %"PRIiTID" ->parent is itself!\n",tid);
-	}
-	if (v) {
-	    value_free(v);
-	    v = NULL;
-	}
-
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     taskv,xstate->task_uid_member_name,
-				     NULL,LOAD_FLAG_NONE);
-	if (!v) {
-	    verror("could not load %s in task value; BUG?\n",
-		   xstate->task_uid_member_name);
-	    uid = -1;
-	}
-	else {
-	    uid = v_i32(v);
-	    value_free(v);
-	    v = NULL;
-	}
-
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     taskv,xstate->task_gid_member_name,
-				     NULL,LOAD_FLAG_NONE);
-	if (!v) {
-	    verror("could not load %s in task value; BUG?\n",
-		   xstate->task_gid_member_name);
-	    gid = -1;
-	}
-	else {
-	    gid = v_i32(v);
-	    value_free(v);
-	    v = NULL;
-	}
-
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     taskv,"comm",NULL,LOAD_FLAG_NONE);
-	if (!v) {
-	    verror("could not load comm in current task; BUG?\n");
-	    /* errno should be set for us. */
-	    goto errout;
-	}
-	comm = strndup(v->buf,v->bufsiz);
-	value_free(v);
-	v = NULL;
-
-	vdebug(5,LA_TARGET,LF_XV,"loading thread %"PRIiTID"\n",tid);
-
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     taskv,"tgid",NULL,LOAD_FLAG_NONE);
-	if (!v) {
-	    verror("could not load tgid in current task; BUG?\n");
-	    /* errno should be set for us. */
-	    goto errout;
-	}
-	tgid = v_num(v);
-	value_free(v);
-	v = NULL;
-
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     taskv,"flags",NULL,LOAD_FLAG_NONE);
-	if (!v) {
-	    verror("could not load flags in task %"PRIiTID" current task; BUG?\n",
-		   tid);
-	    /* errno should be set for us. */
-	    goto errout;
-	}
-	task_flags = v_unum(v);
-	value_free(v);
-	v = NULL;
-
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     taskv,"group_leader",NULL,LOAD_FLAG_NONE);
-	if (!v) {
-	    verror("could not load group_leader in task %"PRIiTID" current task; BUG?\n",
-		   tid);
-	    /* errno should be set for us. */
-	    goto errout;
-	}
-	group_leader = v_addr(v);
-	value_free(v);
-	v = NULL;
-
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     taskv,"mm",NULL,LOAD_FLAG_NONE);
-	if (!v) {
-	    verror("could not see if thread %"PRIiTID" was kernel or user\n",tid);
-	    goto errout;
-	}
-	mm_addr = v_addr(v);
-	value_free(v);
-	v = NULL;
-
-	if (mm_addr) {
-	    v = target_load_value_member(target,xstate->default_tlctxt,
-					 taskv,"mm.pgd",NULL,LOAD_FLAG_NONE);
-	    if (!v) {
-		verror("could not load thread %"PRIiTID" pgd (for cr3 tracking)\n",
-		       tid);
-		goto errout;
-	    }
-	    /* Load a unum, so we get the right number of bytes read. */
-	    pgd = (uint64_t)v_unum(v);
-	    value_free(v);
-	    v = NULL;
-
-	    /* If pgd was NULL, try task_struct.active_mm.pgd */
-	    if (pgd == 0) {
-		v = target_load_value_member(target,xstate->default_tlctxt,
-					     taskv,"active_mm.pgd",NULL,
-					     LOAD_FLAG_NONE);
-		if (!v) {
-		    vwarn("could not load thread %"PRIiTID" (active_mm) pgd (for cr3 tracking)\n",
-			 tid);
-		    goto errout;
-		}
-		/* Load a unum, so we get the right number of bytes read. */
-		pgd = (uint64_t)v_unum(v);
-		value_free(v);
-		v = NULL;
-	    }
-	}
-    }
-
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 threadinfov,"flags",NULL,LOAD_FLAG_NONE);
-    if (!v) {
-	verror("could not load thread_info->flags in current thread; BUG?\n");
-	/* errno should be set for us. */
-	goto errout;
-    }
-    tiflags = v_unum(v);
-    value_free(v);
-    v = NULL;
-
-    /*
-     * Now, update the current thread with the value info we just
-     * loaded.  If it's not the global thread (irq context), we check
-     * our cache, and create/delete as needed.
-     */
-
-    /* Check the cache: */
-    if ((tthread = (struct target_thread *) \
-	 g_hash_table_lookup(target->threads,(gpointer)(uintptr_t)tid))) {
+	/*
+	 * Now, copy in the machine state.  Be careful -- if we have not
+	 * allocated tthread->state yet, allocate it now!
+	 */
 	tstate = (struct xen_vm_thread_state *)tthread->state;
-	/*
-	 * Check if this is a cached entry for an old task.  Except
-	 * don't check if the thread is TID_GLOBAL, since we must
-	 * always leave that meta-thread in the cache; it doesn't
-	 * represent a real system thread.
-	 */
-	if (tid != TID_GLOBAL 
-	    && (tstate->tgid != tgid 
-		|| (taskv && tstate->task_struct_addr != value_addr(taskv)))) {
-	    vdebug(5,LA_TARGET,LF_XV,
-		   "deleting non-matching cached old thread %"PRIiTID
-		   " (thread %p, tpc %p)\n",
-		   tid,tthread,tthread->tpc);
-	    target_add_state_change(target,tthread->tid,
-				    TARGET_STATE_CHANGE_THREAD_EXITED,
-				    0,0,0,0,NULL);
-	    target_delete_thread(target,tthread,0);
-	    tstate = NULL;
-	    tthread = NULL;
-	}
-	else {
-	    vdebug(5,LA_TARGET,LF_XV,
-		   "found matching cached thread %"PRIiTID" (thread %p, tpc %p)\n",
-		   tid,tthread,tthread->tpc);
-	}
+	if (!tstate)
+	    tthread->state = tstate = \
+		(struct xen_vm_thread_state *)calloc(1,sizeof(*tstate));
+
+	memcpy(&tstate->context,&gtstate->context,sizeof(gtstate->context));
+
+	/* Also update the regcache for the current thread. */
+	target_regcache_copy_all(target->global_thread,
+				 target->global_thread->tidctxt,
+				 tthread,tthread->tidctxt);
     }
-
-    if (!tthread) {
-	/* Build a new one. */
-	tstate = (struct xen_vm_thread_state *)calloc(1,sizeof(*tstate));
-	tthread = target_create_thread(target,tid,tstate);
-	g_hash_table_insert(xstate->task_struct_addr_to_thread,
-			    (gpointer)value_addr(taskv),tthread);
-
-	target_add_state_change(target,tid,TARGET_STATE_CHANGE_THREAD_CREATED,
-				0,0,0,0,NULL);
-
-	vdebug(5,LA_TARGET,LF_XV,
-	       "built new thread %"PRIiTID" (thread %p, tpc %p)\n",
-		   tid,tthread,tthread->tpc);
-    }
-
-    /*
-     * Set the current thread (might be a real thread, or the global thread).
-     */
-    target->current_thread = tthread;
-    target_thread_set_status(target->current_thread,THREAD_STATUS_RUNNING);
-
-    if (ipval < xstate->kernel_start_addr) 
-	tthread->tidctxt = THREAD_CTXT_USER;
     else
-	tthread->tidctxt = THREAD_CTXT_KERNEL;
+	target->current_thread = target->global_thread;
 
-    /*
-     * If this is a user-level thread that is in the kernel, pull our
-     * user level-saved regs off the stack and put them in alt_context.
-     */
-    if (mm_addr && tthread->tidctxt == THREAD_CTXT_KERNEL) {
-	ADDR stack_top = value_addr(threadinfov) + THREAD_SIZE;
-	ADDR ptregs_stack_addr;
-
-	if (target->wordsize == 8) {
-	    ptregs_stack_addr = 
-		stack_top - 0 - symbol_get_bytesize(xstate->pt_regs_type);
-	}
-	else {
-	    ptregs_stack_addr = 
-		stack_top - 8 - symbol_get_bytesize(xstate->pt_regs_type);
-	}
-
-	vdebug(5,LA_TARGET,LF_XV,
-	       "loading userspace regs from kernel stack for user tid %d"
-	       " currently in kernel!\n",
-	       tid);
-
-	memset(&tstate->alt_context,0,sizeof(tstate->alt_context));
-
-	v = target_load_addr_real(target,ptregs_stack_addr,
-				  LOAD_FLAG_NONE,
-				  symbol_get_bytesize(xstate->pt_regs_type));
-	if (!v) {
-	    verror("could not load stack register save frame task %"PRIiTID"!\n",
-		   tid);
-	    goto errout;
-	}
-
-	/* Copy the first range. */
-	if (target->wordsize == 8)
-	    memcpy(&tstate->alt_context.user_regs,v->buf,8 * 15);
-	else
-	    memcpy(&tstate->alt_context.user_regs,v->buf,4 * 7);
-
-	/* Copy the second range. */
-	/**
-	 ** WARNING: esp and ss may not be valid if the sleeping thread was
-	 ** interrupted while it was in the kernel, because the interrupt
-	 ** gate does not push ss and esp; see include/asm-i386/processor.h .
-	 **/
-#if __WORDSIZE == 64
-	int ip_offset = offsetof(struct vcpu_guest_context,user_regs.rip);
-#else
-	int ip_offset = offsetof(struct vcpu_guest_context,user_regs.eip);
-#endif
-	if (target->wordsize == 8)
-	    memcpy(((char *)&tstate->alt_context) + ip_offset,
-		   v->buf + xstate->pt_regs_ip_offset,8 * 5);
-	else
-	    memcpy(((char *)&tstate->alt_context) + ip_offset,
-		   v->buf + xstate->pt_regs_ip_offset,4 * 5);
-
-	/*
-	 * ds, es, fs, gs are all special; see other comments.
-	 */
-	if (!xstate->thread_struct_has_ds_es && xstate->pt_regs_has_ds_es) {
-	    /* XXX: this works because we know the location of (x)ds/es;
-	     * it's only on i386/x86; and because Xen pads its
-	     * cpu_user_regs structs from u16s to ulongs for segment
-	     * registers.  :)
-	     */
-	    memcpy(&tstate->alt_context.user_regs.ds,
-		   (char *)v->buf + 7 * target->wordsize,v->bufsiz);
-	    memcpy(&tstate->alt_context.user_regs.es,
-		   (char *)v->buf + 8 * target->wordsize,v->bufsiz);
-	}
-	if (!xstate->thread_struct_has_fs && xstate->pt_regs_has_fs_gs) {
-	    /* XXX: this is only true on newer x86 stuff; x86_64 and old
-	     * i386 stuff did not save it on the stack.
-	     */
-	    memcpy(&tstate->alt_context.user_regs.fs,
-		   (char *)v->buf + 9 * target->wordsize,v->bufsiz);
-	}
-
-	ADDR old_rsp = 0;
-	if (!target_read_addr(target,
-			      gtstate->context.gs_base_kernel + 0xbf00,
-			      target->wordsize,
-			      (unsigned char *)&old_rsp)) {
-	    verror("could not read %%gs:old_rsp (%%gs+0xbf00)"
-		   " (0x%"PRIxADDR":%"PRIxOFFSET"); cannot continue!\n",
-		   (ADDR)gtstate->context.gs_base_kernel,0xbf00UL);
-	    if (!errno)
-		errno = EFAULT;
-	    return 0;
-	}
-#if __WORDSIZE == 64
-	int sp_offset = offsetof(struct vcpu_guest_context,user_regs.rsp);
-#else
-	int sp_offset = offsetof(struct vcpu_guest_context,user_regs.esp);
-#endif
-	vdebug(5,LA_TARGET,LF_XV,
-	       "stacked rsp 0x%"PRIxADDR", old_rsp 0x%"PRIxADDR"\n",
-	       *(ADDR *)(((char *)&tstate->alt_context) + sp_offset),old_rsp);
-	if (target->wordsize == 8) 
-	    memcpy(((char *)&tstate->alt_context) + sp_offset,&old_rsp,8);
-	else
-	    memcpy(((char *)&tstate->alt_context) + sp_offset,&old_rsp,4);
-
-	/*	
-#if __WORDSIZE == 64
-	int r_offset = offsetof(struct vcpu_guest_context,user_regs.r12);
-	vdebug(5,LA_TARGET,LF_XV,
-	       "stacked r12 0x%"PRIxADDR", adjusting\n",
-	       *(ADDR *)(((char *)&tstate->alt_context) + r_offset));
-	*(ADDR *)(((char *)&tstate->alt_context) + r_offset) += 8;
-#endif
-	*/
-
-	value_free(v);
-	v = NULL;
-    }
-
-    if (taskv) { //!(SOFTIRQ_COUNT(preempt_count) || HARDIRQ_COUNT(preempt_count))) {
-	if (tstate->task_struct) {
-	    vwarn("stale task_struct for thread %"PRIiTID"!\n",tid);
-	    value_free(tstate->task_struct);
-	    tstate->task_struct = NULL;
-	}
-	tstate->task_struct_addr = value_addr(taskv);
-	tstate->task_struct = taskv;
-	tstate->tgid = tgid;
-	tstate->task_flags = task_flags;
-	tstate->group_leader = group_leader;
-    }
-
-    /*
-     * Check for stale cached values.  These should not be here, but... !
-     */
-    if (tstate->thread_struct) {
-	vwarn("stale thread_struct for thread %"PRIiTID"!\n",tid);
-	value_free(tstate->thread_struct);
-	tstate->thread_struct = NULL;
-    }
-    if (tstate->thread_info) {
-	vwarn("stale thread_info for thread %"PRIiTID"!\n",tid);
-	value_free(tstate->thread_info);
-	tstate->thread_info = NULL;
-    }
-
-    tstate->thread_info = threadinfov;
-    tstate->thread_info_flags = tiflags;
-    tstate->thread_info_preempt_count = preempt_count;
-
-    /*
-     * We don't bother loading this, because it's our "current" thread
-     * -- all the state in the thread_struct is directly accessible from
-     * hardware.
-     */
-    tstate->thread_struct = NULL;
-    tstate->ptregs_stack_addr = 0;
-    tstate->mm_addr = mm_addr;
-    tstate->pgd = pgd;
-
-    /*
-     * If the current thread is not the global thread, fill in a little
-     * bit more info for the global thread.
-     */
-    if (tthread != target->global_thread) {
-	/*
-	 * Copy context from global thread to current thread -- from Xen info.
-	 */
-	memcpy(&tstate->context,&gtstate->context,sizeof(vcpu_guest_context_t));
-
-	/*
-	 * Don't copy in any of the other per-xen thread state; we want
-	 * to force users to load and operate on real threads for any
-	 * other information.  The global thread only has thread_info in
-	 * interrupt context.
-	 */
-	gtstate->task_struct_addr = 0;
-	gtstate->task_struct = NULL;
-	gtstate->task_flags = 0;
-	gtstate->group_leader = 0;
-	gtstate->thread_struct = NULL;
-	gtstate->ptregs_stack_addr = 0;
-	gtstate->mm_addr = 0;
-	gtstate->pgd = 0;
-
-	/* BUT, do copy in thread_info. */
-	if (gtstate->thread_info) {
-	    vwarn("stale thread_info for global thread %"PRIiTID"!\n",TID_GLOBAL);
-	    value_free(gtstate->thread_info);
-	    gtstate->thread_info = NULL;
-	}
-	gtstate->thread_info = value_clone(threadinfov);
-	gtstate->thread_info_flags = tiflags;
-	gtstate->thread_info_preempt_count = preempt_count;
-
-	if (mm_addr) 
-	    tthread->supported_overlay_types = TARGET_TYPE_XEN_PROCESS;
-	else
-	    tthread->supported_overlay_types = TARGET_TYPE_NONE;
-
-	if (tthread->name)
-	    free(tthread->name);
-	tthread->name = comm;
-	tthread->ptid = ptid;
-	tthread->uid = uid;
-	tthread->gid = gid;
-	comm = NULL;
-    }
+    target_thread_set_status(target->current_thread,THREAD_STATUS_RUNNING);
 
     vdebug(4,LA_TARGET,LF_XV,
 	   "debug registers (vcpu context): 0x%"PRIxADDR",0x%"PRIxADDR
 	   ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
-	   tstate->context.debugreg[0],tstate->context.debugreg[1],
-	   tstate->context.debugreg[2],tstate->context.debugreg[3],
-	   tstate->context.debugreg[6],tstate->context.debugreg[7]);
+	   gtstate->context.debugreg[0],gtstate->context.debugreg[1],
+	   gtstate->context.debugreg[2],gtstate->context.debugreg[3],
+	   gtstate->context.debugreg[6],gtstate->context.debugreg[7]);
 
     /* Mark its state as valid in our cache. */
     tthread->valid = 1;
 
-    if (v)
-	value_free(v);
-    if (comm)
-	free(comm);
-
     return tthread;
 
  errout:
-    if (v)
-	value_free(v);
-    if (comm)
-	free(comm);
-    if (threadinfov)
-	value_free(threadinfov);
-    if (taskv)
-	value_free(taskv);
-    if (tstate) {
-	tstate->thread_info = NULL;
-	tstate->thread_struct = NULL;
-	tstate->task_struct = NULL;
-    }
-
     /* XXX: should we really set this here? */
     target->current_thread = target->global_thread;
 
@@ -3432,30 +1733,6 @@ tid_t xen_vm_gettid(struct target *target) {
 }
 
 void xen_vm_free_thread_state(struct target *target,void *state) {
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
-    struct xen_vm_thread_state *xtstate = (struct xen_vm_thread_state *)state;
-
-    /*
-     * XXX: this stinks, but it's the only time we have to remove a
-     * thread from our hash cache of task_struct_addrs_to_thread .
-     */
-    if (xstate->task_struct_addr_to_thread)
-	g_hash_table_remove(xstate->task_struct_addr_to_thread,
-			    (gpointer)xtstate->task_struct_addr);
-
-    if (xtstate->thread_struct) {
-	value_free(xtstate->thread_struct);
-	xtstate->thread_struct = NULL;
-    }
-    if (xtstate->thread_info) {
-	value_free(xtstate->thread_info);
-	xtstate->thread_info = NULL;
-    }
-    if (xtstate->task_struct) {
-	value_free(xtstate->task_struct);
-	xtstate->task_struct = NULL;
-    }
-
     free(state);
 }
 
@@ -3503,28 +1780,12 @@ static int xen_vm_init(struct target *target) {
     /* Create the default thread. */
     tstate = (struct xen_vm_thread_state *)calloc(1,sizeof(*tstate));
 
-    tstate->task_struct_addr = 0;
-
-    tstate->task_struct = NULL;
-    tstate->tgid = 0;
-    tstate->task_flags = 0;
-    tstate->group_leader = 0;
-    /* Populate tstate->task_struct_addr later in postloadinit once we 
-     * have debuginfo (and thus hopefully the address of the `init_task'
-     * symbol.
-     */
-    tstate->thread_info = NULL;
-    tstate->thread_info_flags = 0;
-    tstate->thread_info_preempt_count = 0;
-    tstate->thread_struct = NULL;
-    tstate->ptregs_stack_addr = 0;
-
-    target->global_thread = target_create_thread(target,TID_GLOBAL,tstate);
+    target->global_thread = target_create_thread(target,TID_GLOBAL,tstate,NULL);
     /* Default thread is always running. */
     target_thread_set_status(target->global_thread,THREAD_STATUS_RUNNING);
 
     /* Create our default context now; update its region later. */
-    xstate->default_tlctxt =
+    target->global_tlctxt =
 	target_location_ctxt_create(target,TID_GLOBAL,NULL);
 
     return 0;
@@ -3942,15 +2203,18 @@ static int xen_vm_attach_internal(struct target *target) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 #ifdef ENABLE_XENACCESS
-    struct bsymbol *tbs;
+    ADDR init_task_addr,pgd_addr;
 #endif
 #ifdef ENABLE_LIBVMI
     int size;
     char *tmp;
 #endif
     OFFSET tasks_offset,pid_offset,mm_offset,pgd_offset;
-    struct xen_vm_spec *xspec = \
-	(struct xen_vm_spec *)target->spec->backend_spec;
+    char *symbol_file;
+    char *val;
+    struct xen_vm_spec *xspec;
+
+    xspec = (struct xen_vm_spec *)target->spec->backend_spec;
 
     domctl.cmd = XEN_DOMCTL_setdebugging;
     domctl.domain = xstate->id;
@@ -3991,42 +2255,47 @@ static int xen_vm_attach_internal(struct target *target) {
     }
 
     /*
-     * Make sure xenaccess/libvmi is setup to read from userspace memory.
+     * Make sure xenaccess/libvmi is setup to read from userspace
+     * memory.
+     *
+     * This is hacky, but we do it by reading properties that the
+     * personality has (hopefully) set.
      */
-    errno = 0;
-    tasks_offset = symbol_offsetof(xstate->task_struct_type,"tasks",NULL);
-    if (errno) 
-	vwarn("could not resolve offset of task_struct.tasks!\n");
-    errno = 0;
-    pid_offset = symbol_offsetof(xstate->task_struct_type,"pid",NULL);
-    if (errno) 
-	vwarn("could not resolve offset of task_struct.pid!\n");
-    errno = 0;
-    mm_offset = symbol_offsetof(xstate->task_struct_type,"mm",NULL);
-    if (errno) 
-	vwarn("could not resolve offset of task_struct.mm!\n");
-    errno = 0;
-    pgd_offset = symbol_offsetof(xstate->mm_struct_type,"pgd",NULL);
-    if (errno) 
-	vwarn("could not resolve offset of mm_struct.pgd!\n");
+#ifdef ENABLE_XENACCESS
+    val = (char *)g_hash_table_lookup(target->config,"OS_KERNEL_INIT_TASK_ADDR");
+    if (val)
+	init_task_addr = (ADDR)strtol(val,NULL,0);
+    val = (char *)g_hash_table_lookup(target->config,"OS_KERNEL_PGD_ADDR");
+    if (val)
+	pgd_addr = (ADDR)strtol(val,NULL,0);
+#endif
+
+    val = (char *)g_hash_table_lookup(target->config,"OS_KERNEL_TASKS_OFFSET");
+    if (val)
+	tasks_offset = (ADDR)strtol(val,NULL,0);
+    val = (char *)g_hash_table_lookup(target->config,"OS_KERNEL_PID_OFFSET");
+    if (val)
+	pid_offset = (ADDR)strtol(val,NULL,0);
+    val = (char *)g_hash_table_lookup(target->config,"OS_KERNEL_MM_OFFSET");
+    if (val)
+	mm_offset = (ADDR)strtol(val,NULL,0);
+    val = (char *)g_hash_table_lookup(target->config,"OS_KERNEL_MM_PGD_OFFSET");
+    if (val)
+	pgd_offset = (ADDR)strtol(val,NULL,0);
+
+    symbol_file = (char *)g_hash_table_lookup(target->config,
+					      "OS_KERNEL_SYSMAP_FILE");
+    if (!symbol_file)
+	symbol_file = "";
 
 #ifdef ENABLE_XENACCESS
-    xstate->xa_instance.init_task = xstate->init_task_addr;
+    xstate->xa_instance.init_task = init_task_addr;
     xstate->xa_instance.page_offset = 0;
     xstate->xa_instance.os.linux_instance.tasks_offset = tasks_offset;
     xstate->xa_instance.os.linux_instance.pid_offset = pid_offset;
     xstate->xa_instance.os.linux_instance.mm_offset = mm_offset;
     xstate->xa_instance.os.linux_instance.pgd_offset = pgd_offset;
-
-    tbs = target_lookup_sym(target,"swapper_pg_dir",NULL,NULL,
-			    SYMBOL_TYPE_FLAG_NONE);
-    if (!tbs) 
-	vwarn("could not find 'swapper_pg_dir'; userspace vm access will fail!\n");
-    else {
-	xstate->xa_instance.kpgd = 
-	    target_addressof_symbol(target,TID_GLOBAL,tbs,LOAD_FLAG_NONE,NULL);
-	bsymbol_release(tbs);
-    }
+    xstate->xa_instance.kpgd = pgd_addr;
 #endif
 #ifdef ENABLE_LIBVMI
     /*
@@ -4043,19 +2312,15 @@ static int xen_vm_attach_internal(struct target *target) {
 #define LIBVMI_CONFIG_TEMPLATE_HVM "{ ostype=\"Linux\"; sysmap=\"%s\"; }"
 
     if (0 && xstate->hvm) {
-	size = strlen(LIBVMI_CONFIG_TEMPLATE_HVM) 
-	    + strlen(xstate->kernel_sysmap_filename) + 1;
+	size = strlen(LIBVMI_CONFIG_TEMPLATE_HVM) + strlen(symbol_file) + 1;
 	tmp = malloc(size);
-	snprintf(tmp,size,LIBVMI_CONFIG_TEMPLATE_HVM,
-		 xstate->kernel_sysmap_filename);
+	snprintf(tmp,size,LIBVMI_CONFIG_TEMPLATE_HVM,symbol_file);
     }
     else {
-	size = strlen(LIBVMI_CONFIG_TEMPLATE) 
-	    + strlen(xstate->kernel_sysmap_filename) + 4 * 16 + 1;
+	size = strlen(LIBVMI_CONFIG_TEMPLATE) + strlen(symbol_file) + 4 * 16 + 1;
 	tmp = malloc(size);
 	snprintf(tmp,size,LIBVMI_CONFIG_TEMPLATE,
-		 xstate->kernel_sysmap_filename,
-		 tasks_offset,mm_offset,pid_offset,pgd_offset);
+		 symbol_file,tasks_offset,mm_offset,pid_offset,pgd_offset);
     }
 
     if (vmi_init_complete(&xstate->vmi_instance, tmp) == VMI_FAILURE) {
@@ -4071,13 +2336,6 @@ static int xen_vm_attach_internal(struct target *target) {
     xstate->vmi_page_size = XC_PAGE_SIZE;
 #endif
 
-    /*
-     * Make sure to pull in our modules!
-     */
-    list_for_each_entry_safe(space,tspace,&target->spaces,space) {
-	xen_vm_updateregions(target,space);
-    }
-
     if (target->evloop && xstate->evloop_fd < 0) {
 	xen_vm_attach_evloop(target,target->evloop);
     }
@@ -4091,7 +2349,7 @@ static int xen_vm_attach_internal(struct target *target) {
 	 * Good practice anyway!
 	 */
 
-	if (!(tthread = xen_vm_load_cached_thread(target,TID_GLOBAL))) {
+	if (!(tthread = __xen_vm_load_cached_thread(target,TID_GLOBAL))) {
 	    if (!errno) 
 		errno = EINVAL;
 	    verror("could not load cached thread %"PRIiTID"\n",TID_GLOBAL);
@@ -4172,7 +2430,7 @@ static int xen_vm_detach(struct target *target) {
 	xen_vm_detach_evloop(target);
 
     if (xstate->live_shinfo)
-	munmap(xstate->live_shinfo,PAGE_SIZE);
+	munmap(xstate->live_shinfo,__PAGE_SIZE);
 
     if (xc_domctl(xc_handle,&domctl)) {
 	verror("could not disable debugging of dom %d!\n",xstate->id);
@@ -4203,47 +2461,16 @@ static int xen_vm_detach(struct target *target) {
 
 static int xen_vm_fini(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
-    REFCNT trefcnt;
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
     if (target->opened) 
 	xen_vm_detach(target);
 
-    if (xstate->task_struct_addr_to_thread) {
-	g_hash_table_destroy(xstate->task_struct_addr_to_thread);
-	xstate->task_struct_addr_to_thread = NULL;
-    }
-
-    if (xstate->init_task)
-	bsymbol_release(xstate->init_task);
-    if (xstate->task_struct_type)
-	symbol_release(xstate->task_struct_type);
-    if (xstate->thread_struct_type)
-	symbol_release(xstate->thread_struct_type);
-    if (xstate->task_struct_type_ptr)
-	symbol_release(xstate->task_struct_type_ptr);
-    if (xstate->mm_struct_type)
-	symbol_release(xstate->mm_struct_type);
-    if (xstate->pt_regs_type)
-	symbol_release(xstate->pt_regs_type);
-    if (xstate->thread_info_type)
-	RPUT(xstate->thread_info_type,symbol,target,trefcnt);
-    if (xstate->modules)
-	bsymbol_release(xstate->modules);
-    if (xstate->module_type)
-	bsymbol_release(xstate->module_type);
-
     if (xstate->vmpath)
 	free(xstate->vmpath);
     if (xstate->kernel_filename)
 	free(xstate->kernel_filename);
-    if (xstate->kernel_elf_filename)
-	free(xstate->kernel_elf_filename);
-    if (xstate->kernel_sysmap_filename)
-	free(xstate->kernel_sysmap_filename);
-    if (xstate->kernel_module_dir)
-	free(xstate->kernel_module_dir);
     if (xstate->name)
 	free(xstate->name);
     if (xstate)
@@ -4291,12 +2518,14 @@ static int xen_vm_loadspaces(struct target *target) {
  * So, XXX: come back to it later.
  */
 static int xen_vm_loadregions(struct target *target,struct addrspace *space) {
-    struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
     struct memregion *region;
     struct memrange *range;
+    char *kernel_filename;
 
-    region = memregion_create(space,REGION_TYPE_MAIN,
-			      xstate->kernel_elf_filename);
+    kernel_filename = 
+	(char *)g_hash_table_lookup(target->config,"OS_KERNEL_FILENAME");
+
+    region = memregion_create(space,REGION_TYPE_MAIN,kernel_filename);
     if (!region)
 	return -1;
     range = memrange_create(region,0,ADDRMAX,0,
@@ -4304,7 +2533,7 @@ static int xen_vm_loadregions(struct target *target,struct addrspace *space) {
     if (!range)
 	return -1;
 
-    xstate->default_tlctxt->region = region;
+    target->global_tlctxt->region = region;
 
     return 0;
 }
@@ -4382,6 +2611,16 @@ static int xen_vm_loaddebugfiles(struct target *target,
     }
 
     /*
+     * With Xen VMs, we can't always know what the vCPU is running as
+     * from the xenstore.  For instance, with an HVM, we can't seem to
+     * figure out whether it's running x86_64, x32, or i386 at all; we
+     * have to load the kernel debuginfo binary to know.
+     */
+    if (!target->arch) {
+	target->arch = debugfile->binfile->arch;
+    }
+
+    /*
      * Propagate some binfile info...
      */
     region->base_phys_addr = region->binfile->base_phys_addr;
@@ -4393,751 +2632,44 @@ static int xen_vm_loaddebugfiles(struct target *target,
     return retval;
 }
 
-static target_kind_t xen_vm_loadkind(struct target *target) {
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
-
-    if (strcmp(xstate->ostype,"linux") == 0) {
-	vdebug(2,LA_TARGET,LF_XV | LF_OS,
-	       "OS type for guest is linux\n");
-	target->kind_ops.os = &os_linux_generic_ops;
-	return TARGET_KIND_OS;
-    }
-    else if (strcmp(xstate->ostype,"hvm") == 0) {
-	vdebug(2,LA_TARGET,LF_XV | LF_OS,
-	       "assuming OS type for HVM guest is linux\n");
-	target->kind_ops.os = &os_linux_generic_ops;
-	return TARGET_KIND_OS;
-    }
-    else
-	return TARGET_KIND_NONE;
-}
-
 static int xen_vm_postloadinit(struct target *target) {
+    int rc;
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
-    struct bsymbol *thread_info_type;
-    struct bsymbol *mm_struct_type;
-    struct lsymbol *tmpls;
-    struct bsymbol *tmpbs;
 
     /*
-     * Assume if we did this, we've done it all.
+     * We might not know this until now!  Which register is the fbreg is
+     * dependent on host cpu type, not target cpu type.
      */
-    if (xstate->init_task) 
-	return 0;
-
-    /*
-     * Try to load some debuginfo stuff so we can provide better
-     * functionality!  We have to do this in target_attach because only
-     * at that point can we know that the debuginfo sources have been
-     * loaded.
-     *
-     */
-
-    /*
-     * Find the kernel start address.
-     */
-    
-    /* Try .text first (and fake the delimiter!!!) */
-    if (xstate->kernel_start_addr == 0) {
-	tmpbs = target_lookup_sym(target,".text","|",NULL,
-				  SYMBOL_TYPE_FLAG_FUNC);
-	if (tmpbs) {
-	    if (target_bsymbol_resolve_base(target,xstate->default_tlctxt,tmpbs,
-					    &xstate->kernel_start_addr,NULL)) {
-		vwarnopt(1,LA_TARGET,LF_XV,
-			 "could not resolve addr of .text;"
-			 " trying startup_(32|64)!\n");
-	    }
-	    bsymbol_release(tmpbs);
-	    tmpbs = NULL;
-	}
-	else {
-	    vwarnopt(1,LA_TARGET,LF_XV,
-		     "could not find symbol .text; trying startup_(32|64)!\n");
-	}
-    }
-
-    /* If we didn't find .text, try startup_(32|64). */
-    if (xstate->kernel_start_addr == 0) {
-	if (target->wordsize == 4) {
-	    tmpbs = target_lookup_sym(target,"startup_32",NULL,NULL,
-				      SYMBOL_TYPE_FLAG_FUNC);
-	    if (tmpbs) {
-		if (target_bsymbol_resolve_base(target,xstate->default_tlctxt,
-						tmpbs,&xstate->kernel_start_addr,
-						NULL)) {
-		    vwarnopt(1,LA_TARGET,LF_XV,
-			     "could not resolve addr of startup_32!\n");
-		}
-		bsymbol_release(tmpbs);
-		tmpbs = NULL;
-	    }
-	    else {
-		vwarnopt(1,LA_TARGET,LF_XV,
-			 "could not find symbol startup_32!\n");
-	    }
-	}
-	else {
-	    tmpbs = target_lookup_sym(target,"startup_64",NULL,NULL,
-				      SYMBOL_TYPE_FLAG_FUNC);
-	    if (tmpbs) {
-		if (target_bsymbol_resolve_base(target,xstate->default_tlctxt,
-						tmpbs,&xstate->kernel_start_addr,
-						NULL)) {
-		    vwarnopt(1,LA_TARGET,LF_XV,
-			     "could not resolve addr of startup_64!\n");
-		}
-		bsymbol_release(tmpbs);
-		tmpbs = NULL;
-	    }
-	    else {
-		vwarnopt(1,LA_TARGET,LF_XV,
-			 "could not find symbol startup_64!\n");
-	    }
-	}
-    }
-
-    /* If we still didn't find it... */
-    if (xstate->kernel_start_addr == 0) {
-	vwarn("could not find addr of .text nor startup_(32|64);"
-	      " using defaults!\n");
-
-	if (target->wordsize == 4) 
-	    xstate->kernel_start_addr = 0xC0000000;
-#if __WORDSIZE == 64
-	else if (target->wordsize == 8)
-	    xstate->kernel_start_addr = 0xFFFFFFFF81000000ULL;
-#endif
-    }
-
-    vdebug(3,LA_TARGET,LF_XV,"kernel start addr is 0x%"PRIxREGVAL"\n",
-	   xstate->kernel_start_addr);
-
-    xstate->init_task = target_lookup_sym(target,"init_task",NULL,NULL,
-					  SYMBOL_TYPE_FLAG_VAR);
-    if (!xstate->init_task) {
-	vwarn("could not lookup init_task in debuginfo; no multithread support!\n");
-	/* This is not an error, so we don't return error -- it
-	 * would upset target_open.
-	 */
-	return 0;
-    }
-
-    if (target_bsymbol_resolve_base(target,xstate->default_tlctxt,
-				    xstate->init_task,
-				    &xstate->init_task_addr,NULL)) {
-	vwarn("could not resolve addr of init_task!\n");
-    }
-
-    /*
-     * For x86_64, current_thread_ptr depends on this value -- so just
-     * load it once and keep it around forever.
-     * target_xen_vm_util::current_thread_ptr refreshes it as needed.
-     */
-    if (target->wordsize == 8) {
-	vdebug(3,LA_TARGET,LF_XV,
-	       "attempting to find per-cpu kernel stack offset\n");
-
-	if ((tmpbs = target_lookup_sym(target,"kernel_stack",NULL,NULL,
-				       SYMBOL_TYPE_FLAG_VAR))) {
-	    errno = 0;
-	    xstate->kernel_stack_percpu_offset = 
-		target_addressof_symbol(target,xstate->default_tlctxt,tmpbs,
-					LOAD_FLAG_NONE,NULL);
-	    bsymbol_release(tmpbs);
-	    if (errno) {
-		verror("could not load kernel_stack percpu offset;"
-		       " cannot continue!\n");
-		return -1;
-	    }
-	}
-	else if ((tmpbs = target_lookup_sym(target,"struct x8664_pda",NULL,NULL,
-					    SYMBOL_TYPE_FLAG_TYPE))) {
-	    errno = 0;
-	    xstate->kernel_stack_percpu_offset = 
-		symbol_offsetof(bsymbol_get_symbol(tmpbs),"kernelstack",NULL);
-	    if (errno) {
-		verror("could not get offsetof struct x8664_pda.kernelstack;"
-		       " cannot continue!\n");
-		return -1;
-	    }
-	}
-	else {
-	    verror("could not find x86_64 kernel stack percpu var in debuginfo;"
-		   " cannot continue!\n");
-	    return -1;
-	}
-    }
-
-    /* Fill in the init_task addr in the default thread. */
-    ((struct xen_vm_thread_state *)(target->global_thread->state))->task_struct_addr = \
-	xstate->init_task_addr;
-
-    /*
-     * Save the 'struct task_struct' type.  Hold a ref to it since it
-     * might be an autofollowed abstract origin type!
-     */
-    xstate->task_struct_type =						\
-	symbol_get_datatype(xstate->init_task->lsymbol->symbol);
-    RHOLD(xstate->task_struct_type,target);
-
-    mm_struct_type = target_lookup_sym(target,"struct mm_struct",
-				       NULL,NULL,SYMBOL_TYPE_FLAG_TYPE);
-    if (!mm_struct_type) {
-	vwarn("could not lookup 'struct mm_struct' in debuginfo;"
-	      " userspace vm access might fail!\n");
-	/* This is not an error, so we don't return error -- it
-	 * would upset target_open.
-	 */
-	return 0;
-    }
-    xstate->mm_struct_type = bsymbol_get_symbol(mm_struct_type);
-    RHOLD(xstate->mm_struct_type,target);
-    bsymbol_release(mm_struct_type);
-
-    /* We might also want to load tasks from pointers (i.e., the
-     * current task.
-     */
-    xstate->task_struct_type_ptr =				\
-	target_create_synthetic_type_pointer(target,xstate->task_struct_type);
-
-    /*
-     * Save the 'struct pt_regs' type.
-     */
-    tmpbs = target_lookup_sym(target,"struct pt_regs",NULL,NULL,
-			      SYMBOL_TYPE_FLAG_TYPE);
-    if (!tmpbs) {
-	vwarn("could not lookup 'struct pt_regs' in debuginfo;"
-	      " no multithread support!\n");
-	/* This is not an error, so we don't return error -- it
-	 * would upset target_open.
-	 */
-	return 0;
-    }
-    xstate->pt_regs_type = bsymbol_get_symbol(tmpbs);
-    RHOLD(xstate->pt_regs_type,target);
-    bsymbol_release(tmpbs);
-
-    /*
-     * Find out if pt_regs has ds/es (only i386 should have it; old i386
-     * has xds/xes; new i386 has ds/es).
-     */
-    if ((tmpls = symbol_lookup_sym(xstate->pt_regs_type,"ds",NULL))
-	|| (tmpls = symbol_lookup_sym(xstate->pt_regs_type,"xds",NULL))) {
-	lsymbol_release(tmpls);
-	xstate->pt_regs_has_ds_es = 1;
-    }
-    else
-	xstate->pt_regs_has_ds_es = 0;
-
-    /*
-     * Find out if pt_regs has fs/gs (only i386 should have it).
-     */
-    if ((tmpls = symbol_lookup_sym(xstate->pt_regs_type,"fs",NULL))) {
-	lsymbol_release(tmpls);
-	xstate->pt_regs_has_fs_gs = 1;
-    }
-    else
-	xstate->pt_regs_has_fs_gs = 0;
-
-    /*
-     * Find the offset of the (r|e)ip member in pt_regs (we use this for
-     * faster loading/saving).
-     */
-    errno = 0;
-    xstate->pt_regs_ip_offset = 
-	(int)symbol_offsetof(xstate->pt_regs_type,"ip",NULL);
-    if (errno) {
-	errno = 0;
-	xstate->pt_regs_ip_offset = 
-	    (int)symbol_offsetof(xstate->pt_regs_type,"eip",NULL);
-	if (errno) {
-	    errno = 0;
-	    xstate->pt_regs_ip_offset = 
-		(int)symbol_offsetof(xstate->pt_regs_type,"rip",NULL);
-	    if (errno) {
-		vwarn("could not find (r|e)ip in pt_regs; things will break!\n");
-	    }
-	}
-    }
-
-    /*
-     * Find out if task_struct has a thread_info member (older), or if
-     * it just has a void * stack (newer).  As always, either way, the
-     * thread_info struct is at the "bottom" of the stack; the stack top
-     * is either a page or two up.
-     */
-    if ((tmpls = symbol_lookup_sym(xstate->task_struct_type,"thread_info",NULL))) {
-	xstate->task_struct_has_thread_info = 1;
-	lsymbol_release(tmpls);
-    }
-    else if ((tmpls = symbol_lookup_sym(xstate->task_struct_type,"stack",NULL))) {
-	xstate->task_struct_has_stack = 1;
-	lsymbol_release(tmpls);
+    if (target->arch->type == ARCH_X86_64) {
+	target->fbregno = REG_X86_64_RBP;
+	target->spregno = REG_X86_64_RSP;
+	target->ipregno = REG_X86_64_RIP;
     }
     else {
-	vwarn("could not find thread_info nor stack member in struct task_struct;"
-	      " no multithread support!\n");
-	return 0;
+	target->fbregno = REG_X86_EBP;
+	target->spregno = REG_X86_ESP;
+	target->ipregno = REG_X86_EIP;
     }
 
-    /*
-     * Find out the name of the uid/gid members.
-     */
-    if ((tmpls = symbol_lookup_sym(xstate->task_struct_type,"uid",NULL))) {
-	xstate->task_uid_member_name = "uid";
-	xstate->task_gid_member_name = "gid";
-	lsymbol_release(tmpls);
-    }
-    else if ((tmpls = symbol_lookup_sym(xstate->task_struct_type,
-					"cred.uid",NULL))) {
-	xstate->task_uid_member_name = "cred.uid";
-	xstate->task_gid_member_name = "cred.gid";
-	lsymbol_release(tmpls);
-    }
-    else {
-	vwarn("could not find uid/gid info in struct task_struct;"
-	      " no uid/gid thread context support!\n");
-    }
+    rc = target_personality_postloadinit(target);
+    if (rc < 0)
+	return rc;
 
-    /*
-     * Save the 'struct thread_struct' type.
-     */
-    tmpbs = target_lookup_sym(target,"struct thread_struct",NULL,NULL,
-			      SYMBOL_TYPE_FLAG_TYPE);
-    if (!tmpbs) {
-	vwarn("could not lookup 'struct thread_struct' in debuginfo;"
-	      " no multithread support!\n");
-	/* This is not an error, so we don't return error -- it
-	 * would upset target_open.
-	 */
-	return 0;
-    }
-    xstate->thread_struct_type = bsymbol_get_symbol(tmpbs);
-    RHOLD(xstate->thread_struct_type,target);
-    bsymbol_release(tmpbs);
-    /* Now figure out if the member is esp/sp. */
-    if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"esp0",NULL))) {
-	xstate->thread_sp_member_name = "esp";
-	xstate->thread_sp0_member_name = "esp0";
-	lsymbol_release(tmpls);
-    }
-    else if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"sp",NULL))) {
-	xstate->thread_sp_member_name = "sp";
-	xstate->thread_sp0_member_name = "sp0";
-	lsymbol_release(tmpls);
-    }
-    else if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"rsp0",NULL))) {
-	xstate->thread_sp_member_name = "rsp";
-	xstate->thread_sp0_member_name = "rsp0";
-	lsymbol_release(tmpls);
-    }
-    else {
-	vwarn("could not find 'struct thread_struct.(esp0|sp|rsp0)';"
-	      " will cause problems!\n");
-	xstate->thread_sp_member_name = NULL;
-	xstate->thread_sp0_member_name = NULL;
-    }
-
-    /* Now figure out if thread_struct has an eip/ip member. */
-    if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"eip",NULL))) {
-	xstate->thread_ip_member_name = "eip";
-	lsymbol_release(tmpls);
-    }
-    else if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"ip",NULL))) {
-	xstate->thread_ip_member_name = "ip";
-	lsymbol_release(tmpls);
-    }
-    else if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"rip",NULL))) {
-	xstate->thread_ip_member_name = "rip";
-	lsymbol_release(tmpls);
-    }
-    else {
-	xstate->thread_ip_member_name = NULL;
-    }
-
-    /*
-     * Find out if thread_struct has ds/es (x86_64).
-     */
-    if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"es",NULL))) {
-	lsymbol_release(tmpls);
-	xstate->thread_struct_has_ds_es = 1;
-    }
-    else
-	xstate->thread_struct_has_ds_es = 0;
-
-    /*
-     * Find out if thread_struct has fs (x86_64 only -- it's on the
-     * pt_regs stack for i386).
-     *
-     * Also, gs is always in the thread_struct, as far as I can tell.
-     */
-    if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"fs",NULL))) {
-	lsymbol_release(tmpls);
-	xstate->thread_struct_has_fs = 1;
-    }
-    else
-	xstate->thread_struct_has_fs = 0;
-
-    /*
-     * Find out if thread_struct has debugreg, debugreg0, or perf_event.
-     */
-    if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"debugreg",
-				   NULL))) {
-	lsymbol_release(tmpls);
-	xstate->thread_struct_has_debugreg = 1;
-    }
-    else
-	xstate->thread_struct_has_debugreg = 0;
-    if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"debugreg0",
-				   NULL))) {
-	lsymbol_release(tmpls);
-	xstate->thread_struct_has_debugreg0 = 1;
-    }
-    else
-	xstate->thread_struct_has_debugreg0 = 0;
-    if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"ptrace_bps",
-				   NULL))) {
-	lsymbol_release(tmpls);
-	xstate->thread_struct_has_perf_debugreg = 1;
-    }
-    else
-	xstate->thread_struct_has_perf_debugreg = 0;
-
-    /*
-     * Load in thread_info struct type.
-     */
-    thread_info_type = target_lookup_sym(target,"struct thread_info",
-					 NULL,NULL,SYMBOL_TYPE_FLAG_TYPE);
-    if (!thread_info_type) {
-	vwarn("could not lookup 'struct thread_info' in debuginfo;"
-	      " no multithread support!\n");
-	/* This is not an error, so we don't return error -- it
-	 * would upset target_open.
-	 */
-	return 0;
-    }
-    xstate->thread_info_type = bsymbol_get_symbol(thread_info_type);
-    RHOLD(xstate->thread_info_type,target);
-    bsymbol_release(thread_info_type);
-
-    if (!(xstate->module_type = target_lookup_sym(target,"struct module",
-						  NULL,NULL,
-						  SYMBOL_TYPE_FLAG_TYPE))) {
-	vwarn("could not lookup 'struct module'; no module debuginfo support!\n");
-    }
-    else if (!(xstate->modules = target_lookup_sym(target,"modules",NULL,NULL,
-						   SYMBOL_TYPE_FLAG_VAR))) {
-	vwarn("could not lookup modules; not updating modules list!\n");
-	return 0;
-    }
-
-    /*
-     * Lookup symbols for active probing, here, regardless of
-     * target->spec->active_probe_flags ; user may change active probing
-     * settings later!
-     */
-    if (!(xstate->module_free_symbol = 
-	  target_lookup_sym(target,"module_free",NULL,NULL,
-			    SYMBOL_TYPE_NONE))) {
-	vwarn("could not lookup module_free; active memory updates"
-	      " cannot function!\n");
-    }
-    else if (!(xstate->module_free_mod_symbol = 
-	           target_lookup_sym(target,"module_free.mod",NULL,NULL,
-				     SYMBOL_TYPE_NONE))) {
-	bsymbol_release(xstate->module_free_symbol);
-	xstate->module_free_symbol = NULL;
-
-	vwarn("could not lookup module_free.mod; active memory updates"
-	      " cannot function!\n");
-    }
-    else {
-	VLS(target,xstate->default_tlctxt,"MODULE_STATE_LIVE",LOAD_FLAG_NONE,
-	    &xstate->MODULE_STATE_LIVE,NULL,err_vmiload_meminfo);
-	vdebug(8,LA_TARGET,LF_XV,
-	       "MODULE_STATE_LIVE = %d\n",xstate->MODULE_STATE_LIVE);
-	VLS(target,xstate->default_tlctxt,"MODULE_STATE_COMING",LOAD_FLAG_NONE,
-	    &xstate->MODULE_STATE_COMING,NULL,err_vmiload_meminfo);
-	vdebug(8,LA_TARGET,LF_XV,
-	       "MODULE_STATE_COMING = %d\n",xstate->MODULE_STATE_COMING);
-	VLS(target,xstate->default_tlctxt,"MODULE_STATE_GOING",LOAD_FLAG_NONE,
-	    &xstate->MODULE_STATE_GOING,NULL,err_vmiload_meminfo);
-	vdebug(8,LA_TARGET,LF_XV,
-	       "MODULE_STATE_GOING = %d\n",xstate->MODULE_STATE_GOING);
-
-	if (0) {
-	err_vmiload_meminfo:
-	    bsymbol_release(xstate->module_free_symbol);
-	    xstate->module_free_symbol = NULL;
-	    bsymbol_release(xstate->module_free_mod_symbol);
-	    xstate->module_free_mod_symbol = NULL;
-
-	    vwarn("could not lookup MODULE_STATE_* var; active memory updates"
-		  " cannot function!\n");
-	}
-    }
-
-#ifdef ENABLE_DISTORM
-    if (!(xstate->thread_entry_f_symbol = 
-	      target_lookup_sym(target,"copy_process",NULL,NULL,
-				SYMBOL_TYPE_NONE))) {
-	vwarn("could not lookup copy_process;"
-	      " active thread entry updates cannot function!\n");
-    }
-    /*
-    if (!(xstate->thread_entry_v_symbol = 
-	      target_lookup_sym(target,"copy_process.p",NULL,NULL,
-				SYMBOL_TYPE_NONE))) {
-	bsymbol_release(xstate->thread_entry_f_symbol);
-	xstate->thread_entry_f_symbol = NULL;
-
-	vwarn("could not lookup copy_process.p;"
-	      " active thread entry updates might not function!\n");
-    }
-    */
-#endif
-
-    if (!(xstate->thread_exit_f_symbol = 
-	      target_lookup_sym(target,"sched_exit",NULL,NULL,
-				SYMBOL_TYPE_NONE))) {
-	vwarn("could not lookup sched_exit; trying __unhash_process!\n");
-
-	if (!(xstate->thread_exit_f_symbol = 
-	      target_lookup_sym(target,"__unhash_process",NULL,NULL,
-				SYMBOL_TYPE_NONE))) {
-	    vwarn("could not lookup __unhash_process;"
-		  " active thread exit updates cannot function!\n");
-	}
-	else if (!(xstate->thread_exit_v_symbol = 
-		   target_lookup_sym(target,"__unhash_process.p",NULL,NULL,
-				     SYMBOL_TYPE_NONE))) {
-	    bsymbol_release(xstate->thread_exit_f_symbol);
-	    xstate->thread_exit_f_symbol = NULL;
-	    vwarn("could not lookup __unhash_process.p;"
-		  " active thread exit updates cannot function!\n");
-	}
-    }
-    else if (!(xstate->thread_exit_v_symbol = 
-	      target_lookup_sym(target,"sched_exit.p",NULL,NULL,
-				SYMBOL_TYPE_NONE))) {
-	bsymbol_release(xstate->thread_exit_f_symbol);
-	xstate->thread_exit_f_symbol = NULL;
-	vwarn("could not lookup sched_exit.p;"
-	      " active thread exit updates cannot function!\n");
-    }
+    char *start = (char *)g_hash_table_lookup(target->config,
+					      "OS_KERNEL_START_ADDR");
+    if (start)
+	xstate->kernel_start_addr = strtoul(start,NULL,0);
 
     return 0;
 }
 
 static int xen_vm_postopened(struct target *target) {
-    return 0;
+    return target_personality_postopened(target);
 }
 
 static int xen_vm_set_active_probing(struct target *target,
 				     active_probe_flags_t flags) {
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
-    struct probe *probe;
-    char *name;
-    int forced_load = 0;
-    int retval = 0;
-
-    if ((flags & ACTIVE_PROBE_FLAG_MEMORY) 
-	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)) {
-	if (flags & ACTIVE_PROBE_FLAG_MEMORY) {
-	    probe = probe_create(target,TID_GLOBAL,NULL,
-				 bsymbol_get_name(xstate->module_free_symbol),
-				 xen_vm_active_memory_handler,NULL,NULL,0,1);
-	    /* NB: always use this; it should be the default! */
-	    if (!probe_register_inlined_symbol(probe,xstate->module_free_symbol,
-					       1,PROBEPOINT_SW,0,0)) {
-		probe_free(probe,1);
-		probe = NULL;
-
-		vwarn("could not probe module_free; not enabling"
-		      " active memory updates!\n");
-
-		xstate->active_memory_probe = NULL;
-		target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_MEMORY;
-
-		--retval;
-	    }
-	    else {
-		xstate->active_memory_probe = probe;
-		target->active_probe_flags |= ACTIVE_PROBE_FLAG_MEMORY;
-	    }
-	}
-	else {
-	    if (xstate->active_memory_probe) {
-		probe_free(xstate->active_memory_probe,0);
-		xstate->active_memory_probe = NULL;
-	    }
-	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_MEMORY;
-	}
-    }
-
-    if ((flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) 
-	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)) {
-	if (flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) {
-#ifdef ENABLE_DISTORM
-	    /*
-	     * Make sure all threads loaded first!
-	     */
-	    if (!forced_load) {
-		xen_vm_load_available_threads(target,0);
-		forced_load = 1;
-	    }
-
-	    name = bsymbol_get_name(xstate->thread_entry_f_symbol);
-	    /*
-	     * Create it with only a post handler so that we only probe
-	     * on the RETs from copy_process().
-	     */
-	    probe = probe_create(target,TID_GLOBAL,NULL,name,
-				 NULL,xen_vm_active_thread_entry_handler,
-				 NULL,0,1);
-	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,
-					    xstate->thread_entry_f_symbol,0,0,1)) {
-		probe_free(probe,1);
-		probe = NULL;
-
-		vwarn("could not probe %s entry/exits; not enabling"
-		      " active thread entry updates!\n",name);
-
-		xstate->active_thread_entry_probe = NULL;
-		target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_ENTRY;
-
-		--retval;
-	    }
-	    else {
-		xstate->active_thread_entry_probe = probe;
-		target->active_probe_flags |= ACTIVE_PROBE_FLAG_THREAD_ENTRY;
-	    }
-#else
-	    verror("cannot enable active thread_entry probes; distorm (disasm)"
-		   " support not built in!");
-	    --retval;
-#endif
-	}
-	else {
-	    if (xstate->active_thread_entry_probe) {
-		probe_free(xstate->active_thread_entry_probe,0);
-		xstate->active_thread_entry_probe = NULL;
-	    }
-	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_ENTRY;
-	}
-    }
-
-    if ((flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) 
-	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)) {
-	if (flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) {
-	    /*
-	     * Make sure all threads loaded first!
-	     */
-	    if (!forced_load) {
-		xen_vm_load_available_threads(target,0);
-		forced_load = 1;
-	    }
-
-	    name = bsymbol_get_name(xstate->thread_exit_f_symbol);
-	    probe = probe_create(target,TID_GLOBAL,NULL,name,
-				 xen_vm_active_thread_exit_handler,
-				 NULL,NULL,0,1);
-	    /* NB: always use this; it should be the default! */
-	    if (!probe_register_inlined_symbol(probe,
-					       xstate->thread_exit_f_symbol,
-					       1,PROBEPOINT_SW,0,0)) {
-		probe_free(probe,1);
-		probe = NULL;
-
-		vwarn("could not probe %s; not enabling"
-		      " active thread exit updates!\n",name);
-
-		xstate->active_thread_exit_probe = NULL;
-		target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_EXIT;
-
-		--retval;
-	    }
-	    else {
-		xstate->active_thread_exit_probe = probe;
-		target->active_probe_flags |= ACTIVE_PROBE_FLAG_THREAD_EXIT;
-	    }
-	}
-	else {
-	    if (xstate->active_thread_exit_probe) {
-		probe_free(xstate->active_thread_exit_probe,0);
-		xstate->active_thread_exit_probe = NULL;
-	    }
-	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_EXIT;
-	}
-    }
-
-    return retval;
-}
-
-static struct target_thread *
-__xen_vm_get_group_leader(struct target *target,struct target_thread *tthread) {
-    struct target_thread *leader;
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
-    struct xen_vm_thread_state *xtstate = \
-	(struct xen_vm_thread_state *)tthread->state;
-    struct array_list *tlist;
-    struct xen_vm_thread_state *lxtstate;
-    struct value *value;
-    int i;
-
-    /* The only reason this should be NULL is if it's a kernel thread. */
-    if (!xtstate->task_struct) {
-	vwarnopt(5,LA_TARGET,LF_XV,
-		 "thread %d did not have a task struct value!\n",tthread->tid);
-	return NULL;
-    }
-
-    /* If we are the group leader, return ourself. */
-    if (value_addr(xtstate->task_struct) == xtstate->group_leader)
-	return tthread;
-
-    /*
-     * Otherwise, see if our group_leader is already loaded, and return
-     * it if it is.
-     */
-    tlist = target_list_threads(target);
-    array_list_foreach(tlist,i,leader) {
-	lxtstate = (struct xen_vm_thread_state *)leader->state;
-	if (lxtstate->task_struct 
-	    && value_addr(lxtstate->task_struct) == xtstate->group_leader) {
-	    array_list_free(tlist);
-	    return leader;
-	}
-    }
-    array_list_free(tlist);
-    leader = NULL;
-
-    /* Otherwise, load it. */
-    vdebug(5,LA_TARGET,LF_XV,
-	   "trying to load tid %d's group_leader at 0x%"PRIxADDR"\n",
-	   tthread->tid,xtstate->group_leader);
-
-    value = target_load_type(target,xstate->task_struct_type,
-			     xtstate->group_leader,LOAD_FLAG_NONE);
-    if (!value) {
-	vwarn("could not load tid %d's group_leader at 0x%"PRIxADDR"; BUG?!\n",
-	      tthread->tid,xtstate->group_leader);
-	return NULL;
-    }
-
-    if (!(leader = __xen_vm_load_thread_from_value(target,value))) {
-	verror("could not load thread from task value at 0x%"PRIxADDR"; BUG?\n",
-	       xtstate->group_leader);
-	value_free(value);
-	return NULL;
-    }
-
-    vdebug(5,LA_TARGET,LF_XV,
-	   "new group leader loaded (%"PRIiTID",%s)\n",
-	   leader->tid,leader->name);
-
-    return leader;
+    return target_personality_set_active_probing(target,flags);
 }
 
 static struct target *
@@ -5145,11 +2677,9 @@ xen_vm_instantiate_overlay(struct target *target,
 			   struct target_thread *tthread,
 			   struct target_spec *spec,
 			   struct target_thread **ntthread) {
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
-    struct xen_vm_thread_state *xtstate = 
-	(struct xen_vm_thread_state *)tthread->state;
     struct target *overlay;
     REGVAL thip;
+    tid_t ltid;
     struct target_thread *leader;
 
     if (spec->target_type != TARGET_TYPE_XEN_PROCESS) {
@@ -5158,14 +2688,14 @@ xen_vm_instantiate_overlay(struct target *target,
     }
 
     errno = 0;
-    thip = xen_vm_read_reg(target,tthread->tid,target->ipregno);
+    thip = target_read_reg(target,tthread->tid,target->ipregno);
     if (errno) {
 	verror("could not read IP for tid %"PRIiTID"!!\n",tthread->tid);
 	return NULL;
     }
-    if (!xtstate->mm_addr) {
+    if (target_os_thread_is_user(target,tthread->tid) != 1) {
 	errno = EINVAL;
-	verror("tid %"PRIiTID" IP 0x%"PRIxADDR" is a kernel thread!\n",
+	verror("tid %"PRIiTID" IP 0x%"PRIxADDR" is not a user thread!\n",
 	       tthread->tid,thip);
 	return NULL;
     }
@@ -5173,7 +2703,8 @@ xen_vm_instantiate_overlay(struct target *target,
     /*
      * Flip to the group leader if it is not this thread itself.
      */
-    leader = __xen_vm_get_group_leader(target,tthread);
+    ltid = target_os_thread_get_leader(target,tthread->tid);
+    leader = target_lookup_thread(target,ltid);
     if (!leader) {
 	verror("could not load group_leader for thread %d; BUG?!\n",tthread->tid);
 	return NULL;
@@ -5196,7 +2727,6 @@ xen_vm_instantiate_overlay(struct target *target,
 static struct target_thread *
 xen_vm_lookup_overlay_thread_by_id(struct target *target,int id) {
     struct target_thread *retval;
-    struct xen_vm_thread_state *xtstate;
 
     retval = xen_vm_load_thread(target,id,0);
     if (!retval) {
@@ -5205,8 +2735,7 @@ xen_vm_lookup_overlay_thread_by_id(struct target *target,int id) {
 	return NULL;
     }
 
-    xtstate = (struct xen_vm_thread_state *)retval->state;
-    if (xtstate->mm_addr) {
+    if (target_os_thread_is_user(target,retval->tid) == 1) {
 	vdebug(5,LA_TARGET,LF_XV,
 	       "found overlay thread %d\n",id);
 	return retval;
@@ -5220,14 +2749,11 @@ xen_vm_lookup_overlay_thread_by_id(struct target *target,int id) {
 
 static struct target_thread *
 xen_vm_lookup_overlay_thread_by_name(struct target *target,char *name) {
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct target_thread *retval = NULL;
     struct target_thread *tthread;
-    struct xen_vm_thread_state *xtstate;
     int slen;
     int rc;
     GHashTableIter iter;
-    struct value *value;
 
     if ((rc = xen_vm_load_available_threads(target,0)))
 	vwarn("could not load %d threads; continuing anyway!\n",-rc);
@@ -5236,29 +2762,25 @@ xen_vm_lookup_overlay_thread_by_name(struct target *target,char *name) {
     while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
 	if (tthread == target->global_thread)
 	    continue;
-	else {
-	    xtstate = (struct xen_vm_thread_state *)tthread->state;
-	    value = target_load_value_member(target,xstate->default_tlctxt,
-					     xtstate->task_struct,"comm",
-					     NULL,LOAD_FLAG_NONE);
-	    if (!value) {
-		vwarn("could not load .comm in task_struct for tid %d; continuing!\n",
-		      tthread->tid);
-		continue;
-	    }
-	    slen = strnlen(value->buf,value->bufsiz);
-	    vdebug(8,LA_TARGET,LF_XV,
-		   "checking task with name '%*s' against '%s'\n",
-		   slen,value->buf,name);
-	    if (strncmp(name,value->buf,slen) == 0) {
-		retval = tthread;
-		break;
-	    }
+
+	if (!tthread->name) {
+	    vwarn("tid %d does not have a name; continuing!\n",
+		  tthread->tid);
+	    continue;
+	}
+
+	slen = strlen(tthread->name);
+	vdebug(8,LA_TARGET,LF_XV,
+	       "checking task with name '%*s' against '%s'\n",
+	       slen,tthread->name,name);
+	if (strncmp(name,tthread->name,slen) == 0) {
+	    retval = tthread;
+	    break;
 	}
     }
 
     if (retval) {
-	if (xtstate->mm_addr == 0) {
+	if (target_os_thread_is_user(target,retval->tid) != 1) {
 	    verror("tid %d matched '%s', but is a kernel thread!\n",
 		   retval->tid,name);
 	    errno = EINVAL;
@@ -5278,17 +2800,15 @@ xen_vm_lookup_overlay_thread_by_name(struct target *target,char *name) {
 
 int xen_vm_attach_overlay_thread(struct target *base,struct target *overlay,
 				 tid_t newtid) {
-    struct target_thread *tthread;
-    struct xen_vm_thread_state *lxtstate,*xtstate;
+    tid_t cltid,nltid;
 
-    tthread = target_load_thread(base,newtid,0);
-    if (!tthread)
+    nltid = target_os_thread_get_leader(base,newtid);
+    cltid = target_os_thread_get_leader(base,overlay->base_thread->tid);
+
+    if (nltid == -1 || cltid == -1)
 	return -1;
 
-    xtstate = (struct xen_vm_thread_state *)tthread->state;
-    lxtstate = (struct xen_vm_thread_state *)overlay->base_thread->state;
-
-    if (lxtstate->tgid == xtstate->tgid)
+    if (nltid == cltid)
 	return 0;
 
     errno = EINVAL;
@@ -5379,7 +2899,6 @@ static int xen_vm_flush_current_thread(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
     struct target_thread *tthread;
     struct xen_vm_thread_state *tstate;
-    struct value *v;
     tid_t tid;
 
     if (!target->current_thread) {
@@ -5403,8 +2922,16 @@ static int xen_vm_flush_current_thread(struct target *target) {
 
     vdebug(3,LA_TARGET,LF_XV,
 	   "EIP is 0x%"PRIxREGVAL" before flush (dom %d tid %"PRIiTID")\n",
-	   xen_vm_read_reg(target,TID_GLOBAL,target->ipregno),
+	   target_read_reg(target,TID_GLOBAL,target->ipregno),
 	   xstate->id,tid);
+
+    if (__xen_vm_thread_regcache_to_vcpu(target,tthread,tthread->tidctxt,
+					 &tstate->context)) {
+	verror("could not convert regcache to vcpu context(dom %d tid %"PRIiTID")\n",
+	       xstate->id,tid);
+	errno = EINVAL;
+	return -1;
+    }
 
     /*
      * Flush Xen machine context.
@@ -5415,34 +2942,6 @@ static int xen_vm_flush_current_thread(struct target *target) {
 	errno = EINVAL;
 	return -1;
     }
-
-    /*
-     * Flush PCB state -- task_flags, thread_info_flags.
-     *
-     * NOTE: might not be able to flush this if the current thread is
-     * the global thread...
-     */
-    if (tstate->thread_info) {
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     tstate->thread_info,"flags",NULL,
-				     LOAD_FLAG_NONE);
-	value_update_unum(v,tstate->thread_info_flags);
-	target_store_value(target,v);
-	value_free(v);
-    }
-
-    /* Can only flush this if we weren't in interrupt context. */
-    if (tstate->task_struct) {
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     tstate->task_struct,"flags",NULL,
-				     LOAD_FLAG_NONE);
-	value_update_unum(v,tstate->task_flags);
-	target_store_value(target,v);
-	value_free(v);
-    }
-
-    /* Mark cached copy as clean. */
-    tthread->dirty = 0;
 
 #if __WORDSIZE == 32
     vdebug(4,LA_TARGET,LF_XV,
@@ -5466,7 +2965,7 @@ static int xen_vm_flush_current_thread(struct target *target) {
 	   tstate->dr[0],tstate->dr[1],tstate->dr[2],tstate->dr[3],
 	   tstate->dr[6],tstate->dr[7]);
 
-    return 0;
+    return target_personality_flush_current_thread(target);
 }
 
 /*
@@ -5523,6 +3022,21 @@ static int xen_vm_flush_global_thread(struct target *target,
 	       xstate->id,gthread->tid,gthread->valid,gthread->dirty);
 	return 0;
     }
+    else {
+	/*
+	 * Always have to convert the global thread.
+	 */
+	if (__xen_vm_thread_regcache_to_vcpu(target,target->global_thread,
+					     target->global_thread->tidctxt,
+					     &gtstate->context)) {
+	    verror("could not convert regcache to vcpu context"
+		   " (dom %d tid %"PRIiTID") ctxt %d\n",
+		   xstate->id,target->global_thread->tid,
+		   target->global_thread->tidctxt);
+	    errno = EINVAL;
+	    return -1;
+	}
+    }
 
     if (!current_thread) {
 	/* Flush the global thread's CPU context directly. */
@@ -5531,8 +3045,20 @@ static int xen_vm_flush_global_thread(struct target *target,
 	       xstate->id,gthread->tid);
 
 	ctxp = &gtstate->context;
+
     }
     else {
+	if (__xen_vm_thread_regcache_to_vcpu(target,target->current_thread,
+					     target->current_thread->tidctxt,
+					     &tstate->context)) {
+	    verror("could not convert regcache to vcpu context"
+		   " (dom %d tid %"PRIiTID") ctxt %d\n",
+		   xstate->id,target->current_thread->tid,
+		   target->current_thread->tidctxt);
+	    errno = EINVAL;
+	    return -1;
+	}
+
 	/* We have to merge the hardware debug register state from the
 	 * current thread with the state for the global thread.
 	 */
@@ -5575,13 +3101,17 @@ static int xen_vm_flush_global_thread(struct target *target,
     if (!current_thread) {
 	vdebug(3,LA_TARGET,LF_XV,
 	       "EIP is 0x%"PRIxREGVAL" before flush (dom %d tid %"PRIiTID")\n",
-	       xen_vm_read_reg(target,TID_GLOBAL,target->ipregno),
+	       target_read_reg(target,TID_GLOBAL,target->ipregno),
 	       xstate->id,gthread->tid);
     }
     else {
 	vdebug(3,LA_TARGET,LF_XV,
 	       "EIP is 0x%"PRIxREGVAL" (in thread %"PRIiTID") before flush (dom %d tid %"PRIiTID")\n",
-	       xen_vm_read_reg(target,current_thread->tid,target->ipregno),
+#ifdef __x86_64__
+	       gtstate->context.user_regs.rip,
+#else
+	       gtstate->context.user_regs.eip,
+#endif
 	       current_thread->tid,
 	       xstate->id,gthread->tid);
     }
@@ -5633,10 +3163,6 @@ static int xen_vm_pause_thread(struct target *target,tid_t tid,int nowait) {
 static int xen_vm_flush_thread(struct target *target,tid_t tid) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct target_thread *tthread;
-    struct xen_vm_thread_state *tstate = NULL;
-    struct value *v;
-    int ip_offset;
-    int i;
 
     vdebug(16,LA_TARGET,LF_XV,"dom %d tid %"PRIiTID"\n",xstate->id,tid);
 
@@ -5682,12 +3208,7 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
     /*
      * Otherwise, try to lookup thread @tid.
      */
-    else if ((tthread = target_lookup_thread(target,tid))) {
-	tstate = (struct xen_vm_thread_state *)tthread->state;
-    }
-
-    if (tthread == target->current_thread)
-	return xen_vm_flush_current_thread(target);
+    tthread = target_lookup_thread(target,tid);
 
     if (!tthread) {
 	verror("cannot flush unknown thread %"PRIiTID"; you forgot to load?\n",
@@ -5696,6 +3217,9 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
 	return -1;
     }
 
+    if (tthread == target->current_thread)
+	return xen_vm_flush_current_thread(target);
+
     if (!tthread->valid || !tthread->dirty) {
 	vdebug(8,LA_TARGET,LF_XV,
 	       "dom %d tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
@@ -5703,329 +3227,8 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
 	return 0;
     }
 
-    /*
-     * Ok, we can finally flush this thread's state to memory.
-     */
-
-    /*
-     * Flush (fake) Xen machine context loaded from stack, back to
-     * stack.
-     *
-     * NB: this is a duplicate of the loading procedure!  See all the
-     * comments there.
-     */
-
-    if (xstate->thread_ip_member_name) {
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     tstate->thread_struct,
-				     xstate->thread_ip_member_name,
-				     NULL,LOAD_FLAG_NONE);
-	if (!v) 
-	    vwarn("could not store thread.%s for task %"PRIiTID"!\n",
-		  xstate->thread_ip_member_name,tid);
-	else {
-	    value_update(v,(const char *)&tstate->eip,v->bufsiz);
-	    target_store_value(target,v);
-	    value_free(v);
-	    v = NULL;
-	}
-    }
-    else {
-	v = target_load_addr_real(target,tstate->esp + 3 * target->wordsize,
-				  LOAD_FLAG_NONE,target->wordsize);
-	if (!v) 
-	    vwarn("could not store 64-bit IP (thread.ip) for task %"PRIiTID"!\n",
-		  tid);
-	else {
-	    value_update(v,(const char *)&tstate->eip,v->bufsiz);
-	    target_store_value(target,v);
-	    value_free(v);
-	    v = NULL;
-	}
-    }
-
-    /*
-     * GS is always in the thread data structure:
-     */
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 tstate->thread_struct,"gs",NULL,
-				 LOAD_FLAG_NONE);
-    value_update_u16(v,tstate->context.user_regs.gs);
-    target_store_value(target,v);
-    value_free(v);
-    v = NULL;
-
-    if (xstate->thread_struct_has_fs) {
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     tstate->thread_struct,"fs",NULL,
-				     LOAD_FLAG_NONE);
-	if (!v) {
-	    vwarn("could not store thread.fs for task %"PRIiTID"!\n",tid);
-	    goto errout;
-	}
-	else {
-	    value_update(v,(const char *)&tstate->context.user_regs.fs,
-			 v->bufsiz);
-	    target_store_value(target,v);
-	    value_free(v);
-	    v = NULL;
-	}
-    }
-    else {
-	/* Load this to pt_regs below if we can. */
-    }
-
-    if (xstate->thread_struct_has_ds_es) {
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     tstate->thread_struct,"ds",NULL,
-				     LOAD_FLAG_NONE);
-	if (!v) {
-	    vwarn("could not store thread.ds for task %"PRIiTID"!\n",tid);
-	    goto errout;
-	}
-	else {
-	    value_update(v,(const char *)&tstate->context.user_regs.ds,
-			 v->bufsiz);
-	    target_store_value(target,v);
-	    value_free(v);
-	    v = NULL;
-	}
-
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     tstate->thread_struct,"es",NULL,
-				     LOAD_FLAG_NONE);
-	if (!v) {
-	    vwarn("could not store thread.es for task %"PRIiTID"!\n",tid);
-	    goto errout;
-	}
-	else {
-	    value_update(v,(const char *)&tstate->context.user_regs.es,
-			 v->bufsiz);
-	    target_store_value(target,v);
-	    value_free(v);
-	    v = NULL;
-	}
-    }
-    else {
-	/* Load this to pt_regs below if we can. */
-    }
-
-    if (tstate->ptregs_stack_addr) {
-	v = target_load_addr_real(target,tstate->ptregs_stack_addr,
-				  LOAD_FLAG_NONE,
-				  symbol_get_bytesize(xstate->pt_regs_type));
-	if (!v) {
-	    verror("could not store stack register save frame task %"PRIiTID"!\n",
-		   tid);
-	    goto errout;
-	}
-
-	/* Copy the first range. */
-	if (target->wordsize == 8)
-	    memcpy(v->buf,&tstate->context.user_regs,8 * 15);
-	else
-	    memcpy(v->buf,&tstate->context.user_regs,4 * 7);
-
-	/* Copy the second range. */
-	/**
-	 ** WARNING: esp and ss may not be valid if the sleeping thread was
-	 ** interrupted while it was in the kernel, because the interrupt
-	 ** gate does not push ss and esp; see include/asm-i386/processor.h .
-	 **/
-#if __WORDSIZE == 64
-	ip_offset = offsetof(struct vcpu_guest_context,user_regs.rip);
-#else
-	ip_offset = offsetof(struct vcpu_guest_context,user_regs.eip);
-#endif
-	if (target->wordsize == 8)
-	    memcpy(v->buf + xstate->pt_regs_ip_offset,
-		   ((char *)&tstate->context) + ip_offset,8 * 5);
-	else
-	    memcpy(v->buf + xstate->pt_regs_ip_offset,
-		   ((char *)&tstate->context) + ip_offset,4 * 5);
-
-	/*
-	 * ds, es, fs, gs are all special; see other comments.
-	 */
-	if (!xstate->thread_struct_has_ds_es && xstate->pt_regs_has_ds_es) {
-	    memcpy((char *)v->buf + 7 * target->wordsize,
-		   &tstate->context.user_regs.ds,v->bufsiz);
-	    memcpy((char *)v->buf + 8 * target->wordsize,
-		   &tstate->context.user_regs.es,v->bufsiz);
-	}
-	if (!xstate->thread_struct_has_fs && xstate->pt_regs_has_fs_gs) {
-	    /* XXX: this is only true on newer x86 stuff; x86_64 and old
-	     * i386 stuff did not save it on the stack.
-	     */
-	    memcpy((char *)v->buf + 9 * target->wordsize,
-		   &tstate->context.user_regs.fs,v->bufsiz);
-	}
-
-	target_store_value(target,v);
-
-	value_free(v);
-	v = NULL;
-    }
-    else {
-	/*
-	 * Either we could not load pt_regs due to lack of type info; or
-	 * this thread was just context-switched out, not interrupted
-	 * nor preempted, so we can't get its GP registers.  Get what we
-	 * can...
-	 */
-	memset(&tstate->context,0,sizeof(vcpu_guest_context_t));
-	tstate->context.user_regs.eip = tstate->eip;
-	tstate->context.user_regs.esp = tstate->esp;
-	tstate->context.user_regs.fs = tstate->fs;
-	tstate->context.user_regs.gs = tstate->gs;
-
-	/* eflags and ebp are on the stack. */
-	v = target_load_addr_real(target,tstate->esp,LOAD_FLAG_NONE,
-				  2 * target->wordsize);
-	if (target->wordsize == 8) {
-	    ((uint64_t *)v->buf)[1] = tstate->eflags;
-	    ((uint64_t *)v->buf)[0] = tstate->ebp;
-	}
-	else {
-	    ((uint32_t *)v->buf)[1] = tstate->eflags;
-	    ((uint32_t *)v->buf)[0] = tstate->ebp;
-	}
-
-	target_store_value(target,v);
-
-	value_free(v);
-	v = NULL;
-    }
-
-
-    
-    if (xstate->thread_struct_has_debugreg) {
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     tstate->thread_struct,"debugreg",
-				     NULL,LOAD_FLAG_AUTO_DEREF);
-	if (!v) {
-	    verror("could not store thread->debugreg for task %"PRIiTID"\n",tid);
-	    goto errout;
-	}
-	if (target->wordsize == 8) {
-	    ((uint64_t *)v->buf)[0] = tstate->context.debugreg[0];
-	    ((uint64_t *)v->buf)[1] = tstate->context.debugreg[1];
-	    ((uint64_t *)v->buf)[2] = tstate->context.debugreg[2];
-	    ((uint64_t *)v->buf)[3] = tstate->context.debugreg[3];
-	    ((uint64_t *)v->buf)[6] = tstate->context.debugreg[6];
-	    ((uint64_t *)v->buf)[7] = tstate->context.debugreg[7];
-	}
-	else {
-	    ((uint32_t *)v->buf)[0] = tstate->context.debugreg[0];
-	    ((uint32_t *)v->buf)[1] = tstate->context.debugreg[1];
-	    ((uint32_t *)v->buf)[2] = tstate->context.debugreg[2];
-	    ((uint32_t *)v->buf)[3] = tstate->context.debugreg[3];
-	    ((uint32_t *)v->buf)[6] = tstate->context.debugreg[6];
-	    ((uint32_t *)v->buf)[7] = tstate->context.debugreg[7];
-	}
-
-	target_store_value(target,v);
-
-	value_free(v);
-	v = NULL;
-    }
-    else if (xstate->thread_struct_has_debugreg0) {
-	/*
-	 * This is old x86_64 style.
-	 */
-	static const char *dregmembers[8] = {
-	    "debugreg0","debugreg1","debugreg2","debugreg3",
-	    NULL,NULL,
-	    "debugreg6","debugreg7"
-	};
-
-	for (i = 0; i < 8; ++i) {
-	    if (!dregmembers[i])
-		continue;
-
-	    v = target_load_value_member(target,xstate->default_tlctxt,
-					 tstate->thread_struct,
-					 dregmembers[i],NULL,
-					 LOAD_FLAG_AUTO_DEREF);
-	    if (!v) {
-		verror("could not store thread->%s for task %"PRIiTID"\n",
-		       dregmembers[i],tid);
-		goto errout;
-	    }
-	    if (target->wordsize == 8) 
-		*(uint64_t *)v->buf = tstate->context.debugreg[i];
-	    else
-		*(uint32_t *)v->buf = tstate->context.debugreg[i];
-
-	    target_store_value(target,v);
-
-	    value_free(v);
-	    v = NULL;
-	}
-    }
-    else if (xstate->thread_struct_has_perf_debugreg) {
-	/*
-	 * XXX: still need to store perf_events 0-3.
-	 */
-
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     tstate->thread_struct,"debugreg6",
-				     NULL,LOAD_FLAG_AUTO_DEREF);
-	if (!v) {
-	    verror("could not store thread->debugreg6 for task %"PRIiTID"\n",tid);
-	    goto errout;
-	}
-	if (target->wordsize == 8) 
-	    *(uint64_t *)v->buf = tstate->context.debugreg[6];
-	else
-	    *(uint32_t *)v->buf = tstate->context.debugreg[6];
-
-	target_store_value(target,v);
-
-	value_free(v);
-	v = NULL;
-
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     tstate->thread_struct,"ptrace_dr7",
-				     NULL,LOAD_FLAG_AUTO_DEREF);
-	if (!v) {
-	    verror("could not store thread->ptrace_dr7 for task %"PRIiTID"\n",tid);
-	    goto errout;
-	}
-	if (target->wordsize == 8) 
-	    *(uint64_t *)v->buf = tstate->context.debugreg[7];
-	else
-	    *(uint32_t *)v->buf = tstate->context.debugreg[7];
-
-	target_store_value(target,v);
-
-	value_free(v);
-	v = NULL;
-
-    }
-    else {
-	vwarn("could not store debugreg for tid %d; no debuginfo!\n",tid);
-    }
-
-    /*
-     * Flush PCB state -- task_flags, thread_info_flags.
-     */
-    v = target_load_value_member(target,xstate->default_tlctxt,
-				 tstate->thread_info,"flags",NULL,
-				 LOAD_FLAG_NONE);
-    value_update_unum(v,tstate->thread_info_flags);
-    target_store_value(target,v);
-    value_free(v);
-
-    /* Can only flush this if we weren't in interrupt context. */
-    if (tstate->task_struct) {
-	v = target_load_value_member(target,xstate->default_tlctxt,
-				     tstate->task_struct,"flags",NULL,
-				     LOAD_FLAG_NONE);
-	value_update_unum(v,tstate->task_flags);
-	target_store_value(target,v);
-	value_free(v);
-    }
+    if (target_personality_flush_thread(target,tid))
+	goto errout;
 
     tthread->dirty = 0;
 
@@ -6115,7 +3318,7 @@ static int __value_get_append_tid(struct target *target,struct value *value,
     struct array_list *list = (struct array_list *)data;
     struct value *v;
 
-    v = target_load_value_member(target,xstate->default_tlctxt,
+    v = target_load_value_member(target,target_global_tlctxt(target),
 				 value,"pid",NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load pid in task; BUG?\n");
@@ -6129,39 +3332,7 @@ static int __value_get_append_tid(struct target *target,struct value *value,
 }
 
 static struct array_list *xen_vm_list_available_tids(struct target *target) {
-    struct array_list *retval;
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
-
-    /*
-     * If we are tracking threads, we don't have scan the list!
-     */
-    if ((target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)
-	&& (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)) {
-	vdebug(8,LA_TARGET,LF_XV,
-	       "active probing thread entry/exit, so just reloading cache!\n");
-	return target_list_tids(target);
-    }
-
-    /* Try to be smart about the size of the list we create. */
-    if (xstate->last_thread_count)
-	retval = array_list_create((xstate->last_thread_count + 16) & ~15);
-    else
-	retval = array_list_create(64);
-
-    if (linux_list_for_each_struct(target,xstate->init_task,"tasks",0,
-				   __value_get_append_tid,retval)) {
-	verror("could not load all tids in task list (did %d tasks)\n",
-	       array_list_len(retval));
-	array_list_free(retval);
-	return NULL;
-    }
-
-    xstate->last_thread_count = array_list_len(retval);
-
-    vdebug(5,LA_TARGET,LF_XV | LF_THREAD,"%d current threads\n",
-	   xstate->last_thread_count);
-
-    return retval;
+    return target_personality_list_available_tids(target);
 }
 
 static int xen_vm_load_all_threads(struct target *target,int force) {
@@ -6194,38 +3365,7 @@ static int xen_vm_load_all_threads(struct target *target,int force) {
     return rc;
 }
 
-static int __value_load_thread(struct target *target,struct value *value,
-			       void *data) {
-    struct target_thread *tthread;
-    int *load_counter = (int *)data;
-
-    if (!(tthread = __xen_vm_load_thread_from_value(target,value))) {
-	verror("could not load thread from task value; BUG?\n");
-	value_free(value);
-	return -1;
-    }
-
-    if (vdebug_is_on(8,LA_TARGET,LF_XV)) {
-	char buf[512];
-	target_thread_snprintf(target,tthread->tid,buf,sizeof(buf),
-			       1,NULL,NULL);
-	vdebug(8,LA_TARGET,LF_XV,
-	       "loaded tid(%d) (%s)\n",tthread->tid,tthread->name,buf);
-    }
-
-    if (load_counter)
-	++*load_counter;
-
-    return 0;
-}
-
 static int xen_vm_load_available_threads(struct target *target,int force) {
-    int rc = 0;
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
-    int i = 0;
-    struct array_list *cthreads;
-    struct target_thread *tthread;
-
     /*
      * Load the current thread first to load the global thread.  The
      * current thread will get loaded again in the loop below if @force
@@ -6233,76 +3373,63 @@ static int xen_vm_load_available_threads(struct target *target,int force) {
      */
     if (!__xen_vm_load_current_thread(target,force,1)) {
 	verror("could not load current thread!\n");
-	rc = -1;
+	return -1;
     }
 
-    /*
-     * If we are tracking threads, we don't have scan the list!
-     */
-    if ((target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)
-	&& (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)) {
-	vdebug(8,LA_TARGET,LF_XV,
-	       "active probing thread entry/exit, so just reloading cache!\n");
-	return xen_vm_load_all_threads(target,force);
-    }
-
-    if (linux_list_for_each_struct(target,xstate->init_task,"tasks",1,
-				   __value_load_thread,&i)) {
-	verror("could not load all threads in task list (did %d tasks)\n",i);
-	rc = -1;
-    }
-    /*
-     * If there are still any invalid threads, they are no longer live
-     * -- so delete them!
-     */
-    else {
-	cthreads = target_list_threads(target);
-	for (i = 0; i < array_list_len(cthreads); ++i) {
-	    tthread = (struct target_thread *)array_list_item(cthreads,i);
-	    if (!tthread->valid) {
-		vdebug(5,LA_TARGET,LF_XV | LF_THREAD,
-		       "evicting invalid thread %"PRIiTID"; no longer exists\n",
-		       tthread->tid);
-		target_add_state_change(target,tthread->tid,
-					TARGET_STATE_CHANGE_THREAD_EXITED,
-					0,0,0,0,NULL);
-		target_delete_thread(target,tthread,0);
-	    }
-	}
-	array_list_free(cthreads);
-    }
-
-    return rc;
+    return target_personality_load_available_threads(target,force);
 }
 
+static int xen_vm_thread_snprintf(struct target_thread *tthread,
+				  char *buf,int bufsiz,
+				  int detail,char *sep,char *kvsep) {
+    struct target *target = tthread->target;
+    int rc = 0;
+    int nrc;
+
+    if (tthread == target->current_thread || tthread == target->global_thread) {
+	rc = target_regcache_snprintf(target,tthread,tthread->tidctxt,
+				      buf,bufsiz,detail,sep,kvsep,0);
+	if (rc < 0)
+	    return rc;
+    }
+
+    nrc = target_personality_thread_snprintf(tthread,
+					     (rc >= bufsiz) ? NULL : buf + rc,
+					     (rc >= bufsiz) ? 0 : bufsiz - rc,
+					     detail,sep,kvsep);
+    if (nrc < 0) {
+	verror("could not snprintf personality info for thread %d!\n",
+	       tthread->tid);
+	return nrc;
+    }
+
+    return rc + nrc;
+}
+
+/**
+ ** The arch-based thread snprintf is slower, so keep this older version
+ ** around for now, but don't build it.
+ **/
+#if 0
 static int xen_vm_thread_snprintf(struct target_thread *tthread,
 				  char *buf,int bufsiz,
 				  int detail,char *sep,char *kvsep) {
     struct xen_vm_thread_state *tstate;
     struct cpu_user_regs *r;
     int rc = 0;
+    int nrc;
 
     if (detail < 0)
-	return 0;
+	goto personality_out;
 
     tstate = (struct xen_vm_thread_state *)tthread->state;
+    if (!tstate)
+	goto personality_out;
+
     r = &tstate->context.user_regs;
 
     if (detail >= 0) {
-	rc += snprintf((rc >= bufsiz) ? NULL : buf + rc,
-		       (rc >= bufsiz) ? 0 :bufsiz - rc,
-		       "tgid%s%"PRIiNUM "%s" "task_flags%s0x%"PRIxNUM "%s"
-		       "thread_info_flags%s0x%"PRIxNUM "%s"
-		       "preempt_count%s0x%"PRIiNUM "%s"
-		       "task%s0x%"PRIxADDR "%s" 
-		       "stack_base%s0x%"PRIxADDR "%s" 
-		       "pgd%s0x%"PRIx64 "%s" "mm%s0x%"PRIxADDR,
-		       kvsep,tstate->tgid,sep,kvsep,tstate->task_flags,sep,
-		       kvsep,tstate->thread_info_flags,sep,
-		       kvsep,tstate->thread_info_preempt_count,sep,
-		       kvsep,tstate->task_struct ? value_addr(tstate->task_struct) : 0x0UL,sep,
-		       kvsep,tstate->stack_base,sep,
-		       kvsep,tstate->pgd,sep,kvsep,tstate->mm_addr);
+	;
     }
 
     if (detail >= 1)
@@ -6340,41 +3467,24 @@ static int xen_vm_thread_snprintf(struct target_thread *tthread,
 		       sep,kvsep,tstate->dr[1],sep,kvsep,tstate->dr[2],
 		       sep,kvsep,tstate->dr[6],sep,kvsep,tstate->dr[7]);
 
-    return rc;
-}
-
-static int xen_vm_invalidate_all_threads(struct target *target) {
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
-    GHashTableIter iter;
-    struct target_thread *tthread;
-    struct xen_vm_thread_state *tstate;
-
-    vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
-
-    g_hash_table_iter_init(&iter,target->threads);
-    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
-	tstate = (struct xen_vm_thread_state *)tthread->state;
-
-	//if (!tthread->valid) 
-	//    continue;
-
-	if (tstate->thread_struct) {
-	    value_free(tstate->thread_struct);
-	    tstate->thread_struct = NULL;
-	}
-	if (tstate->thread_info) {
-	    value_free(tstate->thread_info);
-	    tstate->thread_info = NULL;
-	}
-	if (tstate->task_struct) {
-	    value_free(tstate->task_struct);
-	    tstate->task_struct = NULL;
-	}
-
-	tthread->valid = 0;
+ personality_out:
+    nrc = target_personality_thread_snprintf(tthread,
+					     (rc >= bufsiz) ? NULL : buf + rc,
+					     (rc >= bufsiz) ? 0 : bufsiz - rc,
+					     detail,sep,kvsep);
+    if (nrc < 0) {
+	verror("could not snprintf personality info for thread %d!\n",
+	       tthread->tid);
+	return rc;
     }
 
-    return 0;
+    return rc + nrc;
+}
+#endif /* 0 */
+
+static int xen_vm_invalidate_thread(struct target *target,
+				    struct target_thread *tthread) {
+    return target_personality_invalidate_thread(target,tthread);
 }
 
 static int __xen_vm_resume(struct target *target,int detaching) {
@@ -6421,784 +3531,6 @@ static int xen_vm_resume(struct target *target) {
     return __xen_vm_resume(target,0);
 }
 
-struct __update_module_data {
-    struct addrspace *space;
-    struct memregion *region;
-    GHashTable *moddep;
-    GHashTable *config;
-};
-
-static int __update_module(struct target *target,struct value *value,void *data) {
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
-    struct value *mod_name = NULL;
-    struct value *vt = NULL;
-    ADDR mod_core_addr;
-    ADDR mod_init_addr;
-    unum_t mod_core_size;
-    unum_t mod_init_size;
-    struct __update_module_data *ud = (struct __update_module_data *)data;
-    struct list_head *pos;
-    struct memregion *tregion = NULL;
-    struct memrange *range;
-    char *modfilename = NULL;
-    int retval;
-    struct binfile_instance *bfi = NULL;
-    struct debugfile *debugfile = NULL;
-    struct addrspace *space = ud->space;
-
-    if (!ud) {
-	errno = EINVAL;
-	return -1;
-    }
-
-    mod_name = target_load_value_member(target,xstate->default_tlctxt,
-					value,"name",NULL,LOAD_FLAG_NONE);
-    if (!mod_name) {
-	verror("could not load name for module!\n");
-	goto errout;
-    }
-
-    vt = target_load_value_member(target,xstate->default_tlctxt,
-				  value,"module_core",NULL,LOAD_FLAG_NONE);
-    if (!vt) {
-	verror("could not load module_core addr!\n");
-	goto errout;
-    }
-    mod_core_addr = v_addr(vt);
-    value_free(vt);
-
-    vt = target_load_value_member(target,xstate->default_tlctxt,
-				  value,"module_init",NULL,LOAD_FLAG_NONE);
-    if (!vt) {
-	verror("could not load module_init addr!\n");
-	goto errout;
-    }
-    mod_init_addr = v_addr(vt);
-    value_free(vt);
-
-    vt = target_load_value_member(target,xstate->default_tlctxt,
-				  value,"core_size",NULL,LOAD_FLAG_NONE);
-    if (!vt) {
-	verror("could not load module core_size!\n");
-	goto errout;
-    }
-    mod_core_size = v_unum(vt);
-    value_free(vt);
-
-    vt = target_load_value_member(target,xstate->default_tlctxt,
-				  value,"init_size",NULL,LOAD_FLAG_NONE);
-    if (!vt) {
-	verror("could not load module init_size!\n");
-	goto errout;
-    }
-    mod_init_size = v_unum(vt);
-    value_free(vt);
-
-    vdebug(2,LA_TARGET,LF_XV,
-	   "module %s (core=0x%"PRIxADDR"(%u),init=0x%"PRIxADDR"(%u))\n",
-	   v_string(mod_name),mod_core_addr,(unsigned)mod_core_size,
-	   mod_init_addr,(unsigned)mod_init_size);
-
-    if (!ud->moddep) {
-	vwarnopt(8,LA_TARGET,LF_XV,
-		 "no moddep info for %s; cannot load binfile info!\n",
-		 v_string(mod_name));
-    }
-    else {
-	modfilename = g_hash_table_lookup(ud->moddep,v_string(mod_name));
-	if (!modfilename) {
-	    vwarnopt(8,LA_TARGET,LF_XV,
-		     "no moddep info for %s; cannot load binfile info!\n",
-		     v_string(mod_name));
-	}
-    }
-
-    list_for_each(pos,&space->regions) {
-	tregion = list_entry(pos,typeof(*tregion),region);
-	if (strcmp(tregion->name,
-		   (modfilename) ? modfilename : v_string(mod_name)) == 0) {
-	    if (tregion->base_load_addr == mod_core_addr)
-		break;
-	}
-	tregion = NULL;
-    }
-
-    if (tregion) {
-	tregion->exists = 1;
-    }
-    else {
-	/*
-	 * Create a new one!  Anything could have happened.
-	 */
-	tregion = memregion_create(ud->space,REGION_TYPE_LIB,
-				   (modfilename) ? strdup(modfilename) \
-				                 : strdup(v_string(mod_name)));
-	tregion->new = 1;
-
-	/*
-	 * Create a new range for the region.
-	 */
-	range = memrange_create(tregion,mod_core_addr,
-				mod_core_addr + mod_core_size,0,0);
-	if (!range) {
-	    verror("could not create range for module addr 0x%"PRIxADDR"!\n",
-		   mod_core_addr);
-	    retval = -1;
-	    goto errout;
-	}
-
-	if (modfilename) {
-	    /*
-	     * Load its debuginfo.
-	     */
-	    bfi = binfile_infer_instance(tregion->name,
-					 target->spec->debugfile_root_prefix,
-					 mod_core_addr,target->config);
-	    if (!bfi) {
-		verror("could not infer instance for module %s!\n",tregion->name);
-		retval = -1;
-		goto errout;
-	    }
-
-	    debugfile = 
-		debugfile_from_instance(bfi,target->spec->debugfile_load_opts_list);
-	    if (!debugfile) {
-		retval = -1;
-		goto errout;
-	    }
-
-	    if (target_associate_debugfile(target,tregion,debugfile)) {
-		retval = -1;
-		goto errout;
-	    }
-
-	    /* The debugfile, etc, hold it now; we don't care. */
-	    binfile_instance_release(bfi);
-	    bfi = NULL;
-	}
-    }
-
-    ud->region = tregion;
-    retval = 0;
-
-    if (mod_name)
-	value_free(mod_name);
-
-    return retval;
-
- errout:
-    if (mod_name)
-	value_free(mod_name);
-    if (debugfile)
-	debugfile_release(debugfile);
-    if (bfi)
-	binfile_instance_release(bfi);
-    if (tregion)
-	memregion_free(tregion);
-
-    return retval;
-}
-
-static int xen_vm_reload_modules_dep(struct target *target) {
-    struct xen_vm_state *xstate = \
-	(struct xen_vm_state *)target->state;
-    GHashTable *moddep = NULL;
-    FILE *moddep_file;
-    char moddep_path[PATH_MAX];
-    char buf[PATH_MAX * 2];
-    char *colon;
-    char *slash;
-    char *newline;
-    char *extension;
-    char *modname;
-    char *modfilename;
-    struct stat statbuf;
-    time_t moddep_mtime;
-
-    snprintf(moddep_path,PATH_MAX,"%s/modules.dep",xstate->kernel_module_dir);
-
-    /*
-     * Stat it and see if our cached copy (if there is one) is still
-     * valid.
-     */
-    if (stat(moddep_path,&statbuf)) {
-	vwarnopt(8,LA_TARGET,LF_XV,
-		 "stat(%s): %s; aborting!\n",moddep_path,strerror(errno));
-	return -1;
-    }
-    moddep_mtime = statbuf.st_mtime;
-
-    if (xstate->moddep && xstate->last_moddep_mtime == moddep_mtime) {
-	vdebug(16,LA_TARGET,LF_XV,
-	       "cached moddep is valid\n");
-	return 0;
-    }
-
-    /*
-     * Read the current modules.dep file and build up the name->file map.
-     */
-    if (!(moddep_file = fopen(moddep_path,"r"))) {
-	verror("fopen(%s): %s\n",moddep_path,strerror(errno));
-	return -1;
-    }
-
-    moddep = g_hash_table_new_full(g_str_hash,g_str_equal,free,free);
-
-    while (fgets(buf,sizeof(buf),moddep_file)) {
-	newline = index(buf,'\n');
-
-	/*
-	 * Find lines starting with "<module_filename>:", and split them
-	 * into a map of <module_name> -> <module_filename>
-	 */
-	if (!(colon = index(buf,':'))) 
-	    goto drain;
-
-	*colon = '\0';
-	if (!(slash = rindex(buf,'/'))) 
-	    goto drain;
-
-	/* Check relative and abs paths. */
-	modfilename = strdup(buf);
-	if (stat(modfilename,&statbuf)) {
-	    vwarnopt(8,LA_TARGET,LF_XV,
-		     "could not find modules.dep file %s; trying abs path\n",
-		     modfilename);
-	    free(modfilename);
-
-	    modfilename = calloc(1,sizeof(char)*(strlen(xstate->kernel_module_dir)
-						 +1+strlen(buf)+1));
-	    sprintf(modfilename,"%s/%s",xstate->kernel_module_dir,buf);
-	    if (stat(modfilename,&statbuf)) {
-		vwarnopt(7,LA_TARGET,LF_XV,
-			 "could not find modules.dep file %s at all!\n",
-			 modfilename);
-		free(modfilename);
-		modfilename = NULL;
-		goto drain;
-	    }
-	}
-	/* If we have one, insert it. */
-	if (modfilename) {
-	    modname = strdup(slash+1);
-	    if ((extension = rindex(modname,'.')))
-		*extension = '\0';
-
-	    g_hash_table_insert(moddep,modname,modfilename);
-
-	    vdebug(8,LA_TARGET,LF_XV,
-		   "modules.dep: %s -> %s\n",modname,modfilename);
-	}
-
-	/*
-	 * Drain until we get a newline.
-	 */
-    drain:
-	if (!newline) {
-	    while (fgets(buf,sizeof(buf),moddep_file)) {
-		if (index(buf,'\n'))
-		    break;
-	    }
-	}
-    }
-    fclose(moddep_file);
-
-    /*
-     * Update our cache.
-     */
-    if (xstate->moddep)
-	g_hash_table_destroy(xstate->moddep);
-    xstate->moddep = moddep;
-    xstate->last_moddep_mtime = moddep_mtime;
-
-    vdebug(5,LA_TARGET,LF_XV,
-	   "updated modules.dep cache (%d entries from %s)\n",
-	   g_hash_table_size(xstate->moddep),moddep_path);
-
-    return 0;
-}
-
-/*
- * Only called if active memory probing is disabled, or if it fails.
- */
-static int xen_vm_updateregions(struct target *target,
-				struct addrspace *space) {
-    struct xen_vm_state *xstate = \
-	(struct xen_vm_state *)target->state;
-    struct __update_module_data ud;
-    struct memregion *region,*tregion;
-    struct memrange *range,*trange;
-
-    vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
-
-    /*
-     * We never update the main kernel region.  Instead, we update the
-     * module subregions as needed.
-     *
-     * XXX: in this first version, we don't worry about module init
-     * sections that can be removed after the kernel initializes the
-     * module.
-     */
-
-    if (!xstate->module_type || !xstate->modules || !xstate->kernel_module_dir) {
-	/*	
-	 * Don't return an error; would upset target_open.
-	 */
-	return 0;
-    }
-
-    if (xen_vm_reload_modules_dep(target)) 
-	vwarnopt(8,LF_TARGET,LF_XV,
-		 "failed to reload modules.dep; trying to continue!\n");
-
-    ud.space = space;
-    ud.moddep = xstate->moddep;
-
-    /*
-     * Clear out the current modules region bits.
-     *
-     * We don't bother checking ranges.  No need.
-     */
-    list_for_each_entry(region,&space->regions,region) {
-	if (region->type == REGION_TYPE_LIB) {
-	    region->exists = 0;
-	    region->new = 0;
-	}
-    }
-
-    /*
-     * Handle the modules via callback via iterator.
-     */
-    linux_list_for_each_entry(target,xstate->module_type,xstate->modules,"list",0,
-			      __update_module,&ud);
-
-    /*
-     * Now, for all the regions, check if they were newly added
-     * or still exist; if none of those, then they vanished
-     * and we have to purge them.
-     */
-
-    list_for_each_entry_safe(region,tregion,&space->regions,region) {
-	/* Skip anything not a kernel module. */
-	if (region->type != REGION_TYPE_LIB)
-	    continue;
-
-	if (!region->exists && !region->new) {
-	    list_for_each_entry_safe(range,trange,&region->ranges,range) {
-		vdebug(3,LA_TARGET,LF_XV,
-		       "removing stale range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
-		       range->start,range->end,range->offset);
-
-		target_add_state_change(target,TID_GLOBAL,
-					TARGET_STATE_CHANGE_RANGE_DEL,
-					0,range->prot_flags,
-					range->start,range->end,region->name);
-		memrange_free(range);
-	    }
-
-	    vdebug(3,LA_TARGET,LF_XV,"removing stale region (%s:%s:%s)\n",
-		   region->space->idstr,region->name,REGION_TYPE(region->type));
-
-	    target_add_state_change(target,TID_GLOBAL,
-				    TARGET_STATE_CHANGE_REGION_DEL,
-				    0,0,region->base_load_addr,0,region->name);
-	    memregion_free(region);
-	}
-	else if (region->new) {
-	    list_for_each_entry_safe(range,trange,&region->ranges,range) {
-		vdebug(3,LA_TARGET,LF_LUP,
-		       "new range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
-		       range->start,range->end,range->offset);
-
-		target_add_state_change(target,TID_GLOBAL,
-					TARGET_STATE_CHANGE_RANGE_NEW,
-					0,range->prot_flags,
-					range->start,range->end,region->name);
-	    }
-
-	    target_add_state_change(target,TID_GLOBAL,
-				    TARGET_STATE_CHANGE_REGION_NEW,
-				    0,0,region->base_load_addr,0,region->name);
-	}
-
-	region->new = region->exists = 0;
-    }
-
-    return 0;
-}
-
-static result_t xen_vm_active_memory_handler(struct probe *probe,tid_t tid,
-					     void *handler_data,
-					     struct probe *trigger,
-					     struct probe *base) {
-    struct target *target;
-    struct xen_vm_state *xstate;
-    struct value *mod = NULL;
-    struct addrspace *space;
-    int state = -1;
-    struct __update_module_data ud;
-    char *modfilename;
-    struct list_head *pos;
-    struct memregion *region;
-    struct memrange *range,*trange;
-    char *name;
-    struct value *name_value = NULL;
-
-    target = probe->target;
-    xstate = (struct xen_vm_state *)target->state;
-    space = list_entry(target->spaces.next,typeof(*space),space);
-
-    /*
-     * For kernels that have do_init_module(), we can simply place a
-     * probe on the entry of that function.  If we cannot read the first
-     * arg, the module is already on the list, so just scan the list
-     * manually.
-     *
-     * For older kernels, it is not as good.  We cannot catch the
-     * incoming module once it is guaranteed to be on the list UNLESS we
-     * use return probes on one of a few functions (__link_module would
-     * work), but that requires disasm, which we want to avoid.
-     *
-     * So -- the only strategy that works for all kernels is to place a
-     * probe on module_free(), and look at both the addr being freed,
-     * and the module->state field.  If ->state is MODULE_STATE_LIVE,
-     * we know the module is new.  If mod->state is MODULE_STATE_GOING,
-     * we know the module is being removed (or failed to initialize).
-     * If mod->state is MODULE_STATE_COMING, we know the module failed
-     * to initialize.
-     *
-     * This way, if we fail to load module_free's mod arg -- we can just
-     * rescan the list.  By the time this function is called, whether
-     * the module is coming or going, the module is either on the list
-     * or off it.
-     *
-     * NB: module_free is called multiple times per module (for the
-     * init_text section, and the core_text section).  So, we just
-     * handle those cases and ignore them.
-     *
-     *   NB: we *could* utilize this to track the presence/absence of
-     *   the init_text section too; but we don't for now.
-     */
-
-    /*
-     * Load mod.
-     */
-    mod = target_load_symbol(target,xstate->default_tlctxt,
-			     xstate->module_free_mod_symbol,LOAD_FLAG_AUTO_DEREF);
-    if (!mod) {
-	/*
-	 * Again, the module is either on the list if it's coming; or
-	 * off the list if it's going.  By the time module_free is
-	 * called, its state is known based on whether it is on the list
-	 * or off the list.
-	 *
-	 * So, it is safe to manually update regions.
-	 */
-	vwarn("could not load mod in module_free; manually updating"
-	      " modules!\n");
-	goto manual_update;
-    }
-
-    /*
-     * Load mod->state, so we know what is happening.
-     */
-    VLV(target,xstate->default_tlctxt,mod,"state",LOAD_FLAG_NONE,&state,NULL,
-	err_vmiload_state);
-
-    /*
-     * Update modules.dep, just in case; don't worry if it fails, just
-     * do our best.
-     */
-    xen_vm_reload_modules_dep(target);
-
-    if (state == xstate->MODULE_STATE_LIVE) {
-	ud.space = space;
-	ud.moddep = xstate->moddep;
-
-	__update_module(target,mod,&ud);
-	region = ud.region;
-
-	list_for_each_entry_safe(range,trange,&region->ranges,range) {
-	    vdebug(3,LA_TARGET,LF_LUP,
-		   "new range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
-		   range->start,range->end,range->offset);
-
-	    target_add_state_change(target,TID_GLOBAL,
-				    TARGET_STATE_CHANGE_RANGE_NEW,
-				    0,range->prot_flags,
-				    range->start,range->end,region->name);
-	}
-
-	target_add_state_change(target,TID_GLOBAL,
-				TARGET_STATE_CHANGE_REGION_NEW,
-				0,0,region->base_load_addr,0,region->name);
-    }
-    else if (state == xstate->MODULE_STATE_COMING
-	     || state == xstate->MODULE_STATE_GOING) {
-	/*
-	 * Look up and destroy it if it's one of our regions.
-	 */
-	VLV(target,xstate->default_tlctxt,mod,"name",LOAD_FLAG_AUTO_STRING,
-	    NULL,&name_value,err_vmiload_name);
-	name = v_string(name_value);
-
-	modfilename = g_hash_table_lookup(xstate->moddep,name);
-	if (!modfilename) {
-	    verror("could not find modfilename for module '%s'; aborting to"
-		   " manual update!\n",
-		   name);
-	    goto manual_update;
-	}
-
-	list_for_each(pos,&space->regions) {
-	    region = list_entry(pos,typeof(*region),region);
-	    if (strcmp(region->name,modfilename) == 0) 
-		break;
-	    region = NULL;
-	}
-
-	if (region) {
-	    list_for_each_entry_safe(range,trange,&region->ranges,range) {
-		vdebug(3,LA_TARGET,LF_XV,
-		       "removing stale range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
-		       range->start,range->end,range->offset);
-
-		target_add_state_change(target,TID_GLOBAL,
-					TARGET_STATE_CHANGE_RANGE_DEL,
-					0,range->prot_flags,
-					range->start,range->end,region->name);
-		memrange_free(range);
-	    }
-
-	    vdebug(3,LA_TARGET,LF_XV,"removing stale region (%s:%s:%s)\n",
-		   region->space->idstr,region->name,REGION_TYPE(region->type));
-
-	    target_add_state_change(target,TID_GLOBAL,
-				    TARGET_STATE_CHANGE_REGION_DEL,
-				    0,0,region->base_load_addr,0,region->name);
-	    memregion_free(region);
-	}
-	else {
-	    vdebug(5,LA_TARGET,LF_XV,
-		   "ignoring untracked departing module '%s'\n",name);
-	}
-    }
-    else {
-	verror("unexpected module state %d; reverting to manual update!\n",state);
-	goto manual_update;
-    }
-
-    if (name_value)
-	value_free(name_value);
-    if (mod)
-	value_free(mod);
-
-    return RESULT_SUCCESS;
-
- err_vmiload_state:
-    verror("could not load mod->state; aborting to manual update!\n");
-    goto manual_update;
-
- err_vmiload_name:
-    verror("could not load mod->name for departing module; aborting to manual"
-	   " update!\n");
-    goto manual_update;
-
- manual_update:
-    if (name_value)
-	value_free(name_value);
-    if (mod)
-	value_free(mod);
-
-    if (xen_vm_updateregions(target,space)) {
-	verror("manual module update failed; regions may be wrong!\n");
-	return RESULT_SUCCESS;
-    }
-
-    return RESULT_SUCCESS;
-}
-
-/*
- * NB: this was hard!
- *
- * It is very, very hard to find an available function to place a probe
- * on, that is not either optimized out of existence (well, it may
- * exist, but either the instances are not available or the parameters
- * have no locations at the inlined site).
- *
- * And we really want to try hard to only probe *after* (but very near
- * to) the place where the task is placed on the tasks list; this way,
- * if we fail to read the new task out of target memory, we can abort to
- * scanning the task list.  I guess that doesn't matter so much though.
- * Anyway, the list add happens in copy_process, so that is our target.
- *
- * I worked very hard to avoid requiring disasm support (so that I could
- * register probes on the RETs from copy_process); but ultimately I
- * could not manage it.  proc_fork_connector() is the only
- * copy_process()-specific hook just before the success RET in
- * copy_process.  We could also have caught the increment of total_forks
- * via watchpoint, but I want to avoid wasting a watchpoint if I can!
- *
- * I tried to catch proc_fork_connector() inside copy_process() (but of
- * course, silly me, that is only really defined if CONFIG_CONNECTOR;
- * otherwise it's just declared) because it is the last "hook" in
- * copy_process; by that time, we know that the new task is on the tasks
- * list.
- *
- * Another option might have been to catch the new task just after the
- * invocations of copy_process() in fork_idle() or do_fork(); but this
- * would basically require us to use debuginfo variable availability
- * (when does the `task' local var in those functions become
- * available!), and then place a probe on that exact location.  But, of
- * course that doesn't work; you have no idea what code is where, or the
- * debuginfo might be wrong/incomplete.
- *
- * So -- the best options all involve requiring disasm support.  Once we
- * have this, the easiest thing to do is catch the RETs in copy_process;
- * if the local var 'p' is !IS_ERR(), we know we have a new task.  If we
- * fail to load memory, or something goes wrong, we can fall back to
- * manually walking the task list.
- */
-
-#define _LINUX_MAX_ERRNO 4095
-#define _LINUX_IS_ERR(x) unlikely((x) >= (REGVAL)-_LINUX_MAX_ERRNO)
-
-static result_t xen_vm_active_thread_entry_handler(struct probe *probe,tid_t tid,
-						   void *handler_data,
-						   struct probe *trigger,
-						   struct probe *base) {
-    struct target *target = probe->target;
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
-    struct target_thread *tthread;
-    REGVAL ax;
-    struct value *value;
-
-    /*
-     * Load task from retval in %ax
-     */
-    errno = 0;
-    ax = target_read_creg(target,tid,CREG_AX);
-    if (errno) {
-	verror("could not read %%ax to get copy_process retval!\n");
-	return RESULT_SUCCESS;
-    }
-
-    if (_LINUX_IS_ERR(ax)) {
-	vwarnopt(5,LA_TARGET,LF_XV,"copy_process failed internally!\n");
-	return RESULT_SUCCESS;
-    }
-
-    vdebug(5,LA_TARGET,LF_XV,"copy_process returned 0x%"PRIxADDR"\n",ax);
-
-    value = target_load_type(target,xstate->task_struct_type,ax,LOAD_FLAG_NONE);
-    if (!value) {
-	/*
-	 * This target does not require thread entry tracking; so ignore
-	 * it.  We just load threads as they appear; it's stale threads
-	 * we really prefer to avoid -- or for overlay targets, we need
-	 * to know when a overlay thread disappears.
-	 */
-	vwarn("could not load retval in %s; ignoring new thread!\n",
-	      bsymbol_get_name(xstate->thread_entry_f_symbol));
-	return RESULT_SUCCESS;
-    }
-
-    if (!(tthread = __xen_vm_load_thread_from_value(target,value))) {
-	verror("could not load thread from task value; BUG?\n");
-	value_free(value);
-	return RESULT_SUCCESS;
-    }
-
-    vdebug(5,LA_TARGET,LF_XV,
-	   "new task %"PRIiTID" (%s)\n",tthread->tid,tthread->name);
-
-    return RESULT_SUCCESS;
-}
-
-/*
- * NB: this was hard!
- *
- * It is very, very hard to find an available function to place a probe
- * on, that is not either optimized out of existence (well, it may
- * exist, but either the instances are not available or the parameters
- * have no locations at the inlined site).  __unhash_process, the
- * function that takes the pid off the list, is the ideal place, but
- * that doesn't work.  release_task also does not work, but that is
- * because it contains a loop that reaps zombie group leaders (if they
- * exist) -- so we would miss some zombies.  Thus we are left with
- * sched_exit, which is (unfortunately) well after the process is off
- * the task list.  BUT -- every exiting task hits it.  Another
- * alternative (of course) is to probe inside of schedule(), but that is
- * tricky because it adds tons of unnecessary overhead,
- *
- * Of course, then the problem becomes that in release_task, the task IS
- * exiting, but it is still running on its kernel stack (at least when
- * called from the normal do_exit() exit path; this means that although
- * we want to delete our thread, we cannot delete it because it may
- * "reappear".
- *
- * One strategy, for kernels that do NOT support CONFIG_PREEMPT, is to
- * mark the thread "exiting", and when the next debug exception hits,
- * clear out any such threads if the exception is not for one of them!
- * Why does this work?  An exiting task will simply not be preempted
- * until it calls schedule().
- *
- * For kernels that do support CONFIG_PREEMPT, the only "safe" places to
- * *know* that a task is exiting, but preemption has been disabled, is
- * the call to preempt_disable() inside do_exit().  And we can't catch
- * that -- it is really just a write to a field in the task struct,
- * followed by an MFENCE instruction (on x86).  So, we really have to
- * catch the call to schedule() inside do_exit() -- or the call to
- * release_task() inside wait_task_zombie().  This makes sure we catch
- * all the paths leading to release_task().
- *
- * NB: therefore, this version does not support CONFIG_PREEMPT very well
- * -- it could be racy.  We need support for placing probes on function
- * invocations; this requires disasm support.
- */
-static result_t xen_vm_active_thread_exit_handler(struct probe *probe,tid_t tid,
-						  void *handler_data,
-						  struct probe *trigger,
-						  struct probe *base) {
-    struct target *target = probe->target;
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
-    struct target_thread *tthread;
-    struct xen_vm_thread_state *xtstate;
-    struct value *value;
-
-    /*
-     * Load task.
-     */
-    value = target_load_symbol(target,xstate->default_tlctxt,
-			       xstate->thread_exit_v_symbol,LOAD_FLAG_AUTO_DEREF);
-
-    if (!value) {
-	/*
-	 * We need avoid stale threads for overlay targets; we need to
-	 * know when a overlay thread disappears.
-	 */
-	vwarn("could not load %s in %s; ignoring new thread!\n",
-	      bsymbol_get_name(xstate->thread_exit_v_symbol),
-	      bsymbol_get_name(xstate->thread_exit_f_symbol));
-	return RESULT_SUCCESS;
-    }
-
-    if (!(tthread = __xen_vm_load_thread_from_value(target,value))) {
-	verror("could not load thread from task value; BUG?\n");
-	value_free(value);
-	return RESULT_SUCCESS;
-    }
-
-    xtstate = (struct xen_vm_thread_state *)tthread->state;
-
-    xtstate->exiting = 1;
-
-    vdebug(5,LA_TARGET,LF_XV,
-	   "exiting task %"PRIiTID" (%s)\n",tthread->tid,tthread->name);
-
-    return RESULT_SUCCESS;
-}
-
 /*
  * If again is not NULL, we set again
  *   to -1 if there was an error, but we should try again;
@@ -7209,17 +3541,17 @@ static result_t xen_vm_active_thread_exit_handler(struct probe *probe,tid_t tid,
 static target_status_t xen_vm_handle_exception(struct target *target,
 					       int *again,void *priv) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    int cpl;
     REGVAL ipval;
     int dreg = -1;
     struct probepoint *dpp;
     struct target_thread *tthread;
-    struct target_thread *overlay_leader;
+    tid_t overlay_leader_tid;
     struct xen_vm_thread_state *gtstate;
     struct xen_vm_thread_state *xtstate;
     tid_t tid;
     struct probepoint *spp;
     struct target_thread *sstep_thread;
-    struct addrspace *space;
     struct target_thread *bogus_sstep_thread;
     ADDR bogus_sstep_probepoint_addr;
     struct target *overlay;
@@ -7273,11 +3605,26 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 	target->current_thread = NULL;
 
 	/*
-	 * Grab EIP first so we can see if we're in user or kernel
-	 * space.
+	 * Load the global thread (machine state) very first... we have
+	 * to be able to read some register state!
+	 */
+	if (!__xen_vm_load_current_thread(target,0,1)) {
+	    verror("could not load global thread!\n");
+	    goto out_err;
+	}
+
+	/*
+	 * Grab EIP and CPL first so we can see if we're in user or
+	 * kernel space and print better messages.
 	 */
 	errno = 0;
-	ipval = xen_vm_read_reg(target,TID_GLOBAL,target->ipregno);
+	cpl = __xen_get_cpl(target,TID_GLOBAL);
+	if (errno) {
+	    verror("could not read CPL while checking debug event: %s\n",
+		   strerror(errno));
+	    goto out_err;
+	}
+	ipval = target_read_reg(target,TID_GLOBAL,target->ipregno);
 	if (errno) {
 	    verror("could not read EIP while checking debug event: %s\n",
 		   strerror(errno));
@@ -7285,46 +3632,38 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 	}
 
 	/*
-	 * If not active probing memory, we kind of want to update our
-	 * addrspaces aggressively (by checking the module list) so that
-	 * if a user lookups a module symbol, we already have it.
-	 *
-	 * Active probing memory for the Xen target is a big win.
+	 * Give the personality a chance to update its state.
 	 */
-	if (!(target->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)) {
-	    list_for_each_entry(space,&target->spaces,space) {
-		xen_vm_updateregions(target,space);
-	    }
-	}
+	target_personality_handle_exception(target);
 
-	if (ipval < xstate->kernel_start_addr) {
-	    if (!__xen_vm_load_current_thread(target,0,1)) {
-		vdebug(3,LA_TARGET,LF_XV | LF_THREAD,
-		       "user-mode debug event at EIP 0x%"PRIxADDR" in unknown tid;"
-		       " will try to handle it if it is single step!\n",
-		       ipval);
-		verror("could not read current thread in user mode context!\n");
-		goto out_err_again;
-	    }
+	/* 
+	 * Reload the current thread.  We don't force it because we
+	 * flush all threads before continuing the loop via again:,
+	 * or in target_resume/target_singlestep.
+	 */
+	xen_vm_load_current_thread(target,0);
+
+	if (__xen_vm_in_userspace(target,cpl,ipval)) {
 	    tthread = target->current_thread;
+
+	    if (!tthread) {
+		verror("could not load current userspace thread at 0x%"PRIxADDR"!\n",
+		       ipval);
+		goto out_err;
+	    }
+
 	    gtstate = (struct xen_vm_thread_state *) \
 		target->global_thread->state;
 	    xtstate = (struct xen_vm_thread_state *) \
 		target->current_thread->state;
 	    tid = target->current_thread->tid;
+
 	    vdebug(3,LA_TARGET,LF_XV | LF_THREAD,
 		   "user-mode debug event at EIP 0x%"PRIxADDR" in tid %"PRIiTID";"
 		   " will try to handle it if it is single step!\n",
 		   ipval,tid);
 	}
 	else {
-	    /* 
-	     * Reload the current thread.  We don't force it because we
-	     * flush all threads before continuing the loop via again:,
-	     * or in target_resume/target_singlestep.
-	     */
-	    xen_vm_load_current_thread(target,0);
-
 	    /*
 	     * If we are tracking thread exits, we have to nuke
 	     * "exiting" threads.  See comments near
@@ -7334,9 +3673,8 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		g_hash_table_iter_init(&iter,target->threads);
 		while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&vp)) {
 		    tthread = (struct target_thread *)vp;
-		    xtstate = (struct xen_vm_thread_state *)tthread->state;
 
-		    if (!xtstate->exiting) 
+		    if (!tthread->exiting) 
 			continue;
 
 		    if (tthread == target->current_thread) {
@@ -7416,9 +3754,9 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 	     * 3) somehow the kernel jumped to one!
 	     */
 	    if (tthread->emulating_debug_mmod) {
-		//&& ipval < xstate->kernel_start_addr) {
+		//&& __xen_vm_in_userspace(target,cpl,ipval)) {
 		/* This is a shared-page singlestep. */
-		tmp_ipval = ipval - target->breakpoint_instrs_len;
+		tmp_ipval = ipval - target->arch->breakpoint_instrs_len;
 
 		vdebug(5,LA_TARGET,LF_XV,
 		       "emulating debug memmod at ss for tid %"PRIiTID
@@ -7443,13 +3781,13 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 	    else if (target->sstep_thread 
 		&& ((target->sstep_thread->tpc
 		     && target->sstep_thread->tpc->probepoint->can_switch_context)
-		    || (ipval < xstate->kernel_start_addr
+		    || (__xen_vm_in_userspace(target,cpl,ipval)
 			&& !target->sstep_thread_overlay))) {
 		sstep_thread = target->sstep_thread;
 	    }
 	    else if (target->sstep_thread
 		     && target->sstep_thread_overlay) {
-		if (ipval < xstate->kernel_start_addr) {
+		if (__xen_vm_in_userspace(target,cpl,ipval)) {
 		    vdebug(8,LA_TARGET,LF_XV,
 			   "single step event in overlay tid %"PRIiTID
 			   " (tgid %"PRIiTID"); notifying overlay\n",
@@ -7506,7 +3844,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		|| (xstate->hvm && xstate->hvm_monitor_trap_flag_set)) {
 	    handle_inferred_sstep:
 		if (!tthread->tpc) {
-		    if (sstep_thread && ipval < xstate->kernel_start_addr) {
+		    if (sstep_thread && __xen_vm_in_userspace(target,cpl,ipval)) {
 			vwarn("single step event (status reg and eflags) into"
 			      " userspace; trying to handle in sstep thread"
 			      " %"PRIiTID"!\n",sstep_thread->tid);
@@ -7585,7 +3923,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 
 		goto out_ss_again;
 	    }
-	    else if (ipval < xstate->kernel_start_addr) {
+	    else if (__xen_vm_in_userspace(target,cpl,ipval)) {
 		verror("user-mode debug event (single step) at 0x%"PRIxADDR
 		       "; debug status reg 0x%"DRF"; eflags 0x%"RF
 		       "; skipping handling!\n",
@@ -7679,7 +4017,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 	    }			    
 
 	    if (dreg > -1) {
-		if (ipval < xstate->kernel_start_addr) {
+		if (__xen_vm_in_userspace(target,cpl,ipval)) {
 		    vwarn("user-mode debug event (hw dbg reg)"
 			  " at 0x%"PRIxADDR"; debug status reg 0x%"DRF"; eflags"
 			  " 0x%"RF"; trying to handle in global thread!\n",
@@ -7698,21 +4036,19 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		       "found hw break (status) in dreg %d on 0x%"PRIxADDR"\n",
 		       dreg,ipval);
 	    }
-	    else if (ipval < xstate->kernel_start_addr) {
+	    else if (__xen_vm_in_userspace(target,cpl,ipval)) {
 		overlay = target_lookup_overlay(target,tid);
 
 		/* If we didn't find one, try to find its leader as an overlay. */
 		if (!overlay) {
-		    overlay_leader = __xen_vm_get_group_leader(target,tthread);
-		    if (overlay_leader) {
-			overlay = target_lookup_overlay(target,
-							overlay_leader->tid);
-			if (overlay) {
-			    vdebug(5,LA_TARGET,LF_XV,
-				   "found yet-unknown thread %d with"
-				   " overlay leader %d; will notify!\n",
-				   tthread->tid,overlay_leader->tid);
-			}
+		    overlay_leader_tid =
+			target_os_thread_get_leader(target,tthread->tid);
+		    overlay = target_lookup_overlay(target,overlay_leader_tid);
+		    if (overlay) {
+			vdebug(5,LA_TARGET,LF_XV,
+			       "found yet-unknown thread %d with"
+			       " overlay leader %d; will notify!\n",
+			       tthread->tid,overlay_leader_tid);
 		    }
 		}
 
@@ -7746,7 +4082,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		     * It's ok for Xen and the Xen-process overlay, but
 		     * it's a definite abstraction breakdown.
 		     */
-		    tmp_ipval = ipval - target->breakpoint_instrs_len;
+		    tmp_ipval = ipval - target->arch->breakpoint_instrs_len;
 		    rc = xen_vm_addr_v2p(target,TID_GLOBAL,tmp_ipval,&paddr);
 		    if (!rc)
 			pmmod = target_memmod_lookup(target,TID_GLOBAL,paddr,1);
@@ -7903,7 +4239,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 	    }
 	    else if ((dpp = (struct probepoint *) \
 		      g_hash_table_lookup(target->soft_probepoints,
-					  (gpointer)(ipval - target->breakpoint_instrs_len)))) {
+					  (gpointer)(ipval - target->arch->breakpoint_instrs_len)))) {
 		/* Run the breakpoint handler. */
 		target->ops->handle_break(target,tthread,dpp,
 					  xtstate->context.debugreg[6] & 0x4000);
@@ -7936,7 +4272,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		goto handle_inferred_sstep;
 	    }
 	    else if (xtstate->context.user_regs.eflags & EF_TF) {
-	    phantom:
+	    //phantom:
 		vwarn("phantom single step for dom %d (no breakpoint"
 		      " set either!); letting user handle fault at"
 		      " 0x%"PRIxADDR"!\n",xstate->id,ipval);
@@ -8191,19 +4527,17 @@ static unsigned long xen_vm_write(struct target *target,ADDR addr,
 }
 
 /*
- * We have to either load cr3 from vcpu context (for a running task), or
+ * We have to either load pgd from vcpu context (for a running task), or
  * from the task struct (for a swapped out task).
  *
  * NB: @cr3 will be a physical address, not a kernel virtual address.
  * The mm_struct contains a virtual address; but the CR3 register of
- * course contains a physical one.
+ * course contains a physical one.  And the CR3 content is not quite a
+ * physical address, sometimes, it seems.
  */
-static int __xen_vm_cr3(struct target *target,tid_t tid,uint64_t *cr3) {
-    struct xen_vm_state *xstate;
+static int __xen_vm_pgd(struct target *target,tid_t tid,uint64_t *pgd) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
-
-    xstate = (struct xen_vm_state *)target->state;
 
     if (tid == TID_GLOBAL) {
 	tthread = __xen_vm_load_current_thread(target,0,1);
@@ -8214,11 +4548,11 @@ static int __xen_vm_cr3(struct target *target,tid_t tid,uint64_t *cr3) {
 	xtstate = (struct xen_vm_thread_state *)tthread->state;
 
 	if (xtstate->context.vm_assist & (1 << VMASST_TYPE_pae_extended_cr3)) {
-	    *cr3 = ((uint64_t)xen_cr3_to_pfn(xtstate->context.ctrlreg[3])) \
+	    *pgd = ((uint64_t)xen_cr3_to_pfn(xtstate->context.ctrlreg[3])) \
 		       << XC_PAGE_SHIFT;
 	}
 	else {
-	    *cr3 = xtstate->context.ctrlreg[3] & ~(PAGE_SIZE - 1);
+	    *pgd = xtstate->context.ctrlreg[3] & ~(__PAGE_SIZE - 1);
 	}
     }
     else {
@@ -8232,31 +4566,28 @@ static int __xen_vm_cr3(struct target *target,tid_t tid,uint64_t *cr3) {
 	/*
 	if (target->wordsize == 8) {
 	    if (xtstate->pgd >= xstate->kernel_start_addr)
-		*cr3 = xtstate->pgd - xstate->kernel_start_addr;
+		*pgd = xtstate->pgd - xstate->kernel_start_addr;
 	    else
 #if __WORDSIZE == 64
-		*cr3 = xtstate->pgd - 0xffff810000000000UL;
+		*pgd = xtstate->pgd - 0xffff810000000000UL;
 #else
-		*cr3 = xtstate->pgd - 0xffff810000000000ULL;
+		*pgd = xtstate->pgd - 0xffff810000000000ULL;
 #endif
 	}
 	else {
-	    *cr3 = xtstate->pgd - xstate->kernel_start_addr;
+	    *pgd = xtstate->pgd - xstate->kernel_start_addr;
 	}
 	*/
 	
-	
-	if (xen_vm_addr_v2p(target,TID_GLOBAL,xtstate->pgd,cr3)) {
-	    verror("could not translate tid %"PRIiTID" pgd vaddr 0x%"PRIxADDR
-		   " to paddr using kernel CR3: %s!\n",
-		   tid,xtstate->pgd,strerror(errno));
+	if (target_os_thread_get_pgd_phys(target,tid,pgd)) {
+	    verror("could not get phys pgd for tid %"PRIiTID": %s!\n",
+		   tid,strerror(errno));
 	    return -1;
 	}
-	
     }
 
     vdebug(12,LA_TARGET,LF_XV,
-	   "tid %"PRIiTID" cr3/pgd (phys) = 0x%"PRIx64"\n",tid,*cr3);
+	   "tid %"PRIiTID" pgd (phys) = 0x%"PRIx64"\n",tid,*pgd);
 
     return 0;
 }
@@ -8264,24 +4595,24 @@ static int __xen_vm_cr3(struct target *target,tid_t tid,uint64_t *cr3) {
 static int xen_vm_addr_v2p(struct target *target,tid_t tid,
 			   ADDR vaddr,ADDR *paddr) {
     struct xen_vm_state *xstate;
-    uint64_t cr3 = 0;
+    uint64_t pgd = 0;
     uint64_t tvaddr = 0;
     uint64_t tpaddr = 0;
 
     xstate = (struct xen_vm_state *)target->state;
 
-    if (__xen_vm_cr3(target,tid,&cr3)) {
-	verror("could not read cr3 for tid %"PRIiTID"!\n",tid);
+    if (__xen_vm_pgd(target,tid,&pgd)) {
+	verror("could not read pgd for tid %"PRIiTID"!\n",tid);
 	return -1;
     }
 
     /*
      * Strip the offset bits to improve libvmi/xenaccess cache perf.
      */
-    tvaddr = vaddr & ~(PAGE_SIZE - 1);
+    tvaddr = vaddr & ~(__PAGE_SIZE - 1);
 
 #ifdef ENABLE_LIBVMI
-    tpaddr = vmi_pagetable_lookup(xstate->vmi_instance,cr3,tvaddr);
+    tpaddr = vmi_pagetable_lookup(xstate->vmi_instance,pgd,tvaddr);
 #endif
 #ifdef ENABLE_XENACCESS
 #if __WORDSIZE == 64
@@ -8289,7 +4620,7 @@ static int xen_vm_addr_v2p(struct target *target,tid_t tid,
     errno = ENOTSUP;
     return -1;
 #else
-    tpaddr = xa_pagetable_lookup(&xstate->xa_instance,cr3,tvaddr,0);
+    tpaddr = xa_pagetable_lookup(&xstate->xa_instance,pgd,tvaddr,0);
 #endif
 #endif
 
@@ -8299,7 +4630,7 @@ static int xen_vm_addr_v2p(struct target *target,tid_t tid,
 	return -1;
     }
 
-    *paddr = tpaddr | (vaddr & (PAGE_SIZE - 1));
+    *paddr = tpaddr | (vaddr & (__PAGE_SIZE - 1));
 
     vdebug(12,LA_TARGET,LF_XV,
 	   "tid %"PRIiTID" vaddr 0x%"PRIxADDR" -> paddr 0x%"PRIxADDR"\n",
@@ -8330,13 +4661,13 @@ static unsigned char *xen_vm_read_phys(struct target *target,ADDR paddr,
 	retval = buf;
 
 #ifdef ENABLE_XENACCESS
-    page_offset = paddr & (PAGE_SIZE - 1);
-    npages = (page_offset + length) / PAGE_SIZE;
-    if ((page_offset + length) % PAGE_SIZE)
+    page_offset = paddr & (__PAGE_SIZE - 1);
+    npages = (page_offset + length) / __PAGE_SIZE;
+    if ((page_offset + length) % __PAGE_SIZE)
 	++npages;
 
     /* Have to mmap them one by one. */
-    cur = paddr & ~(PAGE_SIZE - 1);
+    cur = paddr & ~(__PAGE_SIZE - 1);
     rc = 0;
     for (i = 0; i < npages; ++i) {
 	mmap = xa_access_pa(&xstate->xa_instance,cur,&offset,PROT_READ);
@@ -8347,19 +4678,19 @@ static unsigned char *xen_vm_read_phys(struct target *target,ADDR paddr,
 	    goto errout;
 	}
 	if (i == 0) {
-	    memcpy(retval + rc,mmap + page_offset,PAGE_SIZE - page_offset);
-	    rc = PAGE_SIZE - page_offset;
+	    memcpy(retval + rc,mmap + page_offset,__PAGE_SIZE - page_offset);
+	    rc = __PAGE_SIZE - page_offset;
 	}
 	else if (i == (npages - 1)) {
 	    memcpy(retval + rc,mmap,(length - rc));
 	    rc += length - rc;
 	}
 	else {
-	    memcpy(retval + rc,mmap,PAGE_SIZE);
-	    rc += PAGE_SIZE;
+	    memcpy(retval + rc,mmap,__PAGE_SIZE);
+	    rc += __PAGE_SIZE;
 	}
-	munmap(mmap,PAGE_SIZE);
-	cur += PAGE_SIZE;
+	munmap(mmap,__PAGE_SIZE);
+	cur += __PAGE_SIZE;
     }
 #endif
 #ifdef ENABLE_LIBVMI
@@ -8396,13 +4727,13 @@ static unsigned long xen_vm_write_phys(struct target *target,ADDR paddr,
     xstate = (struct xen_vm_state *)target->state;
 
 #ifdef ENABLE_XENACCESS
-    page_offset = paddr & (PAGE_SIZE - 1);
-    npages = (page_offset + length) / PAGE_SIZE;
-    if ((page_offset + length) % PAGE_SIZE)
+    page_offset = paddr & (__PAGE_SIZE - 1);
+    npages = (page_offset + length) / __PAGE_SIZE;
+    if ((page_offset + length) % __PAGE_SIZE)
 	++npages;
 
     /* Have to mmap them one by one. */
-    cur = paddr & ~(PAGE_SIZE - 1);
+    cur = paddr & ~(__PAGE_SIZE - 1);
     rc = 0;
     for (i = 0; i < npages; ++i) {
 	mmap = xa_access_pa(&xstate->xa_instance,cur,&offset,PROT_READ);
@@ -8413,19 +4744,19 @@ static unsigned long xen_vm_write_phys(struct target *target,ADDR paddr,
 	    goto errout;
 	}
 	if (i == 0) {
-	    memcpy(mmap + page_offset,buf + rc,PAGE_SIZE - page_offset);
-	    rc = PAGE_SIZE - page_offset;
+	    memcpy(mmap + page_offset,buf + rc,__PAGE_SIZE - page_offset);
+	    rc = __PAGE_SIZE - page_offset;
 	}
 	else if (i == (npages - 1)) {
 	    memcpy(mmap,buf + rc,(length - rc));
 	    rc += length - rc;
 	}
 	else {
-	    memcpy(mmap,buf + rc,PAGE_SIZE);
-	    rc += PAGE_SIZE;
+	    memcpy(mmap,buf + rc,__PAGE_SIZE);
+	    rc += __PAGE_SIZE;
 	}
-	munmap(mmap,PAGE_SIZE);
-	cur += PAGE_SIZE;
+	munmap(mmap,__PAGE_SIZE);
+	cur += __PAGE_SIZE;
     }
 #endif
 #ifdef ENABLE_LIBVMI
@@ -8738,11 +5069,6 @@ unsigned long xen_vm_write_pid(struct target *target, int pid, ADDR addr,
 }
 #endif
 
-/*
- * The register mapping between x86_64 registers is defined by AMD in
- * http://www.x86-64.org/documentation/abi-0.99.pdf :
- */
-
 /* Register mapping.
  *
  * First, be aware that our host bit size (64/32) *does* influence which
@@ -8754,9 +5080,8 @@ unsigned long xen_vm_write_pid(struct target *target, int pid, ADDR addr,
  * If structs in xen/xen.h (and arch-specific includes containing
  * cpu_user_regs) change, ever, these mappings will be wrong.
  */
-#if __WORDSIZE == 64
-#define X86_64_DWREG_COUNT 67
-static int dreg_to_offset64[X86_64_DWREG_COUNT] = { 
+#ifdef __x86_64__
+static int dreg_to_offset64[ARCH_X86_64_REG_COUNT] = { 
     offsetof(struct vcpu_guest_context,user_regs.rax),
     offsetof(struct vcpu_guest_context,user_regs.rdx),
     offsetof(struct vcpu_guest_context,user_regs.rcx),
@@ -8786,45 +5111,29 @@ static int dreg_to_offset64[X86_64_DWREG_COUNT] = {
     offsetof(struct vcpu_guest_context,user_regs.fs),
     offsetof(struct vcpu_guest_context,user_regs.gs),
     -1, -1, 
-    -1, -1, /* XXX: what about fs_base, gs_base; that's what these are. */
-    -1, -1, 
+    /* What about fs_base, gs_base, gs_base_kernel; that's what these are. */
+    offsetof(struct vcpu_guest_context,fs_base),
+    offsetof(struct vcpu_guest_context,gs_base_kernel), /* XXX: reuse kernel */
+    offsetof(struct vcpu_guest_context,gs_base_kernel),
+    offsetof(struct vcpu_guest_context,gs_base_user),
+    -1, -1, -1, -1, -1, -1,
+    -1, -1,
+    offsetof(struct vcpu_guest_context,ctrlreg[0]),
+    offsetof(struct vcpu_guest_context,ctrlreg[1]),
+    offsetof(struct vcpu_guest_context,ctrlreg[2]),
+    offsetof(struct vcpu_guest_context,ctrlreg[3]),
+    offsetof(struct vcpu_guest_context,ctrlreg[4]),
     -1, -1, -1, -1, -1,
+    offsetof(struct vcpu_guest_context,debugreg[0]),
+    offsetof(struct vcpu_guest_context,debugreg[1]),
+    offsetof(struct vcpu_guest_context,debugreg[2]),
+    offsetof(struct vcpu_guest_context,debugreg[3]),
+    -1,-1,
+    offsetof(struct vcpu_guest_context,debugreg[6]),
+    offsetof(struct vcpu_guest_context,debugreg[7]),
 };
-static char *dreg_to_name64[X86_64_DWREG_COUNT] = { 
-    "rax", "rdx", "rcx", "rbx", "rsi", "rdi", "rbp", "rsp",
-    "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
-    "rip",
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    "rflags", "es", "cs", "ss", "ds", "fs", "gs",
-    NULL, NULL,
-    NULL, NULL, /* "fs_base", "gs_base", */
-    NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL,
-};
-static int creg_to_dreg64[COMMON_REG_COUNT] = { 
-    [CREG_AX] = 0,
-    [CREG_BX] = 3,
-    [CREG_CX] = 2,
-    [CREG_DX] = 1,
-    [CREG_DI] = 5,
-    [CREG_SI] = 4,
-    [CREG_BP] = 6,
-    [CREG_SP] = 7,
-    [CREG_IP] = 16,
-    [CREG_FLAGS] = 49,
-    [CREG_CS] = 51,
-    [CREG_SS] = 52,
-    [CREG_DS] = 53,
-    [CREG_ES] = 50,
-    [CREG_FS] = 54,
-    [CREG_GS] = 55,
-};
-#else
-#define X86_32_DWREG_COUNT 59
-static int dreg_to_offset32[X86_32_DWREG_COUNT] = { 
+#endif
+static int dreg_to_offset32[ARCH_X86_REG_COUNT] = { 
     offsetof(struct vcpu_guest_context,user_regs.eax),
     offsetof(struct vcpu_guest_context,user_regs.ecx),
     offsetof(struct vcpu_guest_context,user_regs.edx),
@@ -8835,477 +5144,246 @@ static int dreg_to_offset32[X86_32_DWREG_COUNT] = {
     offsetof(struct vcpu_guest_context,user_regs.edi),
     offsetof(struct vcpu_guest_context,user_regs.eip),
     offsetof(struct vcpu_guest_context,user_regs.eflags),
-    -1, -1, -1, -1, -1, -1, 
+    -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1,
     -1, -1, -1, -1, -1, -1, -1, -1, 
     -1, -1, -1, -1, -1, -1, -1, -1, 
-    -1, -1, -1, -1, -1, -1, -1, -1, 
-    -1, -1, -1, -1, -1, -1, -1, -1, 
-    -1, -1, -1, -1, -1,
+    -1, -1, -1,
     /* These are "fake" DWARF regs. */
+    offsetof(struct vcpu_guest_context,user_regs.es),
     offsetof(struct vcpu_guest_context,user_regs.cs),
     offsetof(struct vcpu_guest_context,user_regs.ss),
     offsetof(struct vcpu_guest_context,user_regs.ds),
-    offsetof(struct vcpu_guest_context,user_regs.es),
     offsetof(struct vcpu_guest_context,user_regs.fs),
     offsetof(struct vcpu_guest_context,user_regs.gs),
-};
-static char *dreg_to_name32[X86_32_DWREG_COUNT] = { 
-    "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi",
-    "eip", "eflags",
-    NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL,
-    "cs", "ss", "ds", "es", "fs", "gs",
-};
-static int creg_to_dreg32[COMMON_REG_COUNT] = { 
-    [CREG_AX] = 0,
-    [CREG_BX] = 3,
-    [CREG_CX] = 1,
-    [CREG_DX] = 2,
-    [CREG_DI] = 7,
-    [CREG_SI] = 6,
-    [CREG_BP] = 5,
-    [CREG_SP] = 4,
-    [CREG_IP] = 8,
-    [CREG_FLAGS] = 9,
-    [CREG_CS] = 53,
-    [CREG_SS] = 54,
-    [CREG_DS] = 55,
-    [CREG_ES] = 56,
-    [CREG_FS] = 57,
-    [CREG_GS] = 58,
-};
-#endif
-
-static int tsreg_to_offset[XV_TSREG_COUNT] = { 
-    offsetof(struct vcpu_guest_context,debugreg[0]),
-    offsetof(struct vcpu_guest_context,debugreg[1]),
-    offsetof(struct vcpu_guest_context,debugreg[2]),
-    offsetof(struct vcpu_guest_context,debugreg[3]),
-    offsetof(struct vcpu_guest_context,debugreg[6]),
-    offsetof(struct vcpu_guest_context,debugreg[7]),
     offsetof(struct vcpu_guest_context,ctrlreg[0]),
     offsetof(struct vcpu_guest_context,ctrlreg[1]),
     offsetof(struct vcpu_guest_context,ctrlreg[2]),
     offsetof(struct vcpu_guest_context,ctrlreg[3]),
     offsetof(struct vcpu_guest_context,ctrlreg[4]),
-    offsetof(struct vcpu_guest_context,ctrlreg[5]),
-    offsetof(struct vcpu_guest_context,ctrlreg[6]),
-    offsetof(struct vcpu_guest_context,ctrlreg[7]),
+    offsetof(struct vcpu_guest_context,debugreg[0]),
+    offsetof(struct vcpu_guest_context,debugreg[1]),
+    offsetof(struct vcpu_guest_context,debugreg[2]),
+    offsetof(struct vcpu_guest_context,debugreg[3]),
+    -1,-1,
+    offsetof(struct vcpu_guest_context,debugreg[6]),
+    offsetof(struct vcpu_guest_context,debugreg[7]),
 };
 
 /*
  * Register functions.
  */
-char *xen_vm_reg_name(struct target *target,REG reg) {
-    if (reg >= XV_TSREG_END_INDEX && reg <= XV_TSREG_START_INDEX) {
-	switch (reg) {
-	case XV_TSREG_CR0: return "cr0";
-	case XV_TSREG_CR1: return "cr1";
-	case XV_TSREG_CR2: return "cr2";
-	case XV_TSREG_CR3: return "cr3";
-	case XV_TSREG_CR4: return "cr4";
-	case XV_TSREG_CR5: return "cr5";
-	case XV_TSREG_CR6: return "cr6";
-	case XV_TSREG_CR7: return "cr7";
-	case XV_TSREG_DR0: return "dr0";
-	case XV_TSREG_DR1: return "dr1";
-	case XV_TSREG_DR2: return "dr2";
-	case XV_TSREG_DR3: return "dr3";
-	case XV_TSREG_DR6: return "dr6";
-	case XV_TSREG_DR7: return "dr7";
-	default:
-	    verror("DWARF regnum %d invalid special platform regno!\n",reg);
-	    return NULL;
-	}
-    }
-#if __WORDSIZE == 64
-    if (reg >= X86_64_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
-	return NULL;
-    }
-    return dreg_to_name64[reg];
-#else
-    if (reg >= X86_32_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
-	return NULL;
-    }
-    return dreg_to_name32[reg];
-#endif
-}
-
-REG xen_vm_dwregno_targetname(struct target *target,char *name) {
-    /* This sucks. */
-    REG retval = 0;
+int __xen_vm_vcpu_to_thread_regcache(struct target *target,
+				     struct vcpu_guest_context *context,
+				     struct target_thread *tthread,
+				     thread_ctxt_t tctxt) {
+    int offset;
     int i;
-    int count;
-    char **dregname;
+    int count = 0;
+    REGVAL regval;
 
-    if (!name) {
-	errno = EINVAL;
-	return 0;
-    }
-
-#if __WORDSIZE == 64
-    count = X86_64_DWREG_COUNT;
-    dregname = dreg_to_name64;
-#else
-    count = X86_32_DWREG_COUNT;
-    dregname = dreg_to_name32;
-#endif
+    vdebug(9,LA_TARGET,LF_XV,"translating vcpu to thid %d tctxt %d\n",
+	   tthread->tid,tctxt);
 
     /*
-     * This sucks more.
+     * NB: we need to read 64-bit numbers from the vcpu structs if the
+     * host is 64-bit, even if the target is 32-bit, I think...
      */
-    if ((*name == 'd' && *(name+1) == 'r')
-	|| (*name == 'D' && *(name+1) == 'R')) {
-	if (*(name+2) == '0')
-	    return XV_TSREG_DR0;
-	else if (*(name+2) == '1')
-	    return XV_TSREG_DR1;
-	else if (*(name+2) == '2')
-	    return XV_TSREG_DR2;
-	else if (*(name+2) == '3')
-	    return XV_TSREG_DR3;
-	else if (*(name+2) == '6')
-	    return XV_TSREG_DR6;
-	else if (*(name+2) == '7')
-	    return XV_TSREG_DR7;
-	else {
-	    verror("bad DR register name %s!\n",name);
-	    errno = EINVAL;
-	    return 0;
+    if (arch_wordsize(target->arch) == 8 || __WORDSIZE == 64) {
+	for (i = 0; i < ARCH_X86_64_REG_COUNT; ++i) {
+	    offset = dreg_to_offset64[i];
+	    if (offset < 0)
+		continue;
+
+	    if (likely(i < REG_X86_64_ES) || likely(i > REG_X86_64_GS))
+		regval = (REGVAL)*(uint64_t *)(((char *)context) + offset);
+	    else
+		regval = (REGVAL)*(uint16_t *)(((char *)context) + offset);
+
+	    if (target_regcache_init_reg_tidctxt(target,tthread,tctxt,
+						 i,regval)) {
+		vwarn("could not set reg %d thid %d tctxt %d\n",
+		      i,tthread->tid,tctxt);
+	    }
+	    else
+		++count;
 	}
     }
-    else if ((*name == 'c' && *(name+1) == 'r')
-	|| (*name == 'C' && *(name+1) == 'R')) {
-	if (*(name+2) == '0')
-	    return XV_TSREG_CR0;
-	else if (*(name+2) == '1')
-	    return XV_TSREG_CR1;
-	else if (*(name+2) == '2')
-	    return XV_TSREG_CR2;
-	else if (*(name+2) == '3')
-	    return XV_TSREG_CR3;
-	else if (*(name+2) == '4')
-	    return XV_TSREG_CR4;
-	else if (*(name+2) == '5')
-	    return XV_TSREG_CR5;
-	else if (*(name+2) == '6')
-	    return XV_TSREG_CR6;
-	else if (*(name+2) == '7')
-	    return XV_TSREG_CR7;
-	else {
-	    verror("bad CR register name %s!\n",name);
-	    errno = EINVAL;
-	    return 0;
+    else if (arch_wordsize(target->arch) == 4) {
+	for (i = 0; i < ARCH_X86_REG_COUNT; ++i) {
+	    offset = dreg_to_offset32[i];
+	    if (offset < 0)
+		continue;
+
+	    regval = (REGVAL)*(uint32_t *)(((char *)context) + offset);
+
+	    if (target_regcache_init_reg_tidctxt(target,tthread,tctxt,
+						 i,regval)) {
+		vwarn("could not set reg %d thid %d tctxt %d\n",
+		      i,tthread->tid,tctxt);
+	    }
+	    else
+		++count;
 	}
     }
 
-    for (i = 0; i < count; ++i) {
-	if (dregname[i] == NULL)
-	    continue;
-	else if (strcmp(name,dregname[i]) == 0) {
-	    retval = i;
-	    break;
-	}
-    }
-
-    if (i == count) {
-	verror("could not find register number for name %s!\n",name);
-	errno = EINVAL;
-	return 0;
-    }
-
-    return retval;
-}
-
-REG xen_vm_dw_reg_no(struct target *target,common_reg_t reg) {
-    if (reg >= COMMON_REG_COUNT) {
-	verror("common regnum %d does not have an x86 mapping!\n",reg);
-	errno = EINVAL;
-	return 0;
-    }
-#if __WORDSIZE == 64
-    return creg_to_dreg64[reg];
-#else
-    return creg_to_dreg32[reg];
-#endif
-}
-
-REGVAL xen_vm_read_reg(struct target *target,tid_t tid,REG reg) {
-    int offset;
-    REGVAL retval;
-    struct target_thread *tthread;
-    struct xen_vm_thread_state *xtstate;
-
-    vdebug(16,LA_TARGET,LF_XV,"reading reg %s\n",xen_vm_reg_name(target,reg));
-
-    if (reg >= XV_TSREG_END_INDEX && reg <= XV_TSREG_START_INDEX) 
-	offset = tsreg_to_offset[XV_TSREG_START_INDEX - reg];
-#if __WORDSIZE == 64
-    else if (reg >= X86_64_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
-	errno = EINVAL;
-	return 0;
-    }
-    else
-	offset = dreg_to_offset64[reg];
-#else
-    else if (reg >= X86_32_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
-	errno = EINVAL;
-	return 0;
-    }
-    else 
-	offset = dreg_to_offset32[reg];
-#endif
-
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
-	if (!errno) 
-	    errno = EINVAL;
-	verror("could not load cached thread %"PRIiTID"\n",tid);
-	return 0;
-    }
-    xtstate = (struct xen_vm_thread_state *)tthread->state;
-
-#if __WORDSIZE == 64
-    if (likely(reg < 50) || unlikely(reg >= XV_TSREG_END_INDEX))
-	retval = (REGVAL)*(uint64_t *)(((char *)&(xtstate->context)) + offset);
-    else
-	retval = (REGVAL)*(uint16_t *)(((char *)&(xtstate->context)) + offset);
-#else 
-    retval = (REGVAL)*(uint32_t *)(((char *)&(xtstate->context)) + offset);
-#endif
-    vdebug(9,LA_TARGET,LF_XV,"read reg %s 0x%"PRIxREGVAL"\n",
-	   xen_vm_reg_name(target,reg),retval);
-
-    errno = 0;
-    return retval;
-}
-
-int xen_vm_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value) {
-    int offset;
-    struct target_thread *tthread;
-    struct xen_vm_thread_state *xtstate;
-
-    vdebug(16,LA_TARGET,LF_XV,"writing reg %s 0x%"PRIxREGVAL"\n",
-	   xen_vm_reg_name(target,reg),value);
-
-    if (reg >= XV_TSREG_DR0 && reg <= XV_TSREG_DR7) {
-	errno = EACCES;
-	verror("cannot write debug registers directly!");
-	return -1;
-    }
-    else if (reg >= XV_TSREG_CR0 && reg <= XV_TSREG_CR7) 
-	offset = tsreg_to_offset[XV_TSREG_START_INDEX - reg];
-#if __WORDSIZE == 64
-    else if (reg >= X86_64_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
-	errno = EINVAL;
-	return -1;
-    }
-    else 
-	offset = dreg_to_offset64[reg];
-#else
-    else if (reg >= X86_32_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
-	errno = EINVAL;
-	return -1;
-    }
-    else 
-	offset = dreg_to_offset32[reg];
-#endif
-
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
-	if (!errno) 
-	    errno = EINVAL;
-	verror("could not load cached thread %"PRIiTID"\n",tid);
-	return -1;
-    }
-    xtstate = (struct xen_vm_thread_state *)tthread->state;
-
-#if __WORDSIZE == 64
-    if (likely(reg < 50) || unlikely(reg >= XV_TSREG_END_INDEX))
-	*(uint64_t *)(((char *)&(xtstate->context)) + offset) = (uint64_t)value;
-    else
-	*(uint16_t *)(((char *)&(xtstate->context)) + offset) = (uint16_t)value;
-#else 
-    *(uint32_t *)(((char *)&(xtstate->context)) + offset) = (uint32_t)value;
-#endif
-
-    /* Flush the context in target_resume! */
-    tthread->dirty = 1;
+    vdebug(9,LA_TARGET,LF_XV,
+	   "translated %d vcpu regs to thid %d tctxt %d regcache\n",
+	   count,tthread->tid,tctxt);
 
     return 0;
 }
 
-GHashTable *xen_vm_copy_registers(struct target *target,tid_t tid) {
-    GHashTable *retval;
-    int i;
-    int count;
-    REGVAL *rvp;
-    int *dregs;
-    char **dregnames;
-    struct target_thread *tthread;
-    struct xen_vm_thread_state *xtstate;
+int __xen_vm_thread_regcache_to_vcpu_64_reg_h(struct target *target,
+					      struct target_thread *tthread,
+					      thread_ctxt_t tctxt,
+					      REG reg,REGVAL regval,void *priv) {
+    struct vcpu_guest_context *context;
+    int offset;
 
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
-	if (!errno) 
-	    errno = EINVAL;
-	verror("could not load cached thread %"PRIiTID"\n",tid);
-	return 0;
+    if (reg > ARCH_X86_64_REG_COUNT) {
+	vwarn("unsupported reg %d!\n",reg);
+	errno = EINVAL;
+	return -1;
     }
-    xtstate = (struct xen_vm_thread_state *)tthread->state;
 
-#if __WORDSIZE == 64
-    count = X86_64_DWREG_COUNT;
-    dregs = dreg_to_offset64;
-    dregnames = dreg_to_name64;
-#else 
-    count = X86_32_DWREG_COUNT;
-    dregs = dreg_to_offset32;
-    dregnames = dreg_to_name32;
-#endif
+    context = (struct vcpu_guest_context *)priv;
+    offset = dreg_to_offset64[reg];
 
-    retval = g_hash_table_new_full(g_str_hash,g_str_equal,NULL,free);
+    if (offset < 0) {
+	vwarn("unsupported reg %d!\n",reg);
+	errno = EINVAL;
+	return -1;
+    }
 
-    for (i = 0; i < count; ++i) {
-	if (dregs[i] == -1) 
-	    continue;
+    vdebug(16,LA_TARGET,LF_XV,
+	   "tid %d thid %d tctxt %d regcache->vcpu %d 0x%"PRIxREGVAL"\n",
+	   target->id,tthread->tid,tctxt,reg,regval);
 
-	rvp = malloc(sizeof(*rvp));
-	
-#if __WORDSIZE == 64
-    if (likely(i < 50) || unlikely(i >= XV_TSREG_END_INDEX))
-	*rvp = (REGVAL)*(uint64_t *)(((char *)&xtstate->context) + dregs[i]);
+    if (likely(reg < REG_X86_64_ES) || likely(reg > REG_X86_64_GS))
+	*(uint64_t *)(((char *)context) + offset) = 
+	    (uint64_t)regval;
     else
-	*rvp = (REGVAL)*(uint16_t *)(((char *)&(xtstate->context)) + dregs[i]);
-#else 
-    *rvp = (REGVAL)*(uint32_t *)(((char *)&(xtstate->context)) + dregs[i]);
-#endif
+	*(uint16_t *)(((char *)context) + offset) =
+	    (uint16_t)regval;
 
-	g_hash_table_insert(retval,dregnames[i],rvp);
-    }
-
-    return retval;
+    return 0;
 }
 
-REGVAL xen_vm_read_reg_tidctxt(struct target *target,
-			       tid_t tid,thread_ctxt_t tidctxt,REG reg) {
+int __xen_vm_thread_regcache_to_vcpu_64_raw_h(struct target *target,
+					      struct target_thread *tthread,
+					      thread_ctxt_t tctxt,
+					      REG reg,void *rawval,int rawlen,
+					      void *priv) {
+    //struct vcpu_guest_context *context;
     int offset;
-    REGVAL retval;
-    struct target_thread *tthread;
-    struct xen_vm_thread_state *xtstate;
+
+    if (reg > ARCH_X86_64_REG_COUNT) {
+	vwarn("unsupported reg %d!\n",reg);
+	errno = EINVAL;
+	return -1;
+    }
+
+    //context = (struct vcpu_guest_context *)priv;
+    offset = dreg_to_offset64[reg];
+
+    if (offset < 0) {
+	vwarn("unsupported reg %d!\n",reg);
+	errno = EINVAL;
+	return -1;
+    }
+
+    vwarn("tid %d thid %d tctxt %d regcache->vcpu %d"
+	  " -- unsupported rawval len %d\n",
+	  target->id,tthread->tid,tctxt,reg,rawlen);
+
+    return -1;
+}
+
+int __xen_vm_thread_regcache_to_vcpu_32_reg_h(struct target *target,
+					      struct target_thread *tthread,
+					      thread_ctxt_t tctxt,
+					      REG reg,REGVAL regval,void *priv) {
+    struct vcpu_guest_context *context;
+    int offset;
+
+    if (reg > ARCH_X86_REG_COUNT) {
+	vwarn("unsupported reg %d!\n",reg);
+	errno = EINVAL;
+	return -1;
+    }
+
+    context = (struct vcpu_guest_context *)priv;
+    offset = dreg_to_offset32[reg];
+
+    if (offset < 0) {
+	vwarn("unsupported reg %d!\n",reg);
+	errno = EINVAL;
+	return -1;
+    }
+
+    vdebug(16,LA_TARGET,LF_XV,
+	   "tid %d thid %d tctxt %d regcache->vcpu %d 0x%"PRIxREGVAL"\n",
+	   target->id,tthread->tid,tctxt,reg,regval);
+
+    *(uint32_t *)(((char *)context) + offset) = (uint32_t)regval;
+
+    return 0;
+}
+
+int __xen_vm_thread_regcache_to_vcpu_32_raw_h(struct target *target,
+					      struct target_thread *tthread,
+					      thread_ctxt_t tctxt,
+					      REG reg,void *rawval,int rawlen,
+					      void *priv) {
+    //struct vcpu_guest_context *context;
+    int offset;
+
+    if (reg > ARCH_X86_REG_COUNT) {
+	vwarn("unsupported reg %d!\n",reg);
+	errno = EINVAL;
+	return -1;
+    }
+
+    //context = (struct vcpu_guest_context *)priv;
+    offset = dreg_to_offset32[reg];
+
+    if (offset < 0) {
+	vwarn("unsupported reg %d!\n",reg);
+	errno = EINVAL;
+	return -1;
+    }
+
+    vwarn("tid %d thid %d tctxt %d regcache->vcpu %d"
+	  " -- unsupported rawval len %d\n",
+	  target->id,tthread->tid,tctxt,reg,rawlen);
+
+    return -1;
+}
+
+int __xen_vm_thread_regcache_to_vcpu(struct target *target,
+				     struct target_thread *tthread,
+				     thread_ctxt_t tctxt,
+				     struct vcpu_guest_context *context) {
+    vdebug(9,LA_TARGET,LF_XV,"translating thid %d tctxt %d to vcpu\n",
+	   tthread->tid,tctxt);
 
     /*
-     * XXX XXX XXX: This function basically assumes it is only called
-     * from xen-process to load userspace regs for a userspace thread
-     * that's currently in the kernel...
+     * NB: we need to write 64-bit numbers from the vcpu structs if the
+     * host is 64-bit, even if the target is 32-bit, I think...
      */
-
-    vdebug(16,LA_TARGET,LF_XV,"reading reg %s\n",xen_vm_reg_name(target,reg));
-
-    if (reg >= XV_TSREG_END_INDEX && reg <= XV_TSREG_START_INDEX) 
-	offset = tsreg_to_offset[XV_TSREG_START_INDEX - reg];
-#if __WORDSIZE == 64
-    else if (reg >= X86_64_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
-	errno = EINVAL;
-	return 0;
+    if (arch_wordsize(target->arch) == 8 || __WORDSIZE == 64) {
+	target_regcache_foreach_dirty(target,tthread,tctxt,
+				      __xen_vm_thread_regcache_to_vcpu_64_reg_h,
+				      __xen_vm_thread_regcache_to_vcpu_64_raw_h,
+				      context);
     }
-    else
-	offset = dreg_to_offset64[reg];
-#else
-    else if (reg >= X86_32_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
-	errno = EINVAL;
-	return 0;
+    else if (arch_wordsize(target->arch) == 4) {
+	target_regcache_foreach_dirty(target,tthread,tctxt,
+				      __xen_vm_thread_regcache_to_vcpu_32_reg_h,
+				      __xen_vm_thread_regcache_to_vcpu_32_raw_h,
+				      context);
     }
-    else 
-	offset = dreg_to_offset32[reg];
-#endif
-
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
-	if (!errno) 
-	    errno = EINVAL;
-	verror("could not load cached thread %"PRIiTID"\n",tid);
-	return 0;
-    }
-    xtstate = (struct xen_vm_thread_state *)tthread->state;
-
-#if __WORDSIZE == 64
-    if (likely(reg < 50) || unlikely(reg >= XV_TSREG_END_INDEX))
-	retval = (REGVAL)*(uint64_t *)(((char *)&(xtstate->alt_context)) + offset);
-    else
-	retval = (REGVAL)*(uint16_t *)(((char *)&(xtstate->alt_context)) + offset);
-#else 
-    retval = (REGVAL)*(uint32_t *)(((char *)&(xtstate->alt_context)) + offset);
-#endif
-
-    vdebug(9,LA_TARGET,LF_XV,"read reg %s 0x%"PRIxREGVAL"\n",
-	   xen_vm_reg_name(target,reg),retval);
-
-    return retval;
-}
-
-int xen_vm_write_reg_tidctxt(struct target *target,
-			     tid_t tid,thread_ctxt_t tidctxt,
-			     REG reg,REGVAL value) {
-    int offset;
-    struct target_thread *tthread;
-    struct xen_vm_thread_state *xtstate;
-
-    vdebug(16,LA_TARGET,LF_XV,"writing reg %s 0x%"PRIxREGVAL"\n",
-	   xen_vm_reg_name(target,reg),value);
-
-    if (reg >= XV_TSREG_DR0 && reg <= XV_TSREG_DR7) {
-	errno = EACCES;
-	verror("cannot write debug registers directly!");
-	return -1;
-    }
-    else if (reg >= XV_TSREG_CR0 && reg <= XV_TSREG_CR7) 
-	offset = tsreg_to_offset[XV_TSREG_START_INDEX - reg];
-#if __WORDSIZE == 64
-    else if (reg >= X86_64_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
-	errno = EINVAL;
-	return -1;
-    }
-    else 
-	offset = dreg_to_offset64[reg];
-#else
-    else if (reg >= X86_32_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
-	errno = EINVAL;
-	return -1;
-    }
-    else 
-	offset = dreg_to_offset32[reg];
-#endif
-
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
-	if (!errno) 
-	    errno = EINVAL;
-	verror("could not load cached thread %"PRIiTID"\n",tid);
-	return -1;
-    }
-    xtstate = (struct xen_vm_thread_state *)tthread->state;
-
-#if __WORDSIZE == 64
-    if (likely(reg < 50) || unlikely(reg >= XV_TSREG_END_INDEX))
-	*(uint64_t *)(((char *)&(xtstate->alt_context)) + offset) = (uint64_t)value;
-    else
-	*(uint16_t *)(((char *)&(xtstate->alt_context)) + offset) = (uint16_t)value;
-#else 
-    *(uint32_t *)(((char *)&(xtstate->alt_context)) + offset) = (uint32_t)value;
-#endif
-
-    /* Flush the context in target_resume! */
-    tthread->dirty = 1;
 
     return 0;
 }
@@ -9323,7 +5401,7 @@ static REG xen_vm_get_unused_debug_reg(struct target *target,tid_t tid) {
 	return -1;
     }
 
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
+    if (!(tthread = __xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
 	verror("could not load cached thread %"PRIiTID"\n",tid);
@@ -9375,7 +5453,7 @@ static int xen_vm_set_hw_breakpoint(struct target *target,tid_t tid,
 	return -1;
     }
 
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
+    if (!(tthread = __xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
 	verror("could not load cached thread %"PRIiTID"\n",tid);
@@ -9442,7 +5520,7 @@ static int xen_vm_set_hw_watchpoint(struct target *target,tid_t tid,
 	return -1;
     }
 
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
+    if (!(tthread = __xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
 	verror("could not load cached thread %"PRIiTID"\n",tid);
@@ -9517,7 +5595,7 @@ static int xen_vm_unset_hw_breakpoint(struct target *target,tid_t tid,REG reg) {
 	return -1;
     }
 
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
+    if (!(tthread = __xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
 	verror("could not load cached thread %"PRIiTID"\n",tid);
@@ -9575,7 +5653,7 @@ int xen_vm_disable_hw_breakpoints(struct target *target,tid_t tid) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
+    if (!(tthread = __xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
 	verror("could not load cached thread %"PRIiTID"\n",tid);
@@ -9594,7 +5672,7 @@ int xen_vm_enable_hw_breakpoints(struct target *target,tid_t tid) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
+    if (!(tthread = __xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
 	verror("could not load cached thread %"PRIiTID"\n",tid);
@@ -9618,7 +5696,7 @@ int xen_vm_disable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
 	return -1;
     }
 
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
+    if (!(tthread = __xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
 	verror("could not load cached thread %"PRIiTID"\n",tid);
@@ -9668,7 +5746,7 @@ int xen_vm_enable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
 	return -1;
     }
 
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
+    if (!(tthread = __xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
 	verror("could not load cached thread %"PRIiTID"\n",tid);
@@ -9750,7 +5828,7 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
+    if (!(tthread = __xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
 	verror("could not load cached thread %"PRIiTID"\n",tid);
@@ -9828,7 +5906,7 @@ int xen_vm_singlestep_end(struct target *target,tid_t tid,
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
-    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
+    if (!(tthread = __xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
 	verror("could not load cached thread %"PRIiTID"\n",tid);

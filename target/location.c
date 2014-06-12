@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -70,7 +70,7 @@ int __target_location_ops_getaddrsize(struct location_ctxt *lctxt) {
     struct target_location_ctxt *tlctxt;
 
     tlctxt = (struct target_location_ctxt *)lctxt->priv;
-    return tlctxt->thread->target->wordsize;
+    return tlctxt->thread->target->arch->wordsize;
 }
 
 int __target_location_ops_getregno(struct location_ctxt *lctxt,
@@ -80,8 +80,8 @@ int __target_location_ops_getregno(struct location_ctxt *lctxt,
 
     tlctxt = (struct target_location_ctxt *)lctxt->priv;
     errno = 0;
-    reg = target_dw_reg_no(tlctxt->thread->target,creg);
-    if (errno)
+    
+    if (target_cregno(tlctxt->thread->target,creg,&reg))
 	return -1;
 
     if (o_reg)
@@ -213,7 +213,7 @@ int __target_location_ops_readword(struct location_ctxt *lctxt,
     tlctxt = (struct target_location_ctxt *)lctxt->priv;
 
     rc = target_read_addr(tlctxt->thread->target,real_addr,
-			  tlctxt->thread->target->ptrsize,(unsigned char *)pval);
+			  tlctxt->thread->target->arch->ptrsize,(unsigned char *)pval);
     if (rc != (unsigned char *)pval) {
 	verror("could not read 0x%"PRIxADDR": %s!\n",
 	       real_addr,strerror(errno));
@@ -231,9 +231,9 @@ int __target_location_ops_writeword(struct location_ctxt *lctxt,
     tlctxt = (struct target_location_ctxt *)lctxt->priv;
 
     rc = target_write_addr(tlctxt->thread->target,real_addr,
-			   tlctxt->thread->target->ptrsize,
+			   tlctxt->thread->target->arch->ptrsize,
 			   (unsigned char *)&pval);
-    if (rc != tlctxt->thread->target->ptrsize) {
+    if (rc != tlctxt->thread->target->arch->ptrsize) {
 	verror("could not write 0x%"PRIxADDR" to 0x%"PRIxADDR": %s!\n",
 	       pval,real_addr,strerror(errno));
 	return -1;

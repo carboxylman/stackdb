@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -19,6 +19,7 @@
 #ifndef __DWDEBUG_PRIV_H__
 #define __DWDEBUG_PRIV_H__
 
+#include "arch.h"
 #include "dwdebug.h"
 
 #define LOGDUMPSYMBOL(dl,lt,lf,s)					\

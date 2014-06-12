@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -1582,7 +1582,7 @@ struct action *x_ActionSpecT_to_t_action(struct soap *soap,
 					 struct target *target) {
     struct action *action = NULL;
     action_type_t atype;
-    REG reg;
+    REG reg = 0;
     char *ddata;
 
     atype = x_ActionTypeT_to_t_action_type_t(soap,spec->type);
@@ -1591,8 +1591,9 @@ struct action *x_ActionSpecT_to_t_action(struct soap *soap,
     else if (atype == ACTION_REGMOD && spec->union_ActionSpecT.regmod
 	&& spec->union_ActionSpecT.regmod->registerValue
 	&& spec->union_ActionSpecT.regmod->registerValue->name) {
-	reg = target_dw_reg_no_targetname(target,spec->union_ActionSpecT.regmod->registerValue->name);
-	if (reg == 0 && errno == EINVAL) {
+	if (target_regno(target,
+			 spec->union_ActionSpecT.regmod->registerValue->name,
+			 &reg)) {
 	    verror("bad register number in regmod action!\n");
 	    return NULL;
 	}

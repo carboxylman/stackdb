@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -65,7 +65,7 @@ int disasm_generic(struct target *target,
     ci.codeLen = buf_len;
     ci.codeOffset = 0;
     ci.features = DF_NONE;
-    if (target->wordsize == 4)
+    if (target->arch->wordsize == 4)
 	ci.dt = Decode32Bits;
     else
 	ci.dt = Decode64Bits;
@@ -150,7 +150,7 @@ int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
     ci.codeLen = buf_len;
     ci.codeOffset = 0;
     ci.features = DF_NONE;
-    if (target->wordsize == 4)
+    if (target->arch->wordsize == 4)
 	ci.dt = Decode32Bits;
     else
 	ci.dt = Decode64Bits;
@@ -429,7 +429,7 @@ int disasm_get_prologue_stack_size(struct target *target,
      * conditional/unconditional branches, INT, CMOV.
      */
     ci.features = DF_STOP_ON_FLOW_CONTROL;
-    if (target->wordsize == 4)
+    if (target->arch->wordsize == 4)
 	ci.dt = Decode32Bits;
     else
 	ci.dt = Decode64Bits;
@@ -476,15 +476,15 @@ int disasm_get_prologue_stack_size(struct target *target,
 	    int nestinglevel = di.imm.ex.i2 % 32;
 
 	    /* Handle BP push. */
-	    retval -= target->wordsize;
+	    retval -= target->arch->wordsize;
 
 	    /* Push nesting area. */
 	    for (i = 1; i < nestinglevel; ++i) {
-		retval -= target->wordsize;
+		retval -= target->arch->wordsize;
 	    }
 
 	    /* Push frame temp. */
-	    retval -= target->wordsize;
+	    retval -= target->arch->wordsize;
 
 	    /* Push the size. */
 	    retval -= size;
@@ -492,19 +492,19 @@ int disasm_get_prologue_stack_size(struct target *target,
 	    break;
 	case I_PUSH:
 	case I_PUSHF:
-	    retval -= target->wordsize;
+	    retval -= target->arch->wordsize;
 	    break;
 	case I_PUSHA:
 	    /* Push all general-purpose regs. */
-	    retval -= target->wordsize * 8;
+	    retval -= target->arch->wordsize * 8;
 	    break;
 	case I_POP:
 	case I_POPF:
-	    retval += target->wordsize;
+	    retval += target->arch->wordsize;
 	    break;
 	case I_POPA:
 	    /* Pop all general-purpose regs (except ESP, which is skipped). */
-	    retval += target->wordsize * 8;
+	    retval += target->arch->wordsize * 8;
 	    break;
 	case I_ADD:
 	    if (di.ops[0].type == O_REG && di.ops[0].index & RM_SP) {

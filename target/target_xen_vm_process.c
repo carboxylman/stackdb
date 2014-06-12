@@ -21,10 +21,12 @@
 #include <unistd.h>
 
 #include "binfile.h"
-#include "target_xen_vm_process.h"
 #include "target.h"
 #include "target_api.h"
+#include "target_os.h"
+#include "target_os_linux_generic.h"
 #include "target_xen_vm.h"
+#include "target_xen_vm_process.h"
 
 struct xen_vm_process_spec *xen_vm_process_build_spec(void) {
     return NULL;
@@ -80,9 +82,6 @@ static unsigned long xen_vm_process_write(struct target *target,
 					  ADDR addr,
 					  unsigned long length,
 					  unsigned char *buf);
-static char *xen_vm_process_reg_name(struct target *target,REG reg);
-static REG xen_vm_process_dwregno_targetname(struct target *target,char *name);
-static REG xen_vm_process_dw_reg_no(struct target *target,common_reg_t reg);
 
 static tid_t xen_vm_process_gettid(struct target *target);
 static void xen_vm_process_free_thread_state(struct target *target,void *state);
@@ -96,7 +95,6 @@ static int xen_vm_process_load_available_threads(struct target *target,int force
 static int xen_vm_process_flush_thread(struct target *target,tid_t tid);
 static int xen_vm_process_flush_current_thread(struct target *target);
 static int xen_vm_process_flush_all_threads(struct target *target);
-static int xen_vm_process_invalidate_all_threads(struct target *target);
 static int xen_vm_process_thread_snprintf(struct target_thread *tthread,
 					  char *buf,int bufsiz,
 					  int detail,char *sep,char *kvsep);
@@ -104,7 +102,6 @@ static int xen_vm_process_thread_snprintf(struct target_thread *tthread,
 static REGVAL xen_vm_process_read_reg(struct target *target,tid_t tid,REG reg);
 static int xen_vm_process_write_reg(struct target *target,tid_t tid,REG reg,
 				    REGVAL value);
-static GHashTable *xen_vm_process_copy_registers(struct target *target,tid_t tid);
 static struct target_memmod *
 xen_vm_process_insert_sw_breakpoint(struct target *target,
 				    tid_t tid,ADDR addr);
@@ -174,9 +171,6 @@ struct target_ops xen_vm_process_ops = {
     .poll = NULL,
     .read = xen_vm_process_read,
     .write = xen_vm_process_write,
-    .regname = xen_vm_process_reg_name,
-    .dwregno_targetname = xen_vm_process_dwregno_targetname,
-    .dwregno = xen_vm_process_dw_reg_no,
 
     .gettid = xen_vm_process_gettid,
     .free_thread_state = xen_vm_process_free_thread_state,
@@ -192,7 +186,6 @@ struct target_ops xen_vm_process_ops = {
     .flush_thread = xen_vm_process_flush_thread,
     .flush_current_thread = xen_vm_process_flush_current_thread,
     .flush_all_threads = xen_vm_process_flush_all_threads,
-    .invalidate_all_threads = xen_vm_process_invalidate_all_threads,
     .thread_snprintf = xen_vm_process_thread_snprintf,
 
     .attach_evloop = xen_vm_process_attach_evloop,
@@ -200,7 +193,6 @@ struct target_ops xen_vm_process_ops = {
 
     .readreg = xen_vm_process_read_reg,
     .writereg = xen_vm_process_write_reg,
-    .copy_registers = xen_vm_process_copy_registers,
     .insert_sw_breakpoint = xen_vm_process_insert_sw_breakpoint,
     .remove_sw_breakpoint = xen_vm_process_remove_sw_breakpoint,
     .enable_sw_breakpoint = xen_vm_process_enable_sw_breakpoint,
@@ -226,11 +218,9 @@ static int xen_vm_process_snprintf(struct target *target,
 }
 
 static int xen_vm_process_init(struct target *target) {
-    struct xen_vm_thread_state *xtstate;
     struct target_thread *base_thread = target->base_thread;
     struct target *base = target->base;
     tid_t base_tid = target->base_tid;
-    struct target_thread *orig_base_thread = NULL;
 
     /*
      * Setup target mode stuff.
@@ -240,9 +230,7 @@ static int xen_vm_process_init(struct target *target) {
     target->writeable = base->writeable;
     target->mmapable = 0;
     /* NB: only native arch supported!  i.e., no 32-bit emu on 64-bit host. */
-    target->endian = base->endian;
-    target->wordsize = base->wordsize;
-    target->ptrsize = base->ptrsize;
+    target->arch = base->arch;
 
     /* Which register is the fbreg is dependent on host cpu type, not
      * target cpu type.
@@ -256,25 +244,6 @@ static int xen_vm_process_init(struct target *target) {
     target->spregno = 4;
     target->ipregno = 8;
 #endif
-
-    target->breakpoint_instrs = malloc(1);
-    *(char *)(target->breakpoint_instrs) = 0xcc;
-    target->breakpoint_instrs_len = 1;
-    target->breakpoint_instr_count = 1;
-
-    target->ret_instrs = malloc(1);
-    /* RET */
-    *(char *)(target->ret_instrs) = 0xc3;
-    target->ret_instrs_len = 1;
-    target->ret_instr_count = 1;
-
-    target->full_ret_instrs = malloc(2);
-    /* LEAVE */
-    *(char *)(target->full_ret_instrs) = 0xc9;
-    /* RET */
-    *(((char *)(target->full_ret_instrs))+1) = 0xc3;
-    target->full_ret_instrs_len = 2;
-    target->full_ret_instr_count = 2;
 
     /*
      * Make sure the base thread is loaded.
@@ -329,7 +298,8 @@ static int xen_vm_process_attach(struct target *target) {
     /*
      * Just grab all the threads in the thread group and create them.
      */
-    target->current_thread = target_create_thread(target,target->base_tid,NULL);
+    target->current_thread = target_create_thread(target,target->base_tid,
+						  NULL,NULL);
     target_reuse_thread_as_global(target,target->current_thread);
 
     target_thread_set_status(target->current_thread,THREAD_STATUS_RUNNING);
@@ -369,10 +339,9 @@ static int __xen_vm_process_loadregions(struct target *target,
 					int is_initial) {
     char buf[PATH_MAX];
     struct target_thread *base_thread = target->base_thread;
-    struct xen_vm_thread_state *xtstate = \
-	(struct xen_vm_thread_state *)target->base_thread->state;
+    struct os_linux_thread_state *xtstate = \
+	(struct os_linux_thread_state *)target->base_thread->personality_state;
     struct target *base = target->base;
-    struct xen_vm_state *xstate = (struct xen_vm_state *)base->state;
     tid_t base_tid = target->base_tid;
     struct xen_vm_process_state *xvpstate = \
 	(struct xen_vm_process_state *)target->state;
@@ -392,6 +361,7 @@ static int __xen_vm_process_loadregions(struct target *target,
     char *prev_vma_member_name;
     struct value *file_value;
     int found;
+    struct target_location_ctxt *base_tlctxt;
 
     if (unlikely(is_initial))
 	vdebug(5,LA_TARGET,LF_XVP,"tid %d (initial load)\n",target->base_tid);
@@ -405,6 +375,8 @@ static int __xen_vm_process_loadregions(struct target *target,
 	verror("could not load base tid %d!\n",base_tid);
 	return -1;
     }
+
+    base_tlctxt = target_global_tlctxt(base);
 
     /*
      * So, what do we have to do?  target_load_thread on the base target
@@ -439,7 +411,7 @@ static int __xen_vm_process_loadregions(struct target *target,
      */
 
     /* Grab the base task's mm address to see if it changed. */
-    VLV(base,xstate->default_tlctxt,xtstate->task_struct,"mm",LOAD_FLAG_NONE,
+    VLV(base,base_tlctxt,xtstate->task_struct,"mm",LOAD_FLAG_NONE,
 	&mm_addr,NULL,err_vmiload);
 
     if (xvpstate->mm_addr && mm_addr == 0) {
@@ -506,14 +478,14 @@ static int __xen_vm_process_loadregions(struct target *target,
 
 	value_free(xvpstate->mm);
 	xvpstate->mm = NULL;
-	VL(base,xstate->default_tlctxt,xtstate->task_struct,"mm",
+	VL(base,base_tlctxt,xtstate->task_struct,"mm",
 	   LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,err_vmiload);
 	xvpstate->mm_addr = value_addr(xvpstate->mm);
-	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
+	VLV(base,base_tlctxt,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_brk,NULL,err_vmiload);
-	VLV(base,xstate->default_tlctxt,xvpstate->mm,"brk",LOAD_FLAG_NONE,
+	VLV(base,base_tlctxt,xvpstate->mm,"brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_brk,NULL,err_vmiload);
-	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
+	VLV(base,base_tlctxt,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_stack,NULL,err_vmiload);
 
     }
@@ -521,14 +493,14 @@ static int __xen_vm_process_loadregions(struct target *target,
 	vdebug(5,LA_TARGET,LF_XVP,"tid %d analyzing mmaps anew.\n",base_tid);
 
 	/* Load the mm struct and cache its members. */
-	VL(base,xstate->default_tlctxt,xtstate->task_struct,"mm",
+	VL(base,base_tlctxt,xtstate->task_struct,"mm",
 	   LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,err_vmiload);
 	xvpstate->mm_addr = value_addr(xvpstate->mm);
-	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
+	VLV(base,base_tlctxt,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_brk,NULL,err_vmiload);
-	VLV(base,xstate->default_tlctxt,xvpstate->mm,"brk",LOAD_FLAG_NONE,
+	VLV(base,base_tlctxt,xvpstate->mm,"brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_brk,NULL,err_vmiload);
-	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
+	VLV(base,base_tlctxt,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_stack,NULL,err_vmiload);
     }
     else {
@@ -547,14 +519,14 @@ static int __xen_vm_process_loadregions(struct target *target,
 
 	value_free(xvpstate->mm);
 	xvpstate->mm = NULL;
-	VL(base,xstate->default_tlctxt,xtstate->task_struct,"mm",
+	VL(base,base_tlctxt,xtstate->task_struct,"mm",
 	   LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,err_vmiload);
 	xvpstate->mm_addr = value_addr(xvpstate->mm);
-	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
+	VLV(base,base_tlctxt,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_brk,NULL,err_vmiload);
-	VLV(base,xstate->default_tlctxt,xvpstate->mm,"brk",LOAD_FLAG_NONE,
+	VLV(base,base_tlctxt,xvpstate->mm,"brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_brk,NULL,err_vmiload);
-	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
+	VLV(base,base_tlctxt,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_stack,NULL,err_vmiload);
     }
 
@@ -565,7 +537,7 @@ static int __xen_vm_process_loadregions(struct target *target,
      */
 
     /* Now we have a valid task->mm; load the first vm_area_struct pointer. */
-    VLV(base,xstate->default_tlctxt,xvpstate->mm,"mmap",LOAD_FLAG_NONE,
+    VLV(base,base_tlctxt,xvpstate->mm,"mmap",LOAD_FLAG_NONE,
 	&vma_addr,NULL,err_vmiload);
     cached_vma = xvpstate->vma_cache;
     cached_vma_prev = NULL;
@@ -577,9 +549,9 @@ static int __xen_vm_process_loadregions(struct target *target,
     vma_prev = xvpstate->mm;
     prev_vma_member_name = "mmap";
 
-    VL(base,xstate->default_tlctxt,vma_prev,prev_vma_member_name,
+    VL(base,base_tlctxt,vma_prev,prev_vma_member_name,
        LOAD_FLAG_AUTO_DEREF,&vma,err_vmiload);
-    VLV(base,xstate->default_tlctxt,vma,"vm_start",LOAD_FLAG_NONE,
+    VLV(base,base_tlctxt,vma,"vm_start",LOAD_FLAG_NONE,
 	&start,NULL,err_vmiload);
     value_free(vma);
 
@@ -594,23 +566,23 @@ static int __xen_vm_process_loadregions(struct target *target,
 	     */
 	do_new_unmatched:
 
-	    VL(base,xstate->default_tlctxt,vma_prev,prev_vma_member_name,
+	    VL(base,base_tlctxt,vma_prev,prev_vma_member_name,
 	       LOAD_FLAG_AUTO_DEREF,&vma,err_vmiload);
 	    new_vma = calloc(1,sizeof(*new_vma));
 	    new_vma->vma = vma;
 
 	    /* Load the vma's start,end,offset,prot_flags,file,next addr. */
-	    VLV(base,xstate->default_tlctxt,vma,"vm_start",LOAD_FLAG_NONE,
+	    VLV(base,base_tlctxt,vma,"vm_start",LOAD_FLAG_NONE,
 		&start,NULL,err_vmiload);
-	    VLV(base,xstate->default_tlctxt,vma,"vm_end",LOAD_FLAG_NONE,
+	    VLV(base,base_tlctxt,vma,"vm_end",LOAD_FLAG_NONE,
 		&end,NULL,err_vmiload);
-	    VLV(base,xstate->default_tlctxt,vma,"vm_page_prot",LOAD_FLAG_NONE,
+	    VLV(base,base_tlctxt,vma,"vm_page_prot",LOAD_FLAG_NONE,
 		&prot_flags,NULL,err_vmiload);
-	    VLV(base,xstate->default_tlctxt,vma,"vm_pgoff",LOAD_FLAG_NONE,
+	    VLV(base,base_tlctxt,vma,"vm_pgoff",LOAD_FLAG_NONE,
 		&offset,NULL,err_vmiload);
-	    VLV(base,xstate->default_tlctxt,vma,"vm_file",LOAD_FLAG_NONE,
+	    VLV(base,base_tlctxt,vma,"vm_file",LOAD_FLAG_NONE,
 		&file_addr,NULL,err_vmiload);
-	    VLV(base,xstate->default_tlctxt,vma,"vm_next",LOAD_FLAG_NONE,
+	    VLV(base,base_tlctxt,vma,"vm_next",LOAD_FLAG_NONE,
 		&vma_next_addr,NULL,err_vmiload);
 
 	    /* Figure out the region type. */
@@ -621,10 +593,10 @@ static int __xen_vm_process_loadregions(struct target *target,
 	    /* If it has a file, load the path! */
 	    if (file_addr != 0) {
 		file_value = NULL;
-		VL(base,xstate->default_tlctxt,vma,"vm_file",LOAD_FLAG_AUTO_DEREF,
+		VL(base,base_tlctxt,vma,"vm_file",LOAD_FLAG_AUTO_DEREF,
 		   &file_value,err_vmiload);
-		if (!linux_file_get_path(base,xtstate->task_struct,file_value,
-					 buf,sizeof(buf))) {
+		if (!os_linux_file_get_path(base,xtstate->task_struct,file_value,
+					    buf,sizeof(buf))) {
 		    vwarn("could not get filepath for struct file for new range;"
 			  " continuing! (file 0x%"PRIxADDR")\n",file_addr);
 		    file_addr = 0;
@@ -799,15 +771,15 @@ static int __xen_vm_process_loadregions(struct target *target,
 	    value_refresh(cached_vma->vma,0);
 
 	    /* Load the vma's start,end,prot_flags. */
-	    VLV(base,xstate->default_tlctxt,cached_vma->vma,"vm_start",
+	    VLV(base,base_tlctxt,cached_vma->vma,"vm_start",
 		LOAD_FLAG_NONE,&start,NULL,err_vmiload);
-	    VLV(base,xstate->default_tlctxt,cached_vma->vma,"vm_end",
+	    VLV(base,base_tlctxt,cached_vma->vma,"vm_end",
 		LOAD_FLAG_NONE,&end,NULL,err_vmiload);
-	    VLV(base,xstate->default_tlctxt,cached_vma->vma,"vm_page_prot",
+	    VLV(base,base_tlctxt,cached_vma->vma,"vm_page_prot",
 		LOAD_FLAG_NONE,&prot_flags,NULL,err_vmiload);
-	    VLV(base,xstate->default_tlctxt,cached_vma->vma,"vm_pgoff",
+	    VLV(base,base_tlctxt,cached_vma->vma,"vm_pgoff",
 		LOAD_FLAG_NONE,&offset,NULL,err_vmiload);
-	    VLV(base,xstate->default_tlctxt,cached_vma->vma,"vm_next",
+	    VLV(base,base_tlctxt,cached_vma->vma,"vm_next",
 		LOAD_FLAG_NONE,&vma_next_addr,NULL,err_vmiload);
 
 	    if (cached_vma->range->end == end 
@@ -1135,8 +1107,6 @@ static int xen_vm_process_set_active_probing(struct target *target,
 					     active_probe_flags_t flags) {
     struct xen_vm_process_state *xvpstate = \
 	(struct xen_vm_process_state *)target->state;
-    struct xen_vm_state *xstate = \
-	(struct xen_vm_state *)target->base->state;
     int retval = 0;
     struct bsymbol *bs;
     struct probe *probe;
@@ -1453,7 +1423,7 @@ static target_status_t xen_vm_process_handle_overlay_exception(struct target *ov
 	 * This is a new thread the overlay is insisting we manage!
 	 * Just Do It.
 	 */
-	tthread = target_create_thread(overlay,tid,NULL);
+	tthread = target_create_thread(overlay,tid,NULL,NULL);
 	target_thread_set_status(tthread,THREAD_STATUS_RUNNING);
 	target_attach_overlay_thread(overlay->base,overlay,tid);
     }
@@ -1533,7 +1503,7 @@ static target_status_t xen_vm_process_handle_overlay_exception(struct target *ov
 
 	dpp = (struct probepoint *)				\
 	    g_hash_table_lookup(overlay->soft_probepoints,
-				(gpointer)(ipval - overlay->breakpoint_instrs_len));
+				(gpointer)(ipval - overlay->arch->breakpoint_instrs_len));
 	if (dpp) {
 	    /* Run the breakpoint handler. */
 	    overlay->ops->handle_break(overlay,tthread,dpp,
@@ -1612,18 +1582,6 @@ static unsigned long xen_vm_process_write(struct target *target,
 					  unsigned long length,
 					  unsigned char *buf) {
     return xen_vm_write_pid(target->base,target->base_tid,addr,length,buf);
-}
-
-static char *xen_vm_process_reg_name(struct target *target,REG reg) {
-    return target->base->ops->regname(target->base,reg);
-}
-
-static REG xen_vm_process_dwregno_targetname(struct target *target,char *name) {
-    return target->base->ops->dwregno_targetname(target->base,name);
-}
-
-static REG xen_vm_process_dw_reg_no(struct target *target,common_reg_t reg) {
-    return target->base->ops->dwregno(target->base,reg);
 }
 
 static tid_t xen_vm_process_gettid(struct target *target) {
@@ -1774,10 +1732,6 @@ static int xen_vm_process_flush_all_threads(struct target *target) {
     return rc;
 }
 
-static int xen_vm_process_invalidate_all_threads(struct target *target) {
-    return __target_invalidate_all_threads(target);
-}
-
 static int xen_vm_process_thread_snprintf(struct target_thread *tthread,
 					  char *buf,int bufsiz,
 					  int detail,char *sep,char *kvsep) {
@@ -1845,16 +1799,6 @@ static int xen_vm_process_write_reg(struct target *target,tid_t tid,REG reg,
     return target->base->ops->writereg(target->base,tid,reg,value);
 }
 
-static GHashTable *xen_vm_process_copy_registers(struct target *target,tid_t tid) {
-    if (!__is_our_tid(target,tid)) {
-	verror("tid %d is not in tgid %d!\n",tid,target->base_tid);
-	errno = ESRCH;
-	return NULL;
-    }
-
-    return target->base->ops->copy_registers(target->base,tid);
-}
-
 /*
  * NB: we return mmods bound to the underlying target -- not to us!
  */
@@ -1863,6 +1807,8 @@ xen_vm_process_insert_sw_breakpoint(struct target *target,
 				    tid_t tid,ADDR addr) {
     struct target_thread *tthread;
     ADDR paddr = 0;
+    unsigned char buf[16];
+    int i;
 
     tthread = target_lookup_thread(target,tid);
     if (!tthread) {
@@ -1870,6 +1816,21 @@ xen_vm_process_insert_sw_breakpoint(struct target *target,
 	errno = ESRCH;
 	return NULL;
     }
+
+    fflush(stdout);
+    fflush(stderr);
+
+    memset(buf,0,16);
+    xen_vm_read_pid(target->base,tid,addr,16,buf);
+
+    fflush(stdout);
+    fflush(stderr);
+
+    vwarn("virt bytes: ");
+    for (i = 0; i < 16; ++i) {
+	vwarnc(" %hhx",buf[i]);
+    }
+    vwarnc("\n");
 
     /*
      * XXX NB: assume for now that anytime we put a breakpoint into a

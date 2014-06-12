@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -30,6 +30,7 @@
 
 #include "config.h"
 #include "common.h"
+#include "arch.h"
 #include "log.h"
 #include "output.h"
 #include "list.h"
@@ -71,48 +72,45 @@ struct binfile_ops elf_binfile_ops = {
     .free_instance = elf_binfile_free_instance,
 };
 
-static int elf_get_arch_info(Elf *elf,int *wordsize,int *endian) {
+static struct arch *elf_get_arch(Elf *elf) {
     char *eident;
+    GElf_Ehdr ehdr;
+    struct arch *arch;
 
-    /* read the ident stuff to get wordsize and endianness info */
+    if (!gelf_getehdr(elf,&ehdr)) {
+	verror("cannot read ELF header: %s",elf_errmsg(-1));
+	return NULL;
+    }
+
+    /* read the ident stuff to get machine, wordsize, and endianness info */
     if (!(eident = elf_getident(elf,NULL))) {
 	verror("elf_getident: %s\n",elf_errmsg(elf_errno()));
-	return -1;
-    }
-
-    if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
-	if (wordsize)
-	    *wordsize = 4;
-	vdebug(3,LA_DEBUG,LF_ELF,"32-bit\n");
-    }
-    else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
-	if (wordsize) 
-	    *wordsize = 8;
-	vdebug(3,LA_DEBUG,LF_ELF,"64-bit\n");
-    }
-    else {
-	verror("unknown elf class %d; not 32/64 bit!\n",
-	       (uint8_t)eident[EI_CLASS]);
-	return -1;
+	return NULL;
     }
 
     if ((uint8_t)eident[EI_DATA] == ELFDATA2LSB) {
-	if (endian)
-	    *endian = DATA_LITTLE_ENDIAN;
 	vdebug(3,LA_DEBUG,LF_DFILE,"little endian\n");
     }
     else if ((uint8_t)eident[EI_DATA] == ELFDATA2MSB) {
-	if (endian)
-	    *endian = DATA_BIG_ENDIAN;
-	vdebug(3,LA_DEBUG,LF_DFILE,"big endian\n");
+	verror("big endian ELF files unsupported; no arch for them\n");
+	return NULL;
     }
     else {
 	verror("unknown elf data %d; not big/little endian!\n",
 	       (uint8_t)eident[EI_DATA]);
-	return -1;
+	return NULL;
     }
 
-    return 0;
+    if (ehdr.e_machine == EM_386)
+	arch = arch_get(ARCH_X86);
+    else if (ehdr.e_machine == EM_X86_64)
+	arch = arch_get(ARCH_X86_64);
+    else {
+	verror("unsupported elf machine type %d!\n",ehdr.e_machine);
+	return NULL;
+    }
+
+    return arch;
 }
 
 static const char *elf_binfile_get_backend_name(void) {
@@ -753,8 +751,8 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 	goto errout;
     }
 
-    if (elf_get_arch_info(bfelf->elf,&bf->wordsize,&bf->endian)) {
-	verror("could not get arch info!\n");
+    if (!(bf->arch = elf_get_arch(bfelf->elf))) {
+	verror("could not get arch for %s!\n",bf->filename);
 	goto errout;
     }
 
@@ -979,7 +977,7 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 				 rsymidx,j,i);
 			continue;
 		    }
-		    memcpy(bf->image+rcoffset,&rvalue,bf->wordsize);
+		    memcpy(bf->image+rcoffset,&rvalue,bf->arch->wordsize);
 		    break;
 		case R_386_PC32:
 		    /* Sv + Ad - P (r_offset?) */
@@ -992,7 +990,7 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 				 rsymidx,j,i);
 			continue;
 		    }
-		    memcpy(bf->image+rcoffset,&rvalue,bf->wordsize);
+		    memcpy(bf->image+rcoffset,&rvalue,bf->arch->wordsize);
 		    break;
 		default:
 		    verror("cannot handle relocation type %d for symbol %d"
@@ -1217,7 +1215,7 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 	    ndata = edata->d_buf;
 	    nend = ndata + edata->d_size;
 	    while (ndata < nend) {
-		if (bf->wordsize == 8) {
+		if (bf->arch->wordsize == 8) {
 		    nthdr64 = (Elf64_Nhdr *)ndata;
 		    /* skip past the header and the name string and its
 		     * padding */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 The University of Utah
+ * Copyright (c) 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -357,9 +357,9 @@ int generic_rpc_serve(struct generic_rpc_config *cfg) {
     soap_init(&soap);
     //soap_set_omode(&soap,SOAP_XML_GRAPH);
 
-    soap_set_recv_logfile(&soap,NULL);
-    soap_set_sent_logfile(&soap,NULL);
-    soap_set_test_logfile(&soap,NULL);
+    //soap_set_recv_logfile(&soap,NULL);
+    //soap_set_sent_logfile(&soap,NULL);
+    //soap_set_test_logfile(&soap,NULL);
 
     soap.fdebug[SOAP_INDEX_RECV] = stderr;
     soap.fdebug[SOAP_INDEX_SENT] = stderr;

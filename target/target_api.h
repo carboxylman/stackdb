@@ -20,6 +20,7 @@
 #define __TARGET_API_H__
 
 #include "common.h"
+#include "arch.h"
 #include "list.h"
 #include "evloop.h"
 #include "dwdebug.h"
@@ -134,6 +135,7 @@ struct target_process_ops;
 struct target_spec;
 struct target_location_ctxt;
 struct target_memmod;
+struct regfile;
 struct addrspace;
 struct memregion;
 struct memrange;
@@ -151,11 +153,11 @@ typedef enum {
 #define TARGET_TYPE_BITS 4
 
 typedef enum {
-    TARGET_KIND_NONE    = 0,
-    TARGET_KIND_OS      = 1,
-    TARGET_KIND_PROCESS = 2,
-    TARGET_KIND_APPLICATION = 3,
-} target_kind_t;
+    TARGET_PERSONALITY_NONE    = 0,
+    TARGET_PERSONALITY_OS      = 1,
+    TARGET_PERSONALITY_PROCESS = 2,
+    TARGET_PERSONALITY_APPLICATION = 3,
+} target_personality_t;
 
 typedef enum {
     TARGET_MODE_NONE = 0,
@@ -261,10 +263,17 @@ extern char *THREAD_STATUS_STRINGS[];
 #define THREAD_STATUS(n) (((n) <= THREAD_STATUS_RETURNING_KERNEL)	\
 			  ? THREAD_STATUS_STRINGS[(n)] : NULL)
 
-typedef enum {
-    THREAD_CTXT_KERNEL = 0,
-    THREAD_CTXT_USER   = 3,
-} thread_ctxt_t;
+/*
+ * Thread contexts are a bit funny.  They exist so that threads can have
+ * different contexts; right now only registers are per-context.
+ * Targets need not provide multiple contexts; but they can make use of
+ * them if desired.  We don't make thread_ctxt_t an enum because we want
+ * to leave context numbering/naming to personalities as possible (i.e.,
+ * THREAD_CTXT_KERNEL and THREAD_CTXT_USER for the OS personality), and
+ * to backends where necessary (but personalities are more abstract...).
+ */
+typedef unsigned int thread_ctxt_t;
+#define THREAD_CTXT_DEFAULT 0
 
 /*
  * When we handle a breakpoint, we *have* to single step some
@@ -634,19 +643,19 @@ unsigned long target_write_physaddr(struct target *target,ADDR paddr,
  * Returns a string representation for the DWARF register number on this
  * particular target type.  Will (likely) differ between targets/archs.
  */
-char *target_reg_name(struct target *target,REG reg);
+const char *target_regname(struct target *target,REG reg);
 
 /*
  * Returns the target-specific DWARF register number for the
  * target-specific register name @name.
  */
-REG target_dw_reg_no_targetname(struct target *target,char *name);
+int target_regno(struct target *target,char *name,REG *reg);
 
 /*
  * Returns the target-specific DWARF register number for the common
  * register @reg.
  */
-REG target_dw_reg_no(struct target *target,common_reg_t reg);
+int target_cregno(struct target *target,common_reg_t creg,REG *reg);
 
 /*
  * Reads the DWARF register @reg from thread @tid in @target.  Returns 0
@@ -659,6 +668,20 @@ REGVAL target_read_reg(struct target *target,tid_t tid,REG reg);
  * nonzero on failure.
  */
 int target_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value);
+
+/*
+ * Reads the DWARF register @reg from thread @tid in @target.  Returns 0
+ * and sets errno nonzero on error.
+ */
+REGVAL target_read_reg_ctxt(struct target *target,tid_t tid,thread_ctxt_t tidctxt,
+			    REG reg);
+
+/*
+ * Writes @value to the DWARF register @reg.  Returns 0 on success;
+ * nonzero on failure.
+ */
+int target_write_reg_ctxt(struct target *target,tid_t tid,thread_ctxt_t tidctxt,
+			  REG reg,REGVAL value);
 
 /*
  * Reads the common register @reg in thread @tid in target @target.
@@ -1540,7 +1563,8 @@ struct target_thread {
     int8_t valid:1,
   	   dirty:1,
 	   resumeat:4,
-	   attached:1;
+	   attached:1,
+	   exiting:1;
     thread_status_t status:THREAD_STATUS_BITS;
     target_type_t supported_overlay_types:TARGET_TYPE_BITS;
 
@@ -1557,6 +1581,13 @@ struct target_thread {
     int gid;
 
     void *state;
+    void *personality_state;
+
+    /*
+     * Built-in support for regcache.  We do expect most target backends
+     * to use it!
+     */
+    struct regcache **regcaches;
 
     /*
      * A hashtable of addresses to probe points.
@@ -1656,6 +1687,19 @@ struct target_spec {
     uint8_t start_paused:1,
 	    kill_on_close:1;
     active_probe_flags_t active_probe_flags:ACTIVE_PROBE_BITS;
+
+    /*
+     * All personalities have unique string IDs.  The user can force a
+     * specific one to be used here if they like, although that is
+     * likely to be a bad idea, unless they've implemented a custom
+     * personality that is outside the VMI install tree.
+     */
+    char *personality;
+    /*
+     * If the personality is to be loaded from a specific shared
+     * library, this is the filename.
+     */
+    char *personality_lib;
 
     char *debugfile_root_prefix;
     /* struct array_list of struct debugfile_load_opts * */
@@ -1761,7 +1805,7 @@ typedef result_t (*target_debug_handler_t)(struct target *target,
 					   struct probepoint *probepoint);
 
 /**
- ** Target location contexts (unwinding).
+ ** Target location contexts (unwinding, symbol loading/address resolution).
  **
  ** We use a target_location_ctxt struct that wraps location_ctxt in
  ** dwdebug.  Thus, you can lookup/load symbols in the current thread,
@@ -1776,6 +1820,8 @@ typedef result_t (*target_debug_handler_t)(struct target *target,
  ** resolution/computation; target caches restored registers and keeps a
  ** stack of frames and their metadata).
  **/
+struct target_location_ctxt *target_global_tlctxt(struct target *target);
+
 struct target_location_ctxt *
 target_location_ctxt_create(struct target *target,tid_t tid,
 			    struct memregion *region);
@@ -1901,14 +1947,12 @@ struct target {
     	     writeable:1,
 	     nodisablehwbponss:1,
 	     threadctl:1,
-	     endian:1,
 	     mmapable:1,
-	     wordsize:4,
-	     ptrsize:4,
 	     opened:1,
 	     kill_on_close:1,
 	     monitorhandling:1,
-	     needmonitorinterrupt:1;
+	     needmonitorinterrupt:1,
+	     global_tlctxt_is_dynamic:1;
     active_probe_flags_t active_probe_flags:ACTIVE_PROBE_BITS;
 
     /*
@@ -1947,6 +1991,7 @@ struct target {
      */
     struct array_list *state_changes;
 
+    unsigned int max_thread_ctxt;
     REG fbregno;
     REG spregno;
     REG ipregno;
@@ -1956,7 +2001,7 @@ struct target {
      * target hashtable, for instance.
      */
     int id;
-    target_kind_t kind;
+    target_personality_t personality;
 
     /*
      * Each target has a unique name; this is generated by
@@ -1964,13 +2009,86 @@ struct target {
      */
     char *name;
 
+    /*
+     * state is for, and owned, by the backend providing this target.
+     */
     void *state;
+    /*
+     * Right now, personality_state is owned by the personality -- and
+     * the personality_ops and
+     * (os_ops|process_ops|application_ops|runtime_ops) own that state
+     * together.  No need to separate those things for now.
+     */
+    void *personality_state;
+
+    /*
+     * These are the primary target operations, provided by the backend
+     * as necessary/applicable.  The backend need not provide all
+     * operations, especially if it is counting on a personality to fill
+     * them in, as described below.  Target backends may be designed to
+     * require a personality; utilize a personality; or to block any
+     * personality ops from ever being called (i.e., if the personality
+     * is effectively integrated fully into the target ops -- sometimes
+     * a target backend cannot be separated into a generic control
+     * interface, or there might not be an available personality, or
+     * whatever -- the abstraction is deliberately designed to be
+     * flexible).  Read more below...
+     */
     struct target_ops *ops;
     struct location_ops *location_ops;
+    /*
+     * Ok, these ops structures are for personalities.  A personality
+     * can "overload" the target with more information.  For instance,
+     * some targets may provide low-level machine control/read/write;
+     * but a *personality* might be able to fill in more info by
+     * reading/writing symbols in the target to obtain a richer
+     * representation of the target, or to enable more functionality.
+     *
+     * By abstracting it this way, we allow a target backend to be
+     * written in a minimal style, and to be enriched by a personality.
+     * This supports writing, for instance, a bare-bones xen vm backend
+     * that supports minimal x86 machine control/read/write via the Xen
+     * control interface; but allows that same backend to be enriched by
+     * the os_linux_generic personality; a customized version for
+     * specific linux kernel versions; or a windows personality.
+     *
+     * The reason we reuse a full struct target_ops for personality ops,
+     * instead of creating a struct target_personality_ops, is because
+     * many of the operations could legitimately be provided by either
+     * the target backend, or by the personality, depending on the
+     * target in question.  A PHP target backend might not support a
+     * separate personality; it might just be all integrated into the
+     * backend.  It may be impossible to disentangle the primary backend
+     * from the personality.
+     *
+     * So here's how the Target API/library work this all out.
+     * Everything goes through the target API or library wrapper
+     * functions; they are the only things that call through the ops
+     * structs.  Basically, if the target backend implements one of the
+     * target ops, the implementation should call the
+     * target_personality_[op] wrapper function for the op in question.
+     * If the target backend does *not* implement an op, but the
+     * personality does; the target library will call that op instead of
+     * the target op.
+     */
+    struct target_personality_ops *personality_ops;
+    /*
+     * OS/Process/Application ops will probably also be provided by the
+     * same library providing the personality, but this need not be the
+     * case.
+     */
     union {
-	struct target_os_ops *os;
-	struct target_process_ops *process;
-    } kind_ops;
+	void *__personality_specific_ops;
+	struct target_os_ops *os_ops;
+	struct target_process_ops *process_ops;
+    };
+
+    /*
+     * Each target *must* have an architecture.  This pointer must be
+     * set by the target backend factory functions.
+     */
+    struct arch *arch;
+
     struct target_spec *spec;
 
     int kill_on_close_sig;
@@ -2062,6 +2180,20 @@ struct target {
     struct target_thread *blocking_thread;
 
     /*
+     * This should be a load context corresponding to TID_GLOBAL.
+     * Target backends should create it in their init() functions.  If
+     * they set the global_tlctxt_is_dynamic bit above, as well,
+     * target_global_tlctxt() will attempt to replace the value of the
+     * ->region member with the region associated with the current IP.
+     * This supports backends that create a single static region
+     * spanning the entire target.
+     *
+     * target_global_tlctxt() will return this structure; it should never
+     * be freed.
+     */
+    struct target_location_ctxt *global_tlctxt;
+
+    /*
      * This is for target backends to use if they wish.
      *
      * The idea is, each time we single step a thread, we make a note of
@@ -2144,32 +2276,30 @@ struct target {
 
     /* Cache of loaded code, by address range. */
     clrange_t code_ranges;
-
-    /* One or more opcodes that create a software breakpoint */
-    void *breakpoint_instrs;
-    unsigned int breakpoint_instrs_len;
-    /* How many opcodes are in the above sequence, so we can single-step
-     * past them all.
-     */
-    unsigned int breakpoint_instr_count;
-
-    void *ret_instrs;
-    unsigned int ret_instrs_len;
-    unsigned int ret_instr_count;
-
-    void *full_ret_instrs;
-    unsigned int full_ret_instrs_len;
-    unsigned int full_ret_instr_count;
 };
 
 struct target_ops {
     int (*snprintf)(struct target *target,char *buf,int bufsiz);
 
-    /* init any target state, like a private per-target state struct */
+    /*
+     * init any target state, like a private per-target state struct.
+     *
+     * If the backend needs to attach to the target and pause it now so
+     * that it can initialize, that is allowed -- but we don't expect
+     * it.
+     *
+     * XXX: what about personalities that might try to read the target's
+     * reg/mem to initialize???
+     */
     int (*init)(struct target *target);
-    /* init any target state, like a private per-target state struct */
+    /*
+     * Destroy any target state and perform any final cleanup specific
+     * to the backend.
+     */
     int (*fini)(struct target *target);
-    /* actually connect to the target to enable read/write */
+    /*
+     * Actually connect to the target to enable read/write.
+     */
     int (*attach)(struct target *target);
     /* detach from target, but don't unload */
     int (*detach)(struct target *target);
@@ -2192,9 +2322,6 @@ struct target_ops {
     int (*loaddebugfiles)(struct target *target,
 			  struct addrspace *space,
 			  struct memregion *region);
-    /* have it detect its kind, with its ops.  This function must set
-     * target->kind_ops.(os|process). */
-    target_kind_t (*loadkind)(struct target *target);
     /* Once regions and debugfiles are loaded, we call this -- it's a
      * second-pass init, basically.
      */
@@ -2318,13 +2445,6 @@ struct target_ops {
     unsigned long (*write_phys)(struct target *target,ADDR paddr,
 				unsigned long length,unsigned char *buf);
 
-    /* Get target-specific register name. */
-    char *(*regname)(struct target *target,REG reg);
-    /* Get target-specific DWARF reg number for the target-specific name. */
-    REG (*dwregno_targetname)(struct target *target,char *name);
-    /* Get target-specific DWARF reg number for the "common" register. */
-    REG (*dwregno)(struct target *target,common_reg_t reg);
-
     /**
      ** Many of the following operations can be parameterized by a thread id.
      **/
@@ -2346,7 +2466,180 @@ struct target_ops {
     int (*flush_thread)(struct target *target,tid_t tid);
     int (*flush_current_thread)(struct target *target);
     int (*flush_all_threads)(struct target *target);
-    int (*invalidate_all_threads)(struct target *target);
+    int (*invalidate_thread)(struct target *target,struct target_thread *tthread);
+    int (*gc_threads)(struct target *target);
+    int (*thread_snprintf)(struct target_thread *tthread,
+			   char *buf,int bufsiz,
+			   int detail,char *sep,char *key_val_sep);
+
+    /*
+     * Register stuff.
+     *
+     * A backend can use several strategies to implement register handling.
+     *
+     * 1) Implement the methods below, and handle caching itself.  This
+     * would be more suitable to on-demand register loading (i.e., if
+     * you're not going to load all registers in the thread load
+     * methods).
+     *
+     * 2) Use the regcache, and set all these methods to the
+     * target_regcache_* versions.  Then you must load all registers in
+     * the thread loader methods, and flush all dirty registers in the
+     * thread flush methods.  In some ways, this is currently the
+     * preferred style, because then there is some linkage that a user
+     * could/should expect between the backend and the arch's registers
+     * (in that the backend should load all the arch registers!).  But
+     * the downside is the double buffering and copying
+     * overhead... because backends that can load multiple registers
+     * from a single copy in memory might well just copy that whole
+     * section and write it out once.  However, the regcache also helps
+     * you track dirty registers on a more fine-grained level.
+     *
+     *  If the target backend is going to use our
+     * generic regcache support, these should all be set to the
+     * target_regcache_* functions, or to NULL!  If it does not use
+     * regcache, all of these must be set to custom functions.
+     *
+     * If it does use regcache, its thread-loading functions *must* call
+     * the target_regcache_init_reg functions to load registers.
+     *
+     * This may seem a bit weird, and it does force the thread loaders
+     * to pre-populate the cache.  BUT, that is why we have the
+     * initreg_tidctxt method below.  The target_init_reg_tidctxt
+     * function calls that backend function if it is defined; else, it
+     * sticks the reg into the regcache.  So, as a backend developer, if
+     * you want to make sure you control your own register caching, and
+     * want to support the target_init_reg_tidctxt backend/personality
+     * helper function, you must define initreg_tidctxt.
+     *
+     * That is the guts of the compromise of supporting an optional
+     * regcache, or allowing the backend to support its own caching --
+     * while still allowing a personality to *not* manage its own
+     * caching.
+     *
+     * (Realistically, these functions need to be implemented; it's just
+     * a matter of how the backend wants to flush a cache of pending
+     * register writes at target_resume as it flushes its threads.  Many
+     * backends may implement readreg/writereg as calls to
+     * readreg/writereg_tidctxt, where the tidctxt is the thread's
+     * current context).
+     */
+    REGVAL (*readreg)(struct target *target,tid_t tid,REG reg);
+    int (*writereg)(struct target *target,tid_t tid,REG reg,REGVAL value);
+    GHashTable *(*copy_registers)(struct target *target,tid_t tid);
+
+    REGVAL (*readreg_tidctxt)(struct target *target,
+			      tid_t tid,thread_ctxt_t tidctxt,REG reg);
+    int (*writereg_tidctxt)(struct target *target,
+			    tid_t tid,thread_ctxt_t tidctxt,REG reg,REGVAL value);
+
+    /* unwind support */
+    struct target_location_ctxt *(*unwind)(struct target *target,tid_t tid);
+    int (*unwind_read_reg)(struct target_location_ctxt *tlctxt,
+			   REG reg,REGVAL *o_regval);
+    struct target_location_ctxt_frame *
+    (*unwind_prev)(struct target_location_ctxt *tlctxt);
+
+    /* breakpoint/watchpoint stuff */
+    int (*probe_register_symbol)(struct target *target,tid_t tid,
+				 struct probe *probe,struct bsymbol *bsymbol,
+				 probepoint_style_t style,
+				 probepoint_whence_t whence,
+				 probepoint_watchsize_t watchsize);
+    struct target_memmod *(*insert_sw_breakpoint)(struct target *target,tid_t tid,
+						  ADDR addr);
+    int (*remove_sw_breakpoint)(struct target *target,tid_t tid,
+				struct target_memmod *mmod);
+    int (*enable_sw_breakpoint)(struct target *target,tid_t tid,
+				struct target_memmod *mmod);
+    int (*disable_sw_breakpoint)(struct target *target,tid_t tid,
+				 struct target_memmod *mmod);
+    int (*change_sw_breakpoint)(struct target *target,tid_t tid,
+				struct target_memmod *mmod,
+				unsigned char *code,unsigned long code_len);
+    REG (*get_unused_debug_reg)(struct target *target,tid_t tid);
+    int (*set_hw_breakpoint)(struct target *target,tid_t tid,REG reg,ADDR addr);
+    int (*set_hw_watchpoint)(struct target *target,tid_t tid,REG reg,ADDR addr,
+			     probepoint_whence_t whence,
+			     probepoint_watchsize_t watchsize);
+    int (*unset_hw_breakpoint)(struct target *target,tid_t tid,REG reg);
+    int (*unset_hw_watchpoint)(struct target *target,tid_t tid,REG reg);
+    int (*disable_hw_breakpoints)(struct target *target,tid_t tid);
+    int (*enable_hw_breakpoints)(struct target *target,tid_t tid);
+    int (*disable_hw_breakpoint)(struct target *target,tid_t tid,REG dreg);
+    int (*enable_hw_breakpoint)(struct target *target,tid_t tid,REG dreg);
+    int (*notify_sw_breakpoint)(struct target *target,ADDR addr,
+				int notification);
+    int (*singlestep)(struct target *target,tid_t tid,int isbp,
+		      struct target *overlay);
+    int (*singlestep_end)(struct target *target,tid_t tid,
+			  struct target *overlay);
+
+    /* Instruction-specific stuff for stepping. */
+    /*
+     * Returns > 0 if the instruction might switch contexts; 0
+     * if not; -1 on error.
+     */
+    int (*instr_can_switch_context)(struct target *target,ADDR addr);
+
+    /*
+     * Stuff for counters.  Each target should provide its TSC
+     * timestamp, an internal notion of time since boot in nanoseconds,
+     * and if they support indexed execution, a "cycle counter" or
+     * something.
+     */
+    uint64_t (*get_tsc)(struct target *target);
+    uint64_t (*get_time)(struct target *target);
+    uint64_t (*get_counter)(struct target *target);
+
+    int (*enable_feature)(struct target *target,int feature,void *arg);
+    int (*disable_feature)(struct target *target,int feature);
+};
+
+struct target_personality_ops {
+    int (*snprintf)(struct target *target,char *buf,int bufsiz);
+
+    int (*attach)(struct target *target);
+    int (*init)(struct target *target);
+    int (*fini)(struct target *target);
+
+    int (*loadspaces)(struct target *target);
+    int (*loadregions)(struct target *target,
+		       struct addrspace *space);
+    int (*loaddebugfiles)(struct target *target,
+			  struct addrspace *space,
+			  struct memregion *region);
+
+    int (*postloadinit)(struct target *target);
+
+    int (*set_active_probing)(struct target *target,active_probe_flags_t flags);
+
+    int (*postopened)(struct target *target);
+
+    int (*handle_exception)(struct target *target);
+
+    unsigned char *(*read)(struct target *target,ADDR addr,
+			   unsigned long length,unsigned char *buf);
+    unsigned long (*write)(struct target *target,ADDR addr,
+			   unsigned long length,unsigned char *buf);
+    int (*addr_v2p)(struct target *target,tid_t tid,ADDR vaddr,ADDR *paddr);
+    unsigned char *(*read_phys)(struct target *target,ADDR paddr,
+				unsigned long length,unsigned char *buf);
+    unsigned long (*write_phys)(struct target *target,ADDR paddr,
+				unsigned long length,unsigned char *buf);
+
+    void (*free_thread_state)(struct target *target,void *state);
+    struct array_list *(*list_available_tids)(struct target *target);
+    struct target_thread *(*load_thread)(struct target *target,tid_t tid,
+					 int force);
+    struct target_thread *(*load_current_thread)(struct target *target,
+						 int force);
+    int (*load_available_threads)(struct target *target,int force);
+    int (*pause_thread)(struct target *target,tid_t tid,int nowait);
+    /* flush target(:tid) machine state */
+    int (*flush_thread)(struct target *target,tid_t tid);
+    int (*flush_current_thread)(struct target *target);
+    int (*invalidate_thread)(struct target *target,struct target_thread *tthread);
     int (*gc_threads)(struct target *target);
     int (*thread_snprintf)(struct target_thread *tthread,
 			   char *buf,int bufsiz,

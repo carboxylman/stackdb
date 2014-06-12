@@ -49,7 +49,7 @@ ifeq ($(ENABLE_DISTORM),"1")
 	PCCFLAGS += -I$(DISTORM)/include
 endif
 
-LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS)
+LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS) -ldl
 ifeq ($(ENABLE_XENACCESS),"1")
 	LDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)
 	PCLDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)

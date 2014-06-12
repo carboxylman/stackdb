@@ -1432,7 +1432,7 @@ t_action_to_x_ActionT(struct soap *soap,
 	    SOAP_CALLOC(soap,1,sizeof(*oaction->actionSpec->union_ActionSpecT.regmod->registerValue));
 	SOAP_STRCPY(soap,
 		    oaction->actionSpec->union_ActionSpecT.regmod->registerValue->name,
-		    target_reg_name(action->target,action->detail.regmod.regnum));
+		    target_regname(action->target,action->detail.regmod.regnum));
 	oaction->actionSpec->union_ActionSpecT.regmod->registerValue->value = \
 	    action->detail.regmod.regval;
 	break;

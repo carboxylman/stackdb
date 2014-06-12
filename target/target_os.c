@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 The University of Utah
+ * Copyright (c) 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -34,6 +34,31 @@ uint64_t target_os_version(struct target *target) {
 int target_os_version_cmp(struct target *target,uint64_t vers) {
     SAFE_TARGET_OS_OP(target,os_version_cmp,0,
 		      target,vers);
+}
+
+int target_os_thread_get_pgd_phys(struct target *target,tid_t tid,ADDR *pgdp) {
+    struct target_thread *tthread = target_load_thread(target,tid,0);
+    if (!tthread)
+	return -1;
+    SAFE_TARGET_OS_OP(target,thread_get_pgd_phys,-1,target,tthread,pgdp);
+}
+
+int target_os_thread_is_user(struct target *target,tid_t tid) {
+    struct target_thread *tthread = target_load_thread(target,tid,0);
+    if (!tthread)
+	return -1;
+    SAFE_TARGET_OS_OP(target,thread_is_user,-1,target,tthread);
+}
+    
+tid_t target_os_thread_get_leader(struct target *target,tid_t tid) {
+    struct target_thread *tthread = target_load_thread(target,tid,0);
+    if (!tthread)
+	return -1;
+    SAFE_TARGET_OS_OP_NORET(target,thread_get_leader,NULL,tthread,target,tthread);
+    if (tthread)
+	return tthread->tid;
+    else
+	return -1;
 }
 
 int target_os_syscall_table_load(struct target *target) {

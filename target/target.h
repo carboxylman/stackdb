@@ -113,6 +113,16 @@ int target_associate_debugfile(struct target *target,
 			       struct debugfile *debugfile);
 
 /*
+ * Utility function for targets and personalities to set a register
+ * value during thread loading.  It's like target_write_reg, but it
+ * doesn't mark the thread valid nor load it.  It just sets the value.
+ * This is currently necessary for personalities to initialize thread
+ * values independent of the target itself.
+ */
+int target_load_reg(struct target *target,struct target_thread *tthread,
+		    REG reg,REGVAL regval);
+
+/*
  * Given a range and some flags, does the actual target_addr_read after
  * checking bounds (if the flags wanted it).
  */
@@ -129,6 +139,116 @@ unsigned char *__target_load_addr_real(struct target *target,
 struct target_memmod *_target_insert_sw_breakpoint(struct target *target,
 						   tid_t tid,ADDR addr,
 						   int is_phys);
+
+/**
+ ** Register regcache helpers.
+ **/
+int target_regcache_init_reg_tidctxt(struct target *target,
+				     struct target_thread *tthread,
+				     thread_ctxt_t tctxt,
+				     REG reg,REGVAL regval);
+int target_regcache_init_done(struct target *target,
+			      tid_t tid,thread_ctxt_t tctxt);
+typedef int (*target_regcache_regval_handler_t)(struct target *target,
+						struct target_thread *tthread,
+						thread_ctxt_t tctxt,
+						REG reg,REGVAL regval,
+						void *priv);
+typedef int (*target_regcache_rawval_handler_t)(struct target *target,
+						struct target_thread *tthread,
+						thread_ctxt_t tctxt,
+						REG reg,void *rawval,int rawlen,
+						void *priv);
+int target_regcache_foreach_dirty(struct target *target,
+				  struct target_thread *tthread,
+				  thread_ctxt_t tctxt,
+				  target_regcache_regval_handler_t regh,
+				  target_regcache_rawval_handler_t rawh,
+				  void *priv);
+int target_regcache_readreg_ifdirty(struct target *target,
+				    struct target_thread *tthread,
+				    thread_ctxt_t tctxt,REG reg,REGVAL *regval);
+int target_regcache_isdirty_reg(struct target *target,
+				struct target_thread *tthread,
+				thread_ctxt_t tctxt,REG reg);
+int target_regcache_isdirty_reg_range(struct target *target,
+				      struct target_thread *tthread,
+				      thread_ctxt_t tctxt,REG start,REG end);
+struct regcache *target_regcache_get(struct target *target,
+				     struct target_thread *tthread,
+				     thread_ctxt_t tctxt);
+int target_regcache_snprintf(struct target *target,struct target_thread *tthread,
+			     thread_ctxt_t tctxt,char *buf,int bufsiz,
+			     int detail,char *sep,char *kvsep,int flags);
+int target_regcache_zero(struct target *target,struct target_thread *tthread,
+			 thread_ctxt_t tctxt);
+int target_regcache_copy_all(struct target_thread *sthread,
+			     thread_ctxt_t stidctxt,
+			     struct target_thread *dthread,
+			     thread_ctxt_t dtidctxt);
+int target_regcache_copy_all_zero(struct target_thread *sthread,
+				  thread_ctxt_t stidctxt,
+				  struct target_thread *dthread,
+				  thread_ctxt_t dtidctxt);
+/*
+ * These are the drop-ins for the backend register functions.
+ */
+REGVAL target_regcache_readreg(struct target *target,tid_t tid,REG reg);
+int target_regcache_writereg(struct target *target,tid_t tid,
+			     REG reg,REGVAL value);
+GHashTable *target_regcache_copy_registers(struct target *target,tid_t tid);
+REGVAL target_regcache_readreg_tidctxt(struct target *target,
+				       tid_t tid,thread_ctxt_t tidctxt,
+				       REG reg);
+int target_regcache_writereg_tidctxt(struct target *target,
+				     tid_t tid,thread_ctxt_t tidctxt,
+				     REG reg,REGVAL value);
+GHashTable *target_regcache_copy_registers_tidctxt(struct target *target,
+						   tid_t tid,
+						   thread_ctxt_t tidctxt);
+/**
+ ** Target personality stuff, and personality ops wrappers.  These
+ ** should only be called by backends, or by the target api wrappers.
+ **/
+struct target_personality_info {
+    char *personality;
+    target_personality_t ptype;
+    struct target_personality_ops *ptops;
+    void *pops;
+};
+
+int target_personality_attach(struct target *target,
+			      char *personality,char *personality_lib);
+int target_personality_register(char *personality,target_personality_t pt,
+				struct target_personality_ops *ptops,void *pops);
+
+int target_personality_init(struct target *target);
+int target_personality_postloadinit(struct target *target);
+int target_personality_postopened(struct target *target);
+
+int target_personality_handle_exception(struct target *target);
+
+struct target_thread *target_personality_load_current_thread(struct target *target,
+							     int force);
+struct target_thread *target_personality_load_thread(struct target *target,
+						     tid_t tid,int force);
+int target_personality_flush_current_thread(struct target *target);
+int target_personality_flush_thread(struct target *target,tid_t tid);
+struct array_list *target_personality_list_available_tids(struct target *target);
+int target_personality_load_available_threads(struct target *target,int force);
+int target_personality_invalidate_thread(struct target *target,
+					 struct target_thread *tthread);
+int target_personality_thread_snprintf(struct target_thread *tthread,
+				       char *buf,int bufsiz,
+				       int detail,char *sep,char *key_val_sep);
+/*
+struct target_thread *target_personality_load_global_thread(struct target *target);
+int target_personality_flush_global_thread(struct target *target);
+*/
+
+int target_personality_set_active_probing(struct target *target,
+					  active_probe_flags_t flags);
+
 
 /**
  ** Overlays.
@@ -321,17 +441,16 @@ int target_remove_probepoint(struct target *target,
  **/
 struct target_thread *target_lookup_thread(struct target *target,tid_t tid);
 struct target_thread *target_create_thread(struct target *target,tid_t tid,
-					   void *tstate);
+					   void *tstate,void *tpstate);
 void target_reuse_thread_as_global(struct target *target,
 				   struct target_thread *thread);
 void target_detach_thread(struct target *target,struct target_thread *tthread);
 void target_delete_thread(struct target *target,struct target_thread *thread,
 			  int nohashdelete);
 
+int target_invalidate_thread(struct target *target,
+			     struct target_thread *tthread);
 int target_invalidate_all_threads(struct target *target);
-int __target_invalidate_all_threads(struct target *target);
-int __target_invalidate_thread(struct target *target,
-			       struct target_thread *tthread);
 
 target_status_t target_get_status(struct target *target);
 void target_set_status(struct target *target,target_status_t status);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 The University of Utah
+ * Copyright (c) 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -30,20 +30,19 @@ typedef enum {
 
 #define SAFE_TARGET_PROCESS_OP(target,op,errval,...)			\
     do {								\
-        if (target->kind != TARGET_KIND_PROCESS) {			\
+        if (target->personality != TARGET_PERSONALITY_PROCESS) {	\
 	    verror("target %s is not a process!\n",target->name);	\
 	    errno = EINVAL;						\
 	    return (errval);						\
 	}								\
-	else if (!target->kind_ops.process				\
-		 || !target->kind_ops.process->op) {			\
+	else if (!target->process_ops || !target->process_ops->op) {	\
 	    verror("target %s does not support process operation '%s'!\n", \
 		   target->name,#op);					\
 	    errno = ENOSYS;						\
 	    return (errval);						\
 	}								\
 	else {								\
-	    return target->kind_ops.process->op(__VA_ARGS__);		\
+	    return target->process_ops->op(__VA_ARGS__);		\
 	}								\
     } while (0);
 
@@ -64,7 +63,6 @@ struct target_process_signal {
  */
 struct target_process_ops {
     int (*init)(struct target *target);
-    int (*close)(struct target *target);
     int (*fini)(struct target *target);
 
     /*

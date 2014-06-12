@@ -16,6 +16,8 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include "config.h"
+
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -34,18 +36,18 @@
 #include <dirent.h>
 #include <sys/time.h>
 #include <argp.h>
-
 #include <gelf.h>
 #include <elf.h>
 #include <libelf.h>
 
+#include "arch.h"
+#include "arch_x86.h"
+#include "arch_x86_64.h"
 #include "waitpipe.h"
 #include "evloop.h"
-
 #include "binfile.h"
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
-
 #include "target_api.h"
 #include "target.h"
 #include "target_linux_userproc.h"
@@ -109,9 +111,6 @@ static unsigned long linux_userproc_write(struct target *target,
 					  ADDR addr,
 					  unsigned long length,
 					  unsigned char *buf);
-static char *linux_userproc_reg_name(struct target *target,REG reg);
-static REG linux_userproc_dwregno_targetname(struct target *target,char *name);
-static REG linux_userproc_dw_reg_no(struct target *target,common_reg_t reg);
 
 static tid_t linux_userproc_gettid(struct target *target);
 static void linux_userproc_free_thread_state(struct target *target,void *state);
@@ -194,9 +193,6 @@ struct target_ops linux_userspace_process_ops = {
     .poll = linux_userproc_poll,
     .read = linux_userproc_read,
     .write = linux_userproc_write,
-    .regname = linux_userproc_reg_name,
-    .dwregno_targetname = linux_userproc_dwregno_targetname,
-    .dwregno = linux_userproc_dw_reg_no,
 
     .gettid = linux_userproc_gettid,
     .free_thread_state = linux_userproc_free_thread_state,
@@ -211,7 +207,6 @@ struct target_ops linux_userspace_process_ops = {
     .flush_thread = linux_userproc_flush_thread,
     .flush_current_thread = linux_userproc_flush_current_thread,
     .flush_all_threads = linux_userproc_flush_all_threads,
-    .invalidate_all_threads = linux_userproc_invalidate_all_threads,
     .thread_snprintf = linux_userproc_thread_snprintf,
 
     .attach_evloop = linux_userproc_attach_evloop,
@@ -219,7 +214,6 @@ struct target_ops linux_userspace_process_ops = {
 
     .readreg = linux_userproc_read_reg,
     .writereg = linux_userproc_write_reg,
-    .copy_registers = linux_userproc_copy_registers,
     .get_unused_debug_reg = linux_userproc_get_unused_debug_reg,
     .set_hw_breakpoint = linux_userproc_set_hw_breakpoint,
     .set_hw_watchpoint = linux_userproc_set_hw_watchpoint,
@@ -719,11 +713,7 @@ static struct target *linux_userproc_attach(struct target_spec *spec,
     target->binfile = binfile;
     RHOLD(target->binfile,target);
 
-    target->wordsize = binfile->wordsize;
-    target->endian = binfile->endian;
-
-    /* Wordsize and ptrsize the same, obviously... */
-    target->ptrsize = target->wordsize;
+    target->arch = target->binfile->arch;
 
     /* Which register is the fbreg is dependent on host cpu type, not
      * target cpu type.
@@ -737,25 +727,6 @@ static struct target *linux_userproc_attach(struct target_spec *spec,
     target->spregno = 4;
     target->ipregno = 8;
 #endif
-
-    target->breakpoint_instrs = malloc(1);
-    *(char *)(target->breakpoint_instrs) = 0xcc;
-    target->breakpoint_instrs_len = 1;
-    target->breakpoint_instr_count = 1;
-
-    target->ret_instrs = malloc(1);
-    /* RET */
-    *(char *)(target->ret_instrs) = 0xc3;
-    target->ret_instrs_len = 1;
-    target->ret_instr_count = 1;
-
-    target->full_ret_instrs = malloc(2);
-    /* LEAVE */
-    *(char *)(target->full_ret_instrs) = 0xc9;
-    /* RET */
-    *(((char *)(target->full_ret_instrs))+1) = 0xc3;
-    target->full_ret_instrs_len = 2;
-    target->full_ret_instr_count = 2;
 
     lstate = (struct linux_userproc_state *)malloc(sizeof(*lstate));
     if (!lstate) {
@@ -869,9 +840,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
     target->binfile = binfile;
     RHOLD(target->binfile,target);
 
-    target->wordsize = binfile->wordsize;
-    target->endian = binfile->endian;
-    target->ptrsize = target->wordsize;
+    target->arch = target->binfile->arch;
 
     if (binfile->is_dynamic < 0) {
 	verror("could not check if %s is static/dynamic exe; aborting!\n",
@@ -895,25 +864,6 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
     target->spregno = 4;
     target->ipregno = 8;
 #endif
-
-    target->breakpoint_instrs = malloc(1);
-    *(char *)(target->breakpoint_instrs) = 0xcc;
-    target->breakpoint_instrs_len = 1;
-    target->breakpoint_instr_count = 1;
-
-    target->ret_instrs = malloc(1);
-    /* RET */
-    *(char *)(target->ret_instrs) = 0xc3;
-    target->ret_instrs_len = 1;
-    target->ret_instr_count = 1;
-
-    target->full_ret_instrs = malloc(2);
-    /* LEAVE */
-    *(char *)(target->full_ret_instrs) = 0xc9;
-    /* RET */
-    *(((char *)(target->full_ret_instrs))+1) = 0xc3;
-    target->full_ret_instrs_len = 2;
-    target->full_ret_instr_count = 2;
 
     lstate = (struct linux_userproc_state *)malloc(sizeof(*lstate));
     if (!lstate) {
@@ -1468,7 +1418,7 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
     }
     tstate->ctl_sig_pause_all = 0;
 
-    tthread = target_create_thread(target,child,tstate);
+    tthread = target_create_thread(target,child,tstate,NULL);
     tthread->supported_overlay_types = TARGET_TYPE_PHP;
 
     target_add_state_change(target,child,TARGET_STATE_CHANGE_THREAD_CREATED,0,0,
@@ -1637,12 +1587,12 @@ static int __handle_internal_detaching(struct target *target,
 	    /* catch glib bug in hash table init; check for empty hashtable */
 	    else if ((dpp = (struct probepoint *) \
 		      g_hash_table_lookup(target->soft_probepoints,
-					  (gpointer)(ipval - target->breakpoint_instrs_len)))) {
+					  (gpointer)(ipval - target->arch->breakpoint_instrs_len)))) {
 		vdebug(5,LA_TARGET,LF_LUP,
 		       "sw bp pid %d thread %"PRIiTID", resetting EIP\n",
 		       pid,tid);
 
-		ipval -= target->breakpoint_instrs_len;
+		ipval -= target->arch->breakpoint_instrs_len;
 		errno = 0;
 		target_write_reg(target,tid,target->ipregno,ipval);
 		if (errno) {
@@ -2054,10 +2004,6 @@ static int linux_userproc_flush_all_threads(struct target *target) {
     return retval;
 }
 
-static int linux_userproc_invalidate_all_threads(struct target *target) {
-    return __target_invalidate_all_threads(target);
-}
-
 static int linux_userproc_thread_snprintf(struct target_thread *tthread,
 					  char *buf,int bufsiz,
 					  int detail,char *sep,char *kvsep) {
@@ -2147,7 +2093,7 @@ static int linux_userproc_init(struct target *target) {
     tstate->last_status = -1;
     tstate->last_signo = -1;
 
-    tthread = target_create_thread(target,lstate->pid,tstate);
+    tthread = target_create_thread(target,lstate->pid,tstate,NULL);
     tthread->supported_overlay_types = TARGET_TYPE_PHP;
     /* Default thread is always starts paused. */
     target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
@@ -2300,7 +2246,7 @@ static int linux_userproc_attach_internal(struct target *target) {
 	tstate->ctl_sig_recv = 0;
 	tstate->ctl_sig_pause_all = 0;
 
-	tthread = target_create_thread(target,tid,tstate);
+	tthread = target_create_thread(target,tid,tstate,NULL);
 	tthread->supported_overlay_types = TARGET_TYPE_PHP;
 	target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
 
@@ -3470,7 +3416,7 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 		else
 		    vdebug(4,LA_TARGET,LF_LUP,
 			   "checking for SS or sw break on 0x%"PRIxADDR"\n",
-			   ipval - target->breakpoint_instrs_len);
+			   ipval - target->arch->breakpoint_instrs_len);
 	    }
 
 	    /*
@@ -3540,7 +3486,7 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 	    /* Try to handle a software breakpoint. */
 	    else if ((dpp = (struct probepoint *)			\
 		      g_hash_table_lookup(target->soft_probepoints,
-					  (gpointer)(ipval - target->breakpoint_instrs_len)))) {
+					  (gpointer)(ipval - target->arch->breakpoint_instrs_len)))) {
 		if (target->ops->handle_break(target,tthread,dpp,cdr & 0x4000)
 		    != RESULT_SUCCESS)
 		    return THREAD_STATUS_ERROR;
@@ -4225,8 +4171,7 @@ unsigned long linux_userproc_write(struct target *target,
  * It is unfortunate that sys/user.h conditions the macros on __WORDSIZE.
  */
 #if __WORDSIZE == 64
-#define X86_64_DWREG_COUNT 67
-static int dreg_to_ptrace_idx64[X86_64_DWREG_COUNT] = { 
+static int dreg_to_ptrace_idx64[ARCH_X86_64_REG_COUNT] = { 
     10, 12, 11, 5, 13, 14, 4, 19,
     9, 8, 7, 6, 3, 2, 1, 0,
     16, 
@@ -4239,149 +4184,28 @@ static int dreg_to_ptrace_idx64[X86_64_DWREG_COUNT] = {
     21, 22, 
     -1, -1, 
     -1, -1, -1, -1, -1,
-};
-static char *dreg_to_name64[X86_64_DWREG_COUNT] = { 
-    "rax", "rdx", "rcx", "rbx", "rsi", "rdi", "rbp", "rsp",
-    "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
-    "rip",
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    "rflags", "es", "cs", "ss", "ds", "fs", "gs",
-    NULL, NULL,
-    "fs_base", "gs_base", 
-    NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL,
-};
-static int creg_to_dreg64[COMMON_REG_COUNT] = { 
-    [CREG_AX] = 0,
-    [CREG_BX] = 3,
-    [CREG_CX] = 2,
-    [CREG_DX] = 1,
-    [CREG_DI] = 5,
-    [CREG_SI] = 4,
-    [CREG_BP] = 6,
-    [CREG_SP] = 7,
-    [CREG_IP] = 16,
-    [CREG_FLAGS] = 49,
-    [CREG_CS] = 51,
-    [CREG_SS] = 52,
-    [CREG_DS] = 53,
-    [CREG_ES] = 50,
-    [CREG_FS] = 54,
-    [CREG_GS] = 55,
-};
-#else
-#define X86_32_DWREG_COUNT 59
-static int dreg_to_ptrace_idx32[X86_32_DWREG_COUNT] = { 
-    6, 1, 2, 0, 15, 5, 3, 4,
-    12, 14,
-    -1, -1, -1, -1, -1, -1, 
-    -1, -1, -1, -1, -1, -1, -1, -1, 
-    -1, -1, -1, -1, -1, -1, -1, -1, 
-    -1, -1, -1, -1, -1, -1, -1, -1, 
-    -1, -1, -1, -1, -1, -1, -1, -1, 
-    -1, -1, -1, -1, -1,
-    /* These are "fake" DWARF regs. */
-    13, 16, 7, 8, 9, 10,
-};
-static char *dreg_to_name32[X86_32_DWREG_COUNT] = { 
-    "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi",
-    "eip", "eflags",
-    NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL,
-    "cs", "ss", "ds", "es", "fs", "gs",
-};
-static int creg_to_dreg32[COMMON_REG_COUNT] = { 
-    [CREG_AX] = 0,
-    [CREG_BX] = 3,
-    [CREG_CX] = 1,
-    [CREG_DX] = 2,
-    [CREG_DI] = 7,
-    [CREG_SI] = 6,
-    [CREG_BP] = 5,
-    [CREG_SP] = 4,
-    [CREG_IP] = 8,
-    [CREG_FLAGS] = 9,
-    [CREG_CS] = 53,
-    [CREG_SS] = 54,
-    [CREG_DS] = 55,
-    [CREG_ES] = 56,
-    [CREG_FS] = 57,
-    [CREG_GS] = 58,
+    -1,
+    -1, -1, -1, -1,-1, -1, -1, -1,-1, -1,
+    -1, -1,-1, -1, -1, -1,-1, -1, -1, -1,
 };
 #endif
+static int dreg_to_ptrace_idx32[ARCH_X86_REG_COUNT] = {
+    6, 1, 2, 0, 15, 5, 3, 4,
+    12, 14,
+    -1,
+    -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1,
+    -1,-1,-1,
+    /* These are "fake" DWARF regs. */
+    8, 13, 16, 7, 9, 10,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+};
 
 /*
  * Register functions.
  */
-char *linux_userproc_reg_name(struct target *target,REG reg) {
-#if __WORDSIZE == 64
-    if (reg >= X86_64_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
-	return NULL;
-    }
-    return dreg_to_name64[reg];
-#else
-    if (reg >= X86_32_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
-	return NULL;
-    }
-    return dreg_to_name32[reg];
-#endif
-}
-
-REG linux_userproc_dwregno_targetname(struct target *target,char *name) {
-    /* This sucks. */
-    REG retval = 0;
-    int i;
-    int count;
-    char **dregname;
-
-#if __WORDSIZE == 64
-    count = X86_64_DWREG_COUNT;
-    dregname = dreg_to_name64;
-#else
-    count = X86_32_DWREG_COUNT;
-    dregname = dreg_to_name32;
-#endif
-
-    for (i = 0; i < count; ++i) {
-	if (dregname[i] == NULL)
-	    continue;
-	else if (strcmp(name,dregname[i]) == 0) {
-	    retval = i;
-	    break;
-	}
-    }
-
-    if (i == count) {
-	verror("could not find register number for name %s!\n",name);
-	errno = EINVAL;
-	return 0;
-    }
-
-    return retval;
-}
-
-REG linux_userproc_dw_reg_no(struct target *target,common_reg_t reg) {
-    if (reg >= COMMON_REG_COUNT) {
-	verror("common regnum %d does not have an x86 mapping!\n",reg);
-	errno = EINVAL;
-	return 0;
-    }
-#if __WORDSIZE == 64
-    return creg_to_dreg64[reg];
-#else
-    return creg_to_dreg32[reg];
-#endif
-}
-
 REGVAL linux_userproc_read_reg(struct target *target,tid_t tid,REG reg) {
     int ptrace_idx;
     struct target_thread *tthread;
@@ -4395,29 +4219,23 @@ REGVAL linux_userproc_read_reg(struct target *target,tid_t tid,REG reg) {
     }
     tstate = (struct linux_userproc_thread_state *)tthread->state;
 
-    vdebug(5,LA_TARGET,LF_LUP,"reading reg %s\n",linux_userproc_reg_name(target,reg));
+    vdebug(5,LA_TARGET,LF_LUP,"reading reg %s\n",
+	   target_regname(target,reg));
 
-#if __WORDSIZE == 64
-    if (reg >= X86_64_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
+    if (reg >= arch_regcount(target->arch)) {
+	verror("regnum %d does not have a target mapping!\n",reg);
 	errno = EINVAL;
 	return 0;
     }
-    ptrace_idx = dreg_to_ptrace_idx64[reg];
-#else
-    if (reg >= X86_32_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
-	errno = EINVAL;
-	return 0;
-    }
-    ptrace_idx = dreg_to_ptrace_idx32[reg];
-#endif
 
-#if __WORDSIZE == 64
-    return (REGVAL)(((unsigned long *)&(tstate->regs))[ptrace_idx]);
-#else 
-    return (REGVAL)(((long int *)&(tstate->regs))[ptrace_idx]);
-#endif
+    if (target->arch->type == ARCH_X86_64) {
+	ptrace_idx = dreg_to_ptrace_idx64[reg];
+	return (REGVAL)(((unsigned long *)&(tstate->regs))[ptrace_idx]);
+    }
+    else {
+	ptrace_idx = dreg_to_ptrace_idx32[reg];
+	return (REGVAL)(((long int *)&(tstate->regs))[ptrace_idx]);
+    }
 }
 
 int linux_userproc_write_reg(struct target *target,tid_t tid,REG reg,
@@ -4435,82 +4253,26 @@ int linux_userproc_write_reg(struct target *target,tid_t tid,REG reg,
     tstate = (struct linux_userproc_thread_state *)tthread->state;
 
     vdebug(5,LA_TARGET,LF_LUP,"writing reg %s 0x%"PRIxREGVAL"\n",
-	   linux_userproc_reg_name(target,reg),value);
+	   target_regname(target,reg),value);
 
-#if __WORDSIZE == 64
-    if (reg >= X86_64_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
+    if (reg >= arch_regcount(target->arch)) {
+	verror("regnum %d does not have a target mapping!\n",reg);
 	errno = EINVAL;
-	return -1;
+	return 0;
     }
-    ptrace_idx = dreg_to_ptrace_idx64[reg];
-#else
-    if (reg >= X86_32_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
-	errno = EINVAL;
-	return -1;
+    if (target->arch->type == ARCH_X86_64) {
+	ptrace_idx = dreg_to_ptrace_idx64[reg];
+	((unsigned long *)&(tstate->regs))[ptrace_idx] = (unsigned long)value;
     }
-    ptrace_idx = dreg_to_ptrace_idx32[reg];
-#endif
-
-#if __WORDSIZE == 64
-    ((unsigned long *)&(tstate->regs))[ptrace_idx] = (unsigned long)value;
-#else 
-    ((long int*)&(tstate->regs))[ptrace_idx] = (long int)value;
-#endif
+    else {
+	ptrace_idx = dreg_to_ptrace_idx32[reg];
+	((long int*)&(tstate->regs))[ptrace_idx] = (long int)value;
+    }
 
     /* Flush the registers in target_resume! */
     tthread->dirty = 1;
 
     return 0;
-}
-
-GHashTable *linux_userproc_copy_registers(struct target *target,tid_t tid) {
-    GHashTable *retval;
-    int i;
-    int count;
-    REGVAL *rvp;
-    int *dregs;
-    char **dregnames;
-    struct target_thread *tthread;
-    struct linux_userproc_thread_state *tstate;
-
-    tthread = linux_userproc_load_thread(target,tid,0);
-    if (!tthread) {
-	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
-	errno = EINVAL;
-	return 0;
-    }
-    tstate = (struct linux_userproc_thread_state *)tthread->state;
-
-#if __WORDSIZE == 64
-    count = X86_64_DWREG_COUNT;
-    dregs = dreg_to_ptrace_idx64;
-    dregnames = dreg_to_name64;
-#else 
-    count = X86_32_DWREG_COUNT;
-    dregs = dreg_to_ptrace_idx32;
-    dregnames = dreg_to_name32;
-#endif
-
-    retval = g_hash_table_new_full(g_str_hash,g_str_equal,NULL,free);
-
-    for (i = 0; i < count; ++i) {
-	if (dregs[i] == -1) 
-	    continue;
-
-	rvp = malloc(sizeof(*rvp));
-	
-#if __WORDSIZE == 64
-	memcpy(rvp,&((unsigned long *)&(tstate->regs))[i],sizeof(unsigned long));
-#else 
-	memcpy(rvp,&((long int *)&(tstate->regs))[i],sizeof(long int));
-#endif
-
-	g_hash_table_insert(retval,dregnames[i],rvp);
-    }
-
-    return retval;
 }
 
 /*
@@ -5036,7 +4798,7 @@ int linux_userproc_singlestep(struct target *target,tid_t tid,int isbp,
      * PTRACE_SINGLESTEP runs the thread right away, so we have make
      * sure to do all the things _resume() would have done to it.
      */
-    __target_invalidate_thread(target,tthread);
+    target_invalidate_thread(target,tthread);
     target_thread_set_status(tthread,THREAD_STATUS_RUNNING);
 
     return 0;

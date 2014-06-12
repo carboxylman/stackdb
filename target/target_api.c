@@ -16,6 +16,10 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include "config.h"
+#include "common.h"
+#include "arch.h"
+
 #include "target_api.h"
 #include "target.h"
 #include "target_os.h"
@@ -180,23 +184,51 @@ int target_open(struct target *target) {
     struct memregion *region;
     char buf[128];
 
+    if (!target->spec) {
+	verror("cannot open a target without a specification!\n");
+	errno = EINVAL;
+	return -1;
+    }
+
     vdebug(5,LA_TARGET,LF_TARGET,"opening target type(%d)\n",target_type(target));
+
+    /*
+     * Try to load the user-specified personality if one exists, and if
+     * the target did *NOT* load it alrady!
+     */
+    if (target->spec->personality && !target->personality_ops) {
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "loading user-specified personality '%s' (%s)\n",
+	       target->spec->personality,target->spec->personality_lib ? : "");
+	if ((rc = target_personality_attach(target,target->spec->personality,
+					    target->spec->personality_lib))) {
+	    verror("Failed to initialize user-specified personality (%d)!\n",rc);
+	    return -1;
+	}
+    }
+    else if (target->spec->personality_lib) {
+	verror("cannot specify a personality library without a"
+	       " personality name!\n");
+	errno = EINVAL;
+	return -1;
+    }
 
     vdebug(5,LA_TARGET,LF_TARGET,"target type(%d): init\n",target_type(target));
     if ((rc = target->ops->init(target))) {
 	return rc;
+    }
+    if (target->personality_ops && target->personality_ops->init) {
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "target type(%d): init personality ops\n",target_type(target));
+	if ((rc = target->personality_ops->init(target))) {
+	    return rc;
+	}
     }
 
     if (target_snprintf(target,buf,sizeof(buf)) < 0)
 	target->name = NULL;
     else 
 	target->name = strdup(buf);
-
-    if (!target->spec) {
-	verror("cannot open a target without a specification!\n");
-	errno = EINVAL;
-	return -1;
-    }
 
     if (target->spec->bpmode == THREAD_BPMODE_STRICT && !target->threadctl) {
 	verror("cannot init a target in BPMODE_STRICT that does not have"
@@ -205,15 +237,36 @@ int target_open(struct target *target) {
 	return -1;
     }
 
-    vdebug(5,LA_TARGET,LF_TARGET,"target(%s): loadspaces\n",target->name);
-    if ((rc = target->ops->loadspaces(target))) {
-	return rc;
+    if (target->ops->loadspaces) {
+	vdebug(5,LA_TARGET,LF_TARGET,"target(%s): loadspaces\n",target->name);
+	if ((rc = target->ops->loadspaces(target))) {
+	    return rc;
+	}
+    }
+    else if (target->personality_ops && target->personality_ops->loadspaces) {
+	vdebug(5,LA_TARGET,LF_TARGET,"target(%s): personality loadspaces\n",
+	       target->name);
+	if ((rc = target->personality_ops->loadspaces(target))) {
+	    return rc;
+	}
     }
 
-    list_for_each_entry(space,&target->spaces,space) {
-	vdebug(5,LA_TARGET,LF_TARGET,"target(%s): loadregions\n",target->name);
-	if ((rc = target->ops->loadregions(target,space))) {
-	    return rc;
+    if (target->ops->loadregions) {
+	list_for_each_entry(space,&target->spaces,space) {
+	    vdebug(5,LA_TARGET,LF_TARGET,"target(%s): loadregions\n",
+		   target->name);
+	    if ((rc = target->ops->loadregions(target,space))) {
+		return rc;
+	    }
+	}
+    }
+    else if (target->personality_ops && target->personality_ops->loadregions) {
+	list_for_each_entry(space,&target->spaces,space) {
+	    vdebug(5,LA_TARGET,LF_TARGET,"target(%s): loadregions (personality)\n",
+		   target->name);
+	    if ((rc = target->personality_ops->loadregions(target,space))) {
+		return rc;
+	    }
 	}
     }
 
@@ -225,13 +278,31 @@ int target_open(struct target *target) {
 		|| region->type == REGION_TYPE_VSYSCALL) 
 		continue;
 
-	    vdebug(5,LA_TARGET,LF_TARGET,
-		   "loaddebugfiles target(%s:%s):region(%s:%s)\n",
-		   target->name,space->idstr,
-		   region->name,REGION_TYPE(region->type));
-	    if ((rc = target->ops->loaddebugfiles(target,space,region))) {
-		vwarn("could not open debuginfo for region %s (%d)\n",
-		      region->name,rc);
+	    if (target->ops->loaddebugfiles) {
+		vdebug(5,LA_TARGET,LF_TARGET,
+		       "loaddebugfiles target(%s:%s):region(%s:%s)\n",
+		       target->name,space->idstr,
+		       region->name,REGION_TYPE(region->type));
+		if ((rc = target->ops->loaddebugfiles(target,space,region))) {
+		    vwarn("could not open debuginfo for region %s (%d)\n",
+			  region->name,rc);
+		}
+	    }
+	    else if (target->personality_ops
+		     && target->personality_ops->loaddebugfiles) {
+		vdebug(5,LA_TARGET,LF_TARGET,
+		       "loaddebugfiles (personality) target(%s:%s):region(%s:%s)\n",
+		       target->name,space->idstr,
+		       region->name,REGION_TYPE(region->type));
+		if ((rc = target->personality_ops->loaddebugfiles(target,space,
+								  region))) {
+		    vwarn("could not open debuginfo for region %s (%d)\n",
+			  region->name,rc);
+		}
+	    }
+	    else {
+		vwarn("cannot setup region %s in space %s; no API functions!\n",
+		      region->name,space->idstr);
 	    }
 
 	    /*
@@ -262,19 +333,6 @@ int target_open(struct target *target) {
 		   region->base_load_addr,region->base_phys_addr,
 		   region->base_virt_addr,region->phys_offset,
 		   region->phys_offset);
-	}
-    }
-
-    if (target->ops->loadkind) {
-	vdebug(5,LA_TARGET,LF_TARGET,"loadkind target(%s)\n",target->name);
-	target->kind = target->ops->loadkind(target);
-	if (target->kind == TARGET_KIND_OS) {
-	    if (target->kind_ops.os)
-		rc = target->kind_ops.os->init(target);
-	}
-	else if (target->kind == TARGET_KIND_PROCESS) {
-	    if (target->kind_ops.process)
-		rc = target->kind_ops.process->init(target);
 	}
     }
 
@@ -629,40 +687,64 @@ unsigned long target_write_physaddr(struct target *target,ADDR paddr,
     return target->ops->write_phys(target,paddr,length,buf);
 }
 
-char *target_reg_name(struct target *target,REG reg) {
-    vdebug(16,LA_TARGET,LF_TARGET,"target(%s) reg name %d)\n",target->name,reg);
-    return target->ops->regname(target,reg);
+const char *target_regname(struct target *target,REG reg) {
+    vdebug(16,LA_TARGET,LF_TARGET,"target(%s) reg name %d)\n",
+	   target->name,reg);
+    return arch_regname(target->arch,reg);
 }
 
-REG target_dw_reg_no_targetname(struct target *target,char *name) {
-    vdebug(16,LA_TARGET,LF_TARGET,"target(%s) target reg %s)\n",target->name,name);
-    return target->ops->dwregno_targetname(target,name);
+int target_regno(struct target *target,char *name,REG *reg) {
+    vdebug(16,LA_TARGET,LF_TARGET,"target(%s) target reg %s)\n",
+	   target->name,name);
+    return arch_regno(target->arch,name,reg);
 }
 
-REG target_dw_reg_no(struct target *target,common_reg_t reg) {
-    vdebug(16,LA_TARGET,LF_TARGET,"target(%s) common reg %d)\n",target->name,reg);
-    return target->ops->dwregno(target,reg);
+int target_cregno(struct target *target,common_reg_t creg,REG *reg) {
+    vdebug(16,LA_TARGET,LF_TARGET,"target(%s) common reg %d)\n",
+	   target->name,creg);
+    return arch_cregno(target->arch,creg,reg);
 }
 
 REGVAL target_read_reg(struct target *target,tid_t tid,REG reg) {
     vdebug(16,LA_TARGET,LF_TARGET,"reading target(%s:%"PRIiTID") reg %d)\n",
 	   target->name,tid,reg);
-    return target->ops->readreg(target,tid,reg);
+    if (target->ops->readreg)
+	return target->ops->readreg(target,tid,reg);
+    else
+	return target->ops->readreg_tidctxt(target,tid,THREAD_CTXT_DEFAULT,reg);
 }
 
 int target_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value) {
     vdebug(16,LA_TARGET,LF_TARGET,
 	   "writing target(%s:%"PRIiTID") reg %d 0x%"PRIxREGVAL")\n",
 	   target->name,tid,reg,value);
-    return target->ops->writereg(target,tid,reg,value);
+    if (target->ops->writereg)
+	return target->ops->writereg(target,tid,reg,value);
+    else
+	return target->ops->writereg_tidctxt(target,tid,THREAD_CTXT_DEFAULT,
+					     reg,value);
+}
+
+REGVAL target_read_reg_ctxt(struct target *target,tid_t tid,thread_ctxt_t tidctxt,
+			    REG reg) {
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "reading target(%s:%"PRIiTID") reg %d tidctxt %d)\n",
+	   target->name,tid,reg,tidctxt);
+    return target->ops->readreg_tidctxt(target,tid,tidctxt,reg);
+}
+
+int target_write_reg_ctxt(struct target *target,tid_t tid,thread_ctxt_t tidctxt,
+			  REG reg,REGVAL value) {
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "writing target(%s:%"PRIiTID") reg %d tidctxt %d 0x%"PRIxREGVAL")\n",
+	   target->name,tid,reg,tidctxt,value);
+    return target->ops->writereg_tidctxt(target,tid,tidctxt,reg,value);
 }
 
 REGVAL target_read_creg(struct target *target,tid_t tid,common_reg_t reg) {
     REG treg;
 
-    errno = 0;
-    treg = target_dw_reg_no(target,reg);
-    if (errno)
+    if (target_cregno(target,reg,&treg))
 	return 0;
 
     return target_read_reg(target,tid,treg);
@@ -672,9 +754,7 @@ int target_write_creg(struct target *target,tid_t tid,common_reg_t reg,
 		      REGVAL value) {
     REG treg;
 
-    errno = 0;
-    treg = target_dw_reg_no(target,reg);
-    if (errno)
+    if (target_cregno(target,reg,&treg))
 	return 0;
 
     return target_write_reg(target,tid,treg,value);
@@ -929,22 +1009,26 @@ int target_thread_snprintf(struct target *target,tid_t tid,
     if (detail < -1) 
 	return snprintf(buf,bufsiz,"tid%s%"PRIiTID,kvsep,tthread->tid);
     else if (detail < 0) 
-	return snprintf(buf,bufsiz,"tid%s%"PRIiTID "%s" "name%s%s",
-			kvsep,tid,sep,kvsep,tthread->name);
+	return snprintf(buf,bufsiz,"tid%s%"PRIiTID "%s" "name%s%s"
+			"curctxt%s%d" "%s",
+			kvsep,tid,sep,kvsep,tthread->name,
+			kvsep,tthread->tidctxt,sep);
     else if (!target->ops->thread_snprintf)
 	return snprintf(buf,bufsiz,
-			"tid%s%"PRIiTID "%s" "name%s%s" "%s"
+			"tid%s%"PRIiTID "%s" "name%s%s" "%s" "curctxt%s%d" "%s"
 			"ptid%s%"PRIiTID "%s" "uid%s%d" "%s"
 			"gid%s%d",
 			kvsep,tthread->tid,sep,kvsep,tthread->name,sep, 
+			kvsep,tthread->tidctxt,sep, 
 			kvsep,tthread->ptid,sep,kvsep,tthread->uid,sep,
 			kvsep,tthread->gid);
     else {
 	rc =   snprintf(buf,bufsiz,
-			"tid%s%"PRIiTID "%s" "name%s%s" "%s"
+			"tid%s%"PRIiTID "%s" "name%s%s" "%s" "curctxt%s%d" "%s"
 			"ptid%s%"PRIiTID "%s" "uid%s%d" "%s"
 			"gid%s%d" "%s",
 			kvsep,tthread->tid,sep,kvsep,tthread->name,sep, 
+			kvsep,tthread->tidctxt,sep, 
 			kvsep,tthread->ptid,sep,kvsep,tthread->uid,sep,
 			kvsep,tthread->gid,sep);
 	if (rc >= bufsiz)
@@ -1047,7 +1131,7 @@ int target_close(struct target *target) {
 	if (mmod->tmp)
 	    free(mmod->tmp);
 	/* Breakpoint hack */
-	if (mmod->mod && mmod->mod != target->breakpoint_instrs)
+	if (mmod->mod && mmod->mod != target->arch->breakpoint_instrs)
 	    free(mmod->mod);
 
 	rlen = target_write_addr(target,mmod->addr,mmod->orig_len,mmod->orig);
@@ -1136,8 +1220,8 @@ struct target_memmod *_target_insert_sw_breakpoint(struct target *target,
     }
     else {
 	mmod = target_memmod_create(target,tid,addr,is_phys,MMT_BP,
-				    target->breakpoint_instrs,
-				    target->breakpoint_instrs_len);
+				    target->arch->breakpoint_instrs,
+				    target->arch->breakpoint_instrs_len);
 	if (!mmod) {
 	    verror("could not create memmod for tid %"PRIiTID" at 0x%"PRIxADDR"!\n",
 		   tid,addr);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -93,26 +93,6 @@ typedef uint64_t unum_t;
 typedef int8_t REG;
 #define PRIiREG PRIi8
 
-typedef enum {
-    CREG_AX = 0,
-    CREG_BX,
-    CREG_CX,
-    CREG_DX,
-    CREG_DI,
-    CREG_SI,
-    CREG_BP,
-    CREG_SP,
-    CREG_IP,
-    CREG_FLAGS,
-    CREG_CS,
-    CREG_SS,
-    CREG_DS,
-    CREG_ES,
-    CREG_FS,
-    CREG_GS,
-} common_reg_t;
-#define COMMON_REG_COUNT 16
-
 /*
  * We use small offsets for DWARF offset addrs.  Saves mem in symbol
  * structures, which is very important.
@@ -121,8 +101,7 @@ typedef int32_t SMOFFSET;
 #define PRIiSMOFFSET PRIi32
 #define PRIxSMOFFSET PRIx32
 
-#define DATA_BIG_ENDIAN 0
-#define DATA_LITTLE_ENDIAN 1
+#define __PAGE_SIZE    0x1000
 
 #define PROT_READ         0x1
 #define PROT_WRITE        0x2

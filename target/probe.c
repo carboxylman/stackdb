@@ -2769,7 +2769,7 @@ result_t probepoint_bp_handler(struct target *target,
      * here, and then if the user tries to read it, it's "correct".
      */
     if (probepoint->style == PROBEPOINT_SW) {
-	ipval -= target->breakpoint_instrs_len;
+	ipval -= target->arch->breakpoint_instrs_len;
 	errno = 0;
 	target_write_reg(target,tid,target->ipregno,ipval);
 	if (errno) {
@@ -3698,9 +3698,9 @@ static int __insert_action(struct target *target,struct target_thread *tthread,
 		    return -1;
 		}
 
-		buf = target->full_ret_instrs;
-		buflen = target->full_ret_instrs_len;
-		action->steps = target->full_ret_instr_count;
+		buf = target->arch->full_ret_instrs;
+		buflen = target->arch->full_ret_instrs_len;
+		action->steps = target->arch->full_ret_instr_count;
 	    }
 	    else {
 		vdebug(3,LA_PROBE,LF_ACTION,
@@ -3722,15 +3722,15 @@ static int __insert_action(struct target *target,struct target_thread *tthread,
 		    return -1;
 		}
 
-		buf = target->ret_instrs;
-		buflen = target->ret_instrs_len;
-		action->steps = target->ret_instr_count;
+		buf = target->arch->ret_instrs;
+		buflen = target->arch->ret_instrs_len;
+		action->steps = target->arch->ret_instr_count;
 	    }
 	}
 	else {
-	    buf = target->ret_instrs;
-	    buflen = target->ret_instrs_len;
-	    action->steps = target->ret_instr_count;
+	    buf = target->arch->ret_instrs;
+	    buflen = target->arch->ret_instrs_len;
+	    action->steps = target->arch->ret_instr_count;
 	}
     }
     else if (action->type == ACTION_CUSTOMCODE) {
@@ -4230,7 +4230,7 @@ int action_sched(struct probe *probe,struct action *action,
 	else if (action->detail.ret.prologue && action->detail.ret.prologue_uses_bp
 		 && !action->boosted
 		 && !target->threadctl
-		 && target->full_ret_instr_count > 1
+		 && target->arch->full_ret_instr_count > 1
 		 && target->spec->bpmode == THREAD_BPMODE_SEMI_STRICT) {
 	    verror("cannot do non-boosted, multi-instruction return"
 		   " on strict target without threadctl!\n");

@@ -123,7 +123,8 @@ int vmi_add_log_area_flaglist(char *flaglist,char *separator) {
 
 static char *log_flag_stringmap_none[] = { "NONE",NULL };
 static char *log_flag_stringmap_lib[] = {
-    "CLMATCH","CLRANGE","RFILTER","WAITPIPE","EVLOOP","MONITOR","ROP","CFI",NULL
+    "CLMATCH","CLRANGE","RFILTER","WAITPIPE","EVLOOP","MONITOR","ROP","CFI",
+    "REGCACHE",NULL
 };
 static char *log_flag_stringmap_debug[] = { 
     "DFILE","SYMBOL","SCOPE","LOC","LOOKUP","DWARF","DWARFATTR",
@@ -131,7 +132,8 @@ static char *log_flag_stringmap_debug[] = {
 };
 static char *log_flag_stringmap_target[] = { 
     "TARGET","SPACE","REGION","LOOKUP","LOC","OTHER","SYMBOL","UNW",
-    "LUP","XV","XVP","PHP","DISASM","THREAD","OS","PROCESS",NULL
+    "LUP","XV","XVP","PHP","DISASM","THREAD","OS","PROCESS","APPLICATION",
+    "OSLINUX",NULL
 };
 static char *log_flag_stringmap_probe[] = { 
     "PROBE","PROBEPOINT","ACTION",NULL
@@ -166,7 +168,6 @@ void vmi_set_user_area_flags(char **names) {
 int vmi_log_get_flag_val(char *flag,log_areas_t *areaval,log_flags_t *flagval) {
     unsigned int i;
     int found;
-    int _len;
     char *_dup = NULL;
     char *_area;
     char *_flag;
@@ -235,7 +236,6 @@ int vmi_log_get_flag_val(char *flag,log_areas_t *areaval,log_flags_t *flagval) {
 
     if ((_idx = index(flag,'_'))) {
 	_dup = strdup(flag);
-	_len = strlen(_dup);
 
 	*_idx = '\0';
 	_area = _dup;

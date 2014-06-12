@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -30,21 +30,17 @@
 #include <signal.h>
 
 #include "log.h"
+#include "alist.h"
+#include "list.h"
 #include "dwdebug.h"
 #include "target_api.h"
 #include "target.h"
-#include "target_linux_userproc.h"
-#ifdef ENABLE_XENACCESS
-#include "target_xen_vm.h"
-#endif
-
 #include "probe_api.h"
 #include "probe.h"
-#include "alist.h"
-#include "list.h"
 
 struct dt_argp_state {
     int loopint;
+    int detail;
 };
 
 struct dt_argp_state opts;
@@ -81,14 +77,17 @@ void siga(int signo) {
 	target_pause(t);
 	fprintf(stdout,"Current threads:\n");
 	target_load_available_threads(t,1);
-	target_dump_all_threads(t,stdout,0);
+	target_dump_all_threads(t,stdout,opts.detail);
 	target_resume(t);
     }
     alarm(opts.loopint);
 }
 
+#define DT_ARGP_DETAIL 0x444444
+
 struct argp_option dt_argp_opts[] = {
     { "loop-interval",'i',"INTERVAL",0,"Loop infinitely using the given interval.",0 },
+    { "dump-detail",DT_ARGP_DETAIL,"DETAIL",0,"Thread detail level (default 0).",0 },
     { 0,0,0,0,0,0 },
 };
 
@@ -114,6 +113,9 @@ error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state) {
 
     case 'i':
 	opts->loopint = atoi(arg);
+	break;
+    case DT_ARGP_DETAIL:
+	opts->detail = atoi(arg);
 	break;
 
     default:
@@ -183,7 +185,7 @@ int main(int argc,char **argv) {
     fflush(stderr);
     fflush(stdout);
     target_load_available_threads(t,1);
-    target_dump_all_threads(t,stdout,0);
+    target_dump_all_threads(t,stdout,opts.detail);
     fflush(stderr);
     fflush(stdout);
 

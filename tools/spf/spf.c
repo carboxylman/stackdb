@@ -1037,7 +1037,7 @@ int main(int argc,char **argv) {
     sprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
     fprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
 
-    if (opts.use_os_syscall_probes && t->kind == TARGET_KIND_OS) {
+    if (opts.use_os_syscall_probes && t->personality == TARGET_PERSONALITY_OS) {
 	if (target_os_syscall_table_load(t))
 	    vwarn("could not load the syscall table; target_os_syscall probes"
 		  " will not be available!\n");

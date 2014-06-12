@@ -55,21 +55,27 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
 	$(TOP_SRCDIR)/include/waitpipe.h $(TOP_SRCDIR)/include/evloop.h \
 	$(TOP_SRCDIR)/include/monitor.h \
-	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h
+	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h \
+	$(TOP_SRCDIR)/include/regcache.h $(TOP_SRCDIR)/include/arch.h
 
 LIBRARIES := libvmitest.la
 
 OBJECTS := monitor_dummy.lo
 
 TESTS := clrange clrangesimple clmatch clmatchone evloop_waitpipe \
-	monitor_threads monitor_processes monitored_dummy_child
+	monitor_threads monitor_processes monitored_dummy_child regcache
 TESTOBJECTS := $(addsuffix .lo,$(TESTS))
 
 ASSISTANTS := dummy dummy.threads threads.leader.exit dlopen
+ifeq ("$(shell uname -m)","x86_64")
+    ASSISTANTS += regval_x86_64
+else
+    ASSISTANTS += regval_x86
+endif
 TESTOBJECTS += $(addsuffix .lo,$(ASSISTANTS))
 
-STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.la $(OBJDIR)/lib/libvmilib.la \
-	 $(OBJDIR)/target/libtarget.la
+STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.la $(OBJDIR)/lib/libvmilib.la
+#	 $(OBJDIR)/target/libtarget.la
 ifeq ($(ENABLE_XENACCESS),"1")
 	STATICLIBS += $(XENACCESS_A)
 endif
@@ -136,6 +142,18 @@ monitored_dummy_child: $(HEADERS) $(LIBRARIES) monitored_dummy_child.lo $(STATIC
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
+regcache: $(HEADERS) $(LIBRARIES) regcache.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+regval_x86: $(HEADERS) $(LIBRARIES) regval_x86.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+regval_x86_64: $(HEADERS) $(LIBRARIES) regval_x86_64.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
 test:	$(TESTS) test-subdirs
 	./clrange
 	./clrangesimple
@@ -144,6 +162,7 @@ test:	$(TESTS) test-subdirs
 	./evloop_waitpipe
 	./monitor_threads
 	./monitor_processes
+	./regcache
 
 install: def-install install-subdirs
 
