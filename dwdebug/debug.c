@@ -3775,8 +3775,12 @@ struct symbol *__symbol_get_one_member__int(struct symbol *symbol,char *member,
 		break;
 	    }
 	    /* Otherwise process the next thing on the stack. */
-	    else
+	    else {
 		type = anonstack[i++]->datatype;
+
+		/* Make sure the datatype is fully loaded before we search it. */
+		SYMBOL_EXPAND_WARN(type);
+	    }
 	}
     }
     else if (SYMBOL_IS_FUNC(symbol)) {
@@ -4012,6 +4016,10 @@ struct symbol *symbol_type_skip_qualifiers(struct symbol *type) {
 	type = type->datatype;
     }
 
+    if (type) {
+	SYMBOL_EXPAND_WARN(type);
+    }
+
     return type;
 }
 
@@ -4021,6 +4029,10 @@ struct symbol *symbol_type_skip_ptrs(struct symbol *type) {
 
     while (type->type == SYMBOL_TYPE_TYPE && SYMBOL_IST_PTR(type)) {
 	type = type->datatype;
+    }
+
+    if (type) {
+	SYMBOL_EXPAND_WARN(type);
     }
 
     return type;
