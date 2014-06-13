@@ -1132,8 +1132,6 @@ void target_free(struct target *target) {
 
     g_hash_table_destroy(target->threads);
 
-    g_hash_table_destroy(target->mmaps);
-
     /* Unload the debugfiles we might hold, if we can */
     list_for_each_entry_safe(space,tmp,&target->spaces,space) {
 	RPUT(space,addrspace,target,trefcnt);
@@ -1155,12 +1153,6 @@ void target_free(struct target *target) {
 	g_hash_table_remove(target_id_tab,(gpointer)(uintptr_t)target->id);
 
     free(target);
-}
-
-void ghash_mmap_entry_free(gpointer data) {
-    struct mmap_entry *mme = (struct mmap_entry *)data;
-
-    free(mme);
 }
 
 struct target_ops *target_get_ops(target_type_t target_type) {
@@ -1220,10 +1212,6 @@ struct target *target_create(char *type,struct target_spec *spec) {
 
     INIT_LIST_HEAD(&retval->spaces);
 
-    retval->mmaps = g_hash_table_new_full(g_direct_hash,g_direct_equal,
-					  /* No names to free! */
-					  NULL,ghash_mmap_entry_free);
-
     retval->code_ranges = clrange_create();
 
     retval->overlays = g_hash_table_new_full(g_direct_hash,g_direct_equal,
@@ -1258,24 +1246,6 @@ struct target *target_create(char *type,struct target_spec *spec) {
 			    (gpointer)(uintptr_t)retval->id,retval);
 
     return retval;
-}
-
-struct mmap_entry *target_lookup_mmap_entry(struct target *target,
-					    ADDR base_addr) {
-    /* XXX: fill later. */
-    return NULL;
-}
-
-void target_attach_mmap_entry(struct target *target,
-			      struct mmap_entry *mme) {
-    /* XXX: fill later. */
-    return;
-}
-
-void target_release_mmap_entry(struct target *target,
-			       struct mmap_entry *mme) {
-    /* XXX: fill later. */
-    return;
 }
 
 /*
@@ -1805,7 +1775,6 @@ struct value *target_load_type(struct target *target,struct symbol *type,
     struct memrange *range;
     ADDR ptraddr;
     struct location ptrloc;
-    struct mmap_entry *mmap;
     char *offset_buf;
 
     datatype = symbol_type_skip_qualifiers(type);
@@ -1882,23 +1851,25 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 	/* success! */
 	goto out;
     }
-    else if (flags & LOAD_FLAG_MUST_MMAP || flags & LOAD_FLAG_SHOULD_MMAP) {
+#if 0
+    else if (0 && (flags & LOAD_FLAG_MUST_MMAP || !(flags & LOAD_FLAG_NO_MMAP))) {
 	ptrloc.loctype = LOCTYPE_REALADDR;
 	ptrloc.l.addr = ptraddr != addr ? ptraddr : addr;
 
 	mmap = location_mmap(target,region,&ptrloc,
 			     flags,&offset_buf,NULL,&range);
+	if (rc && flags & LOAD_FLAG_MUST_MMAP) {
+	    goto errout;
+	}
+
 	value = value_create_noalloc(NULL,range,NULL,datatype);
 	if (!value) {
 	    verror("could not create value: %s\n",strerror(errno));
 	    goto errout;
 	}
-	if (!value->mmap && flags & LOAD_FLAG_MUST_MMAP) {
-	    value->buf = NULL;
-	    goto errout;
-	}
-	else if (!value->mmap) {
-	    /* fall back to regular load */
+
+	if (!value->mmap) {
+	    // fall back to regular load
 	    value->bufsiz = symbol_type_full_bytesize(datatype);
 	    value->buf = malloc(value->bufsiz);
 	    if (!value->buf) {
@@ -1920,6 +1891,7 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 	/* success! */
 	goto out;
     }
+#endif
     else {
 	value = value_create_type(NULL,range,datatype);
 	if (!value) {
@@ -2893,7 +2865,7 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
      * to mmap just for pointers.
      */
     ptrloadflags &= ~LOAD_FLAG_MUST_MMAP;
-    ptrloadflags &= ~LOAD_FLAG_SHOULD_MMAP;
+    ptrloadflags |= LOAD_FLAG_NO_MMAP;
 
     while (SYMBOL_IST_PTR(datatype)) {
 	if (((flags & LOAD_FLAG_AUTO_DEREF) && SYMBOL_IST_PTR(datatype))

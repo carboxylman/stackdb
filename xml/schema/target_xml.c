@@ -393,6 +393,17 @@ x_TargetXenSpecT_to_t_xen_vm_spec(struct soap *soap,
 	ospec->config_file = strdup(spec->configFile);
     if (spec->noHVMSetContext && *spec->noHVMSetContext == xsd__boolean__true_)
 	ospec->no_hvm_setcontext = 1;
+    if (spec->clearMemCachesEachException
+	&& *spec->clearMemCachesEachException == xsd__boolean__true_)
+	ospec->clear_mem_caches_each_exception = 1;
+#ifdef ENABLE_XENACCESS
+    if (spec->useXenAccess && *spec->useXenAccess == xsd__boolean__true_)
+	ospec->use_xenaccess = 1;
+#endif
+#ifdef ENABLE_LIBVMI
+    if (spec->useLibVMI && *spec->useLibVMI == xsd__boolean__true_)
+	ospec->use_libvmi = 1;
+#endif
     if (spec->noClearHWDbgReg && *spec->noClearHWDbgReg == xsd__boolean__true_)
 	ospec->no_hw_debug_reg_clear = 1;
     if (spec->noUseMultiplexer && *spec->noUseMultiplexer == xsd__boolean__true_)
@@ -425,6 +436,21 @@ t_xen_vm_spec_to_x_TargetXenSpecT(struct soap *soap,
 	ospec->noHVMSetContext = 
 	    SOAP_CALLOC(soap,1,sizeof(*ospec->noHVMSetContext));
 	*ospec->noHVMSetContext = xsd__boolean__true_;
+    }
+    if (spec->clear_mem_caches_each_exception) {
+	ospec->clearMemCachesEachException = 
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->clearMemCachesEachException));
+	*ospec->clearMemCachesEachException = xsd__boolean__true_;
+    }
+    if (spec->use_libvmi) {
+	ospec->useLibVMI = 
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->useLibVMI));
+	*ospec->useLibVMI = xsd__boolean__true_;
+    }
+    if (spec->use_xenaccess) {
+	ospec->useXenAccess = 
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->useXenAccess));
+	*ospec->useXenAccess = xsd__boolean__true_;
     }
     if (spec->no_hw_debug_reg_clear) {
 	ospec->noClearHWDbgReg = 

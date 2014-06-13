@@ -49,18 +49,24 @@
 #include "dwdebug_priv.h"
 #include "target_api.h"
 #include "target.h"
+#include "target_arch_x86.h"
 #include "target_os.h"
 #include "probe_api.h"
 
-#ifdef ENABLE_XENACCESS
-#include <xenaccess/xenaccess.h>
-#include <xenaccess/xa_private.h>
-#endif
 #include <xenctrl.h>
 #include <xs.h>
 
 #include "target_xen_vm.h"
 #include "target_xen_vm_vmp.h"
+
+#ifdef ENABLE_XENACCESS
+extern struct xen_vm_mem_ops xen_vm_mem_ops_xenaccess;
+#endif
+#ifdef ENABLE_LIBVMI
+extern struct xen_vm_mem_ops xen_vm_mem_ops_libvmi;
+#endif
+
+extern struct xen_vm_mem_ops xen_vm_mem_ops_builtin;
 
 /*
  * Prototypes.
@@ -241,11 +247,11 @@ static result_t xen_vm_active_thread_exit_handler(struct probe *probe,tid_t tid,
 static int xc_refcnt = 0;
 
 #ifdef XENCTRL_HAS_XC_INTERFACE
-static xc_interface *xc_handle = NULL;
+xc_interface *xc_handle = NULL;
 static xc_interface *xce_handle = NULL;
 #define XC_IF_INVALID (NULL)
 #else
-static int xc_handle = -1;
+int xc_handle = -1;
 static int xce_handle = -1;
 #define XC_IF_INVALID (-1)
 #endif
@@ -346,6 +352,10 @@ struct target_ops xen_vm_ops = {
     .disable_feature = xen_vm_disable_feature,
 };
 
+#define XV_ARGP_USE_XENACCESS    0x550001
+#define XV_ARGP_USE_LIBVMI       0x550002
+#define XV_ARGP_CLEAR_MEM_CACHES 0x550003
+
 struct argp_option xen_vm_argp_opts[] = {
     /* These options set a flag. */
     { "domain",'m',"DOMAIN",0,"The Xen domain ID or name.",-4 },
@@ -353,8 +363,16 @@ struct argp_option xen_vm_argp_opts[] = {
           "Override xenstore kernel filepath for guest.",-4 },
     { "no-clear-hw-debug-regs",'H',NULL,0,
           "Don't clear hardware debug registers at target attach.",-4 },
-    { "clear-libvmi-caches-each-rw",'C',NULL,0,
-          "Clear libvmi caches on each memory read/write.",-4 },
+    { "clear-mem-caches-each-exception",XV_ARGP_CLEAR_MEM_CACHES,NULL,0,
+          "Clear mem caches on each debug exception.",-4 },
+#ifdef ENABLE_LIBVMI
+    { "use-libvmi",XV_ARGP_USE_LIBVMI,NULL,0,
+          "Clear mem caches on each debug exception.",-4 },
+#endif
+#ifdef ENABLE_XENACCESS
+    { "use-xenaccess",XV_ARGP_USE_XENACCESS,NULL,0,
+          "Clear mem caches on each debug exception.",-4 },
+#endif
     { "no-hvm-setcontext",'V',NULL,0,
           "Don't use HVM-specific libxc get/set context functions to access"
           "virtual CPU info.",-4 },
@@ -388,8 +406,16 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	ac += 1;
     if (xspec->no_hvm_setcontext)
 	ac += 1;
-    if (xspec->clear_libvmi_caches_each_time)
+    if (xspec->clear_mem_caches_each_exception)
 	ac += 1;
+#ifdef ENABLE_LIBVMI
+    if (xspec->use_libvmi)
+	ac += 1;
+#endif
+#ifdef ENABLE_XENACCESS
+    if (xspec->use_xenaccess)
+	ac += 1;
+#endif
     if (xspec->config_file)
 	ac += 2;
     if (xspec->replay_dir)
@@ -415,9 +441,17 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
     if (xspec->no_hvm_setcontext) {
 	av[j++] = strdup("--no-hvm-setcontext");
     }
-    if (xspec->clear_libvmi_caches_each_time) {
-	av[j++] = strdup("-C");
+    if (xspec->clear_mem_caches_each_exception) {
+	av[j++] = strdup("--clear-mem-caches-each-exception");
     }
+#ifdef ENABLE_LIBVMI
+    if (xspec->use_libvmi)
+	av[j++] = strdup("--use-libvmi");
+#endif
+#ifdef ENABLE_XENACCESS
+    if (xspec->use_xenaccess)
+	av[j++] = strdup("--use-xenaccess");
+#endif
     if (xspec->config_file) {
 	av[j++] = strdup("-c");
 	av[j++] = strdup(xspec->config_file);
@@ -535,9 +569,19 @@ error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case 'c':
 	xspec->config_file = strdup(arg);
 	break;
-    case 'C':
-	xspec->clear_libvmi_caches_each_time = 1;
+    case XV_ARGP_CLEAR_MEM_CACHES:
+	xspec->clear_mem_caches_each_exception = 1;
 	break;
+#ifdef ENABLE_LIBVMI
+    case XV_ARGP_USE_LIBVMI:
+	xspec->use_libvmi = 1;
+	break;
+#endif
+#ifdef ENABLE_XENACCESSS
+    case XV_ARGP_USE_XENACCESS:
+	xspec->use_xenaccess = 1;
+	break;
+#endif
     case 'r':
 	xspec->replay_dir = strdup(arg);
 	break;
@@ -807,22 +851,24 @@ struct target *xen_vm_attach(struct target_spec *spec,
      * Now load up our {xa|vmi}_instance as much as we can now; we'll
      * try to do more when we load the debuginfo file for the kernel.
      */
-#ifdef ENABLE_XENACCESS
-    xstate->xa_instance.os_type = XA_OS_LINUX;
-    if (xa_init_vm_id_strict_noos(xstate->id,&xstate->xa_instance) == XA_FAILURE) {
-	if (xstate->xa_instance.sysmap)
-	    free(xstate->xa_instance.sysmap);
-        verror("failed to init xa instance for dom %d\n",xstate->id);
-        goto errout;
-    }
-#endif
+    xstate->memops = NULL;
 #ifdef ENABLE_LIBVMI
-    if (vmi_init(&xstate->vmi_instance,
-		 VMI_XEN|VMI_INIT_PARTIAL, xstate->name) == VMI_FAILURE) {
-        verror("failed to init vmi instance for dom %d\n", xstate->id);
+    if (!xstate->memops && xspec->use_libvmi)
+	xstate->memops = &xen_vm_mem_ops_libvmi;
+#endif
+#ifdef ENABLE_XENACCESS
+    if (!xstate->memops && xspec->use_xenaccess)
+	xstate->memops = &xen_vm_mem_ops_xenaccess;
+#endif
+    if (!xstate->memops)
+	xstate->memops = &xen_vm_mem_ops_builtin;
+
+    if (xstate->memops->init) {
+	if (xstate->memops->init(target)) {
+	    verror("failed to init memops!\n");
         goto errout;
     }
-#endif
+    }
 
     /* Our threads can have two contexts -- kernel and user spaces. */
     target->max_thread_ctxt = THREAD_CTXT_USER;
@@ -2202,16 +2248,6 @@ static int xen_vm_attach_internal(struct target *target) {
     struct addrspace *tspace;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
-#ifdef ENABLE_XENACCESS
-    ADDR init_task_addr,pgd_addr;
-#endif
-#ifdef ENABLE_LIBVMI
-    int size;
-    char *tmp;
-#endif
-    OFFSET tasks_offset,pid_offset,mm_offset,pgd_offset;
-    char *symbol_file;
-    char *val;
     struct xen_vm_spec *xspec;
 
     xspec = (struct xen_vm_spec *)target->spec->backend_spec;
@@ -2255,86 +2291,14 @@ static int xen_vm_attach_internal(struct target *target) {
     }
 
     /*
-     * Make sure xenaccess/libvmi is setup to read from userspace
-     * memory.
-     *
-     * This is hacky, but we do it by reading properties that the
-     * personality has (hopefully) set.
+     * Make sure memops is setup to read from memory.
      */
-#ifdef ENABLE_XENACCESS
-    val = (char *)g_hash_table_lookup(target->config,"OS_KERNEL_INIT_TASK_ADDR");
-    if (val)
-	init_task_addr = (ADDR)strtol(val,NULL,0);
-    val = (char *)g_hash_table_lookup(target->config,"OS_KERNEL_PGD_ADDR");
-    if (val)
-	pgd_addr = (ADDR)strtol(val,NULL,0);
-#endif
-
-    val = (char *)g_hash_table_lookup(target->config,"OS_KERNEL_TASKS_OFFSET");
-    if (val)
-	tasks_offset = (ADDR)strtol(val,NULL,0);
-    val = (char *)g_hash_table_lookup(target->config,"OS_KERNEL_PID_OFFSET");
-    if (val)
-	pid_offset = (ADDR)strtol(val,NULL,0);
-    val = (char *)g_hash_table_lookup(target->config,"OS_KERNEL_MM_OFFSET");
-    if (val)
-	mm_offset = (ADDR)strtol(val,NULL,0);
-    val = (char *)g_hash_table_lookup(target->config,"OS_KERNEL_MM_PGD_OFFSET");
-    if (val)
-	pgd_offset = (ADDR)strtol(val,NULL,0);
-
-    symbol_file = (char *)g_hash_table_lookup(target->config,
-					      "OS_KERNEL_SYSMAP_FILE");
-    if (!symbol_file)
-	symbol_file = "";
-
-#ifdef ENABLE_XENACCESS
-    xstate->xa_instance.init_task = init_task_addr;
-    xstate->xa_instance.page_offset = 0;
-    xstate->xa_instance.os.linux_instance.tasks_offset = tasks_offset;
-    xstate->xa_instance.os.linux_instance.pid_offset = pid_offset;
-    xstate->xa_instance.os.linux_instance.mm_offset = mm_offset;
-    xstate->xa_instance.os.linux_instance.pgd_offset = pgd_offset;
-    xstate->xa_instance.kpgd = pgd_addr;
-#endif
-#ifdef ENABLE_LIBVMI
-    /*
-     * Offsets are:
-     *   linux_tasks: offset of "tasks" in task_struct
-     *   linux_mm:    offset of "mm" in task_struct
-     *   linux_pid:   offset of "pid" in task_struct
-     *   linux_pgd:   offset of "pgd" in mm_struct
-     */
-#define LIBVMI_CONFIG_TEMPLATE "{ostype=\"Linux\";" \
-	" sysmap=\"%s\"; linux_tasks=0x%"PRIxOFFSET"; linux_mm=0x%"PRIxOFFSET";" \
-	" linux_pid=0x%"PRIxOFFSET"; linux_pgd=0x%"PRIxOFFSET";" \
-	" }"
-#define LIBVMI_CONFIG_TEMPLATE_HVM "{ ostype=\"Linux\"; sysmap=\"%s\"; }"
-
-    if (0 && xstate->hvm) {
-	size = strlen(LIBVMI_CONFIG_TEMPLATE_HVM) + strlen(symbol_file) + 1;
-	tmp = malloc(size);
-	snprintf(tmp,size,LIBVMI_CONFIG_TEMPLATE_HVM,symbol_file);
-    }
-    else {
-	size = strlen(LIBVMI_CONFIG_TEMPLATE) + strlen(symbol_file) + 4 * 16 + 1;
-	tmp = malloc(size);
-	snprintf(tmp,size,LIBVMI_CONFIG_TEMPLATE,
-		 symbol_file,tasks_offset,mm_offset,pid_offset,pgd_offset);
-    }
-
-    if (vmi_init_complete(&xstate->vmi_instance, tmp) == VMI_FAILURE) {
-	verror("failed to complete init of vmi instance for dom %d (config was '%s')\n",
-	       xstate->id,tmp);
-	vmi_destroy(xstate->vmi_instance);
-	free(tmp);
-	tmp = NULL;
+    if (xstate->memops && xstate->memops->attach) {
+	if (xstate->memops->attach(target)) {
+	    verror("could not attach memops!\n");
 	return -1;
     }
-
-    /* XXX this is in the vmi_instance, but they don't expose it! */
-    xstate->vmi_page_size = XC_PAGE_SIZE;
-#endif
+    }
 
     if (target->evloop && xstate->evloop_fd < 0) {
 	xen_vm_attach_evloop(target,target->evloop);
@@ -2428,6 +2392,13 @@ static int xen_vm_detach(struct target *target) {
 
     if (target->evloop && xstate->evloop_fd > -1)
 	xen_vm_detach_evloop(target);
+
+    if (xstate->memops->fini) {
+	if (xstate->memops->fini(target)) {
+	    verror("failed to fini memops; continuing anyway!\n");
+	    return 0;
+	}
+    }
 
     if (xstate->live_shinfo)
 	munmap(xstate->live_shinfo,__PAGE_SIZE);
@@ -2867,6 +2838,13 @@ static int xen_vm_pause(struct target *target,int nowait) {
     else if (xc_domain_pause(xc_handle,xstate->id)) {
 	verror("could not pause dom %d!\n",xstate->id);
 	return -1;
+    }
+
+    /*
+     * Give the memops a chance to handle pause.
+     */
+    if (xstate->memops && xstate->memops->handle_pause) {
+	xstate->memops->handle_pause(target);
     }
 
     target_set_status(target,TSTATUS_PAUSED);
@@ -3314,7 +3292,6 @@ static int xen_vm_flush_all_threads(struct target *target) {
 
 static int __value_get_append_tid(struct target *target,struct value *value,
 				  void *data) {
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct array_list *list = (struct array_list *)data;
     struct value *v;
 
@@ -3563,18 +3540,6 @@ static target_status_t xen_vm_handle_exception(struct target *target,
     int rc;
     target_status_t tstatus;
 
-#ifdef ENABLE_XENACCESS
-    /* From previous */
-    xa_destroy_cache(&xstate->xa_instance);
-    xa_destroy_pid_cache(&xstate->xa_instance);
-#endif
-#ifdef ENABLE_LIBVMI
-    /* XXX is this right? */
-    vmi_v2pcache_flush(xstate->vmi_instance);
-    vmi_symcache_flush(xstate->vmi_instance);
-    vmi_pidcache_flush(xstate->vmi_instance);
-#endif
-
     /* Reload our dominfo */
     xstate->dominfo_valid = 0;
     if (xen_vm_load_dominfo(target)) {
@@ -3635,6 +3600,13 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 	 * Give the personality a chance to update its state.
 	 */
 	target_personality_handle_exception(target);
+
+	/* 
+	 * Give the memops a chance to update.
+	 */
+	if (xstate->memops && xstate->memops->handle_exception_ours) {
+	    xstate->memops->handle_exception_ours(target);
+	}
 
 	/* 
 	 * Reload the current thread.  We don't force it because we
@@ -4518,12 +4490,12 @@ static target_status_t xen_vm_poll(struct target *target,struct timeval *tv,
 static unsigned char *xen_vm_read(struct target *target,ADDR addr,
 				  unsigned long target_length,
 				  unsigned char *buf) {
-    return xen_vm_read_pid(target,0,addr,target_length,buf);
+    return xen_vm_read_pid(target,TID_GLOBAL,addr,target_length,buf);
 }
 
 static unsigned long xen_vm_write(struct target *target,ADDR addr,
 				  unsigned long length,unsigned char *buf) {
-    return xen_vm_write_pid(target,0,addr,length,buf);
+    return xen_vm_write_pid(target,TID_GLOBAL,addr,length,buf);
 }
 
 /*
@@ -4536,8 +4508,13 @@ static unsigned long xen_vm_write(struct target *target,ADDR addr,
  * physical address, sometimes, it seems.
  */
 static int __xen_vm_pgd(struct target *target,tid_t tid,uint64_t *pgd) {
+    struct xen_vm_state *xstate;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
+    REGVAL cr0 = 0,cr4 = 0,msr_efer = 0,cpuid_edx = 0;
+    REG reg;
+
+    xstate = (struct xen_vm_state *)target->state;
 
     if (tid == TID_GLOBAL) {
 	tthread = __xen_vm_load_current_thread(target,0,1);
@@ -4554,6 +4531,49 @@ static int __xen_vm_pgd(struct target *target,tid_t tid,uint64_t *pgd) {
 	else {
 	    *pgd = xtstate->context.ctrlreg[3] & ~(__PAGE_SIZE - 1);
 	}
+
+	/*
+	 * XXX NB: Also load the current paging flags!  This seems to be
+	 * the right place to do it... realistically, the flags are not
+	 * going to change much except during boot... or in the future
+	 * where there are nested HVMs!  I suppose, in the future, we'll
+	 * have to have these set on a per-thread basis...
+	 *
+	 * (Pass cpuid_edx=REGVALMAX for now to make sure the NOPSE*
+	 * bits don't get set -- until we actually bother to find the
+	 * cpuid info.)
+	 */
+	cr0 = xtstate->context.ctrlreg[0];
+	cr4 = xtstate->context.ctrlreg[4];
+	if (xstate->hvm && xstate->hvm_cpu)
+	    msr_efer = xstate->hvm_cpu->msr_efer;
+	cpuid_edx = ADDRMAX;
+
+	if (target_arch_x86_v2p_get_flags(target,cr0,cr4,msr_efer,
+					  cpuid_edx,&xstate->v2p_flags)) {
+	    if (target->arch->type == ARCH_X86_64) {
+		verror("could not determine v2p_flags!  pgd walks might fail;"
+		       " assuming 64-bit long mode and paging!\n");
+		xstate->v2p_flags = ARCH_X86_V2P_LMA;
+	    }
+	    else {
+		verror("could not determine v2p_flags!  pgd walks might fail;"
+		       " assuming 32-bit mode and PAE (and auto-PSE)!\n");
+		xstate->v2p_flags = ARCH_X86_V2P_PAE;
+	    }
+	}
+
+	if (vdebug_is_on(8,LA_TARGET,LF_XV)) {
+	    char buf[256];
+	    buf[0] = '\0';
+	    target_arch_x86_v2p_flags_snprintf(target,xstate->v2p_flags,
+					       buf,sizeof(buf));
+	    vdebug(8,LA_TARGET,LF_TARGET,"v2p_flags = %s\n",buf);
+	}
+
+	/* Also quickly set the V2P_PV flag if this domain is paravirt. */
+	if (!xstate->hvm)
+	    xstate->v2p_flags |= ARCH_X86_V2P_PV;
     }
     else {
 	tthread = xen_vm_load_thread(target,tid,0);
@@ -4596,8 +4616,6 @@ static int xen_vm_addr_v2p(struct target *target,tid_t tid,
 			   ADDR vaddr,ADDR *paddr) {
     struct xen_vm_state *xstate;
     uint64_t pgd = 0;
-    uint64_t tvaddr = 0;
-    uint64_t tpaddr = 0;
 
     xstate = (struct xen_vm_state *)target->state;
 
@@ -4606,468 +4624,81 @@ static int xen_vm_addr_v2p(struct target *target,tid_t tid,
 	return -1;
     }
 
-    /*
-     * Strip the offset bits to improve libvmi/xenaccess cache perf.
-     */
-    tvaddr = vaddr & ~(__PAGE_SIZE - 1);
-
-#ifdef ENABLE_LIBVMI
-    tpaddr = vmi_pagetable_lookup(xstate->vmi_instance,pgd,tvaddr);
-#endif
-#ifdef ENABLE_XENACCESS
-#if __WORDSIZE == 64
-    verror("no XenAccess support for 64-bit host!\n");
-    errno = ENOTSUP;
-    return -1;
-#else
-    tpaddr = xa_pagetable_lookup(&xstate->xa_instance,pgd,tvaddr,0);
-#endif
-#endif
-
-    if (tpaddr == 0) {
-	verror("could not lookup vaddr 0x%"PRIxADDR" in tid %"PRIiTID"!\n",
-	       vaddr,tid);
+    if (!xstate->memops || !xstate->memops->addr_v2p) {
+	errno = EINVAL;
 	return -1;
     }
 
-    *paddr = tpaddr | (vaddr & (__PAGE_SIZE - 1));
-
-    vdebug(12,LA_TARGET,LF_XV,
-	   "tid %"PRIiTID" vaddr 0x%"PRIxADDR" -> paddr 0x%"PRIxADDR"\n",
-	   tid,vaddr,*paddr);
-
-    return 0;
+    return xstate->memops->addr_v2p(target,tid,pgd,vaddr,paddr);
 }
 
 static unsigned char *xen_vm_read_phys(struct target *target,ADDR paddr,
 				       unsigned long length,unsigned char *buf) {
     struct xen_vm_state *xstate;
-    unsigned char *retval = NULL;
-#ifdef ENABLE_XENACCESS
-    unsigned long npages;
-    unsigned long page_offset;
-    unsigned long i;
-    unsigned long cur;
-    unsigned char *mmap;
-    unsigned long rc;
-    uint32_t offset;
-#endif
 
     xstate = (struct xen_vm_state *)target->state;
 
-    if (!buf)
-	retval = (unsigned char *)malloc(length+1);
-    else 
-	retval = buf;
-
-#ifdef ENABLE_XENACCESS
-    page_offset = paddr & (__PAGE_SIZE - 1);
-    npages = (page_offset + length) / __PAGE_SIZE;
-    if ((page_offset + length) % __PAGE_SIZE)
-	++npages;
-
-    /* Have to mmap them one by one. */
-    cur = paddr & ~(__PAGE_SIZE - 1);
-    rc = 0;
-    for (i = 0; i < npages; ++i) {
-	mmap = xa_access_pa(&xstate->xa_instance,cur,&offset,PROT_READ);
-	if (!mmap) {
-	    verror("failed to mmap paddr 0x%lx (for write to"
-		   " 0x%"PRIxADDR"): %s!\n",
-		   cur,paddr,strerror(errno));
-	    goto errout;
-	}
-	if (i == 0) {
-	    memcpy(retval + rc,mmap + page_offset,__PAGE_SIZE - page_offset);
-	    rc = __PAGE_SIZE - page_offset;
-	}
-	else if (i == (npages - 1)) {
-	    memcpy(retval + rc,mmap,(length - rc));
-	    rc += length - rc;
-	}
-	else {
-	    memcpy(retval + rc,mmap,__PAGE_SIZE);
-	    rc += __PAGE_SIZE;
-	}
-	munmap(mmap,__PAGE_SIZE);
-	cur += __PAGE_SIZE;
+    if (!xstate->memops || !xstate->memops->read_phys) {
+	errno = EINVAL;
+	return NULL;
     }
-#endif
-#ifdef ENABLE_LIBVMI
-    if (vmi_read_pa(xstate->vmi_instance,paddr,retval,length) != length) {
-	verror("could not read %lu bytes at paddr 0x%"PRIxADDR": %s!\n",
-	       length,paddr,strerror(errno));
-	goto errout;
-    }
-#endif
 
-    return retval;
-
- errout:
-    if (!buf && retval)
-	free(retval);
-    if (!errno)
-	errno = EFAULT;
-    return NULL;
+    return xstate->memops->read_phys(target,paddr,length,buf);
 }
 
 static unsigned long xen_vm_write_phys(struct target *target,ADDR paddr,
 				       unsigned long length,unsigned char *buf) {
     struct xen_vm_state *xstate;
-#ifdef ENABLE_XENACCESS
-    unsigned long npages;
-    unsigned long page_offset;
-    unsigned long i;
-    unsigned long cur;
-    unsigned char *mmap;
-    unsigned long rc;
-    uint32_t offset;
-#endif
 
     xstate = (struct xen_vm_state *)target->state;
 
-#ifdef ENABLE_XENACCESS
-    page_offset = paddr & (__PAGE_SIZE - 1);
-    npages = (page_offset + length) / __PAGE_SIZE;
-    if ((page_offset + length) % __PAGE_SIZE)
-	++npages;
-
-    /* Have to mmap them one by one. */
-    cur = paddr & ~(__PAGE_SIZE - 1);
-    rc = 0;
-    for (i = 0; i < npages; ++i) {
-	mmap = xa_access_pa(&xstate->xa_instance,cur,&offset,PROT_READ);
-	if (!mmap) {
-	    verror("failed to mmap paddr 0x%lx (for write to"
-		   " 0x%"PRIxADDR"): %s!\n",
-		   cur,paddr,strerror(errno));
-	    goto errout;
-	}
-	if (i == 0) {
-	    memcpy(mmap + page_offset,buf + rc,__PAGE_SIZE - page_offset);
-	    rc = __PAGE_SIZE - page_offset;
-	}
-	else if (i == (npages - 1)) {
-	    memcpy(mmap,buf + rc,(length - rc));
-	    rc += length - rc;
-	}
-	else {
-	    memcpy(mmap,buf + rc,__PAGE_SIZE);
-	    rc += __PAGE_SIZE;
-	}
-	munmap(mmap,__PAGE_SIZE);
-	cur += __PAGE_SIZE;
-    }
-#endif
-#ifdef ENABLE_LIBVMI
-    if (vmi_write_pa(xstate->vmi_instance,paddr,buf,length) != length) {
-	verror("could not write %lu bytes at paddr 0x%"PRIxADDR": %s!\n",
-	       length,paddr,strerror(errno));
-	goto errout;
-    }
-#endif
-
-    return length;
-
- errout:
-    if (!errno)
-	errno = EFAULT;
+    if (!xstate->memops || !xstate->memops->read_phys) {
+	errno = EINVAL;
     return 0;
+	}
+
+    return xstate->memops->write_phys(target,paddr,length,buf);
 }
 
-#ifdef ENABLE_XENACCESS
-static unsigned char *mmap_pages(xa_instance_t *xa_instance,ADDR addr, 
-				 unsigned long size,uint32_t *offset,
-				 int *npages,int prot,int pid) {
-    unsigned char *pages;
-    unsigned long page_size, page_offset;
-    char *dstr = "small";
-
-    page_size = xa_instance->page_size;
-    page_offset = addr & (page_size - 1);
-
-    if (size > 0 && size <= (page_size - page_offset)) {
-        /* let xenaccess use its memory cache for small size */
-        pages = xa_access_user_va(xa_instance,addr,offset,pid,prot);
-	if (!pages) {
-	    if (!pid)
-		return NULL;
-
-	    pages = xa_access_user_va(xa_instance,addr,offset,0,prot);
-	    if (!pages)
-		return NULL;
-	}
-	*npages = 1;
-    }
-    else {
-	dstr = "large";
-        /* xenaccess can't map multiple pages properly, use our own function */
-        pages = xa_access_user_va_range(xa_instance,addr,size,offset,pid,prot);
-
-	if (!pages) { // && pid) {
-	    //return NULL;
-	    if (!pid)
-		return NULL;
-
-	    /* try kernel */
-	    pages = xa_access_user_va_range(xa_instance,addr,size,offset,0,prot);
-	    if (!pages) 
-		return NULL;
-	}
-
-	/*
-	 * Compute how many pages were mapped.
-	 * *offset is the offset within the initial page mapped.
-	 * Number of pages is thus:
-	 *   round((*offset+size), page_size)
-	 */
-	*npages = (*offset + size) / page_size;
-	if ((*offset + size) % page_size)
-	    (*npages)++;
-    }
-
-    vdebug(9,LA_TARGET,LF_XV,"%ld bytes at %lx mapped (%s)\n",size,addr,dstr);
-
-    return pages; /* munmap it later */
-}
-
-/*
- * Our xen read and write functions are a little special.  First,
- * xenaccess has the ability to read/write using the current cr3
- * contents as the pgdir location, or it can use a different pgdir
- * (i.e., for a thread that is not running).  
-
- */
-
-unsigned char *xen_vm_read_pid(struct target *target,int pid,ADDR addr,
-			       unsigned long target_length,unsigned char *buf) {
-    unsigned char *pages;
-    unsigned int offset = 0;
-    unsigned long length = target_length, size = 0;
-    unsigned long page_size;
-    unsigned char *retval = NULL;
-    unsigned int page_offset;
-    int no_pages;
-    struct xen_vm_state *xstate;
-
-    xstate = (struct xen_vm_state *)(target->state);
-
-    // XXX: need to check, if pid > 0, if we can actually read it --
-    // i.e., do we have the necessary task_struct offsets for xenaccess,
-    // and is it in mem...
-
-    page_size = xstate->xa_instance.page_size;
-    page_offset = addr & (page_size - 1);
-
-    vdebug(16,LA_TARGET,LF_XV,
-	   "read dom %d: addr=0x%"PRIxADDR" offset=%d len=%d pid=%d\n",
-	   xstate->id,addr,page_offset,target_length,pid);
-
-    /* if we know what length we need, just grab it */
-    if (length > 0) {
-	pages = (unsigned char *)mmap_pages(&xstate->xa_instance,addr,
-					    length,&offset,&no_pages,
-					    PROT_READ,pid);
-	if (!pages)
-	    return NULL;
-
-	assert(offset == page_offset);
-	vdebug(9,LA_TARGET,LF_XV,
-	       "read dom %d: addr=0x%"PRIxADDR" offset=%d pid=%d len=%d mapped pages=%d\n",
-	       xstate->id,addr,page_offset,pid,length,no_pages);
-    }
-    else {
-	/* increase the mapping size by this much if the string is longer 
-	   than we expect at first attempt. */
-	size = (page_size - page_offset);
-
-	while (1) {
-	    if (1 || size > page_size) 
-		vdebug(16,LA_TARGET,LF_XV,
-		       "increasing size to %d (dom=%d,addr=%"PRIxADDR",pid=%d)\n",
-		       size,xstate->id,addr,pid);
-	    pages = (unsigned char *)mmap_pages(&xstate->xa_instance,addr,size,
-						&offset,&no_pages,
-						PROT_READ,pid);
-	    if (!pages)
-		return NULL;
-
-	    length = strnlen((const char *)(pages + offset), size);
-	    if (length < size) {
-		vdebug(9,LA_TARGET,LF_XV,"got string of length %d, mapped %d pages\n",
-		       length,no_pages);
-		break;
-	    }
-	    if (munmap(pages,no_pages * page_size))
-		vwarn("munmap of %p failed\n",pages);
-	    size += page_size;
-	}
-    }
-
-    if (!buf)
-	retval = (unsigned char *)malloc(length+1);
-    else 
-	retval = buf;
-    if (retval) {
-	memcpy(retval,pages + offset,length);
-	if (target_length == 0) {
-	    retval[length] = '\0';
-	}
-    }
-
-    if (munmap(pages,no_pages * page_size))
-	vwarn("munmap of %p failed\n",pages);
-    
-    return retval;
-}
-
-unsigned long xen_vm_write_pid(struct target *target,int pid,ADDR addr,
+unsigned char *xen_vm_read_pid(struct target *target,tid_t tid,ADDR vaddr,
 			       unsigned long length,unsigned char *buf) {
-    struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
-    struct memrange *range = NULL;
-    unsigned char *pages;
-    unsigned int offset = 0;
-    unsigned long page_size;
-    unsigned int page_offset;
-    int no_pages;
+    struct xen_vm_state *xstate;
+    uint64_t pgd = 0;
 
-    xstate = (struct xen_vm_state *)(target->state);
+    xstate = (struct xen_vm_state *)target->state;
 
-    page_size = xstate->xa_instance.page_size;
-    page_offset = addr & (page_size - 1);
-
-    vdebug(16,LA_TARGET,LF_XV,
-	   "write dom %d: addr=0x%"PRIxADDR" offset=%d len=%d pid=%d\n",
-	   xstate->id,addr,page_offset,length,pid);
-
-    target_find_memory_real(target,addr,NULL,NULL,&range);
-
-    /*
-     * This is mostly a stub for later, when we might actually check
-     * bounds of writes.
-     */
-    if (!range || !(range->prot_flags & PROT_WRITE)) {
-	errno = EFAULT;
+    if (!xstate->memops || !xstate->memops->read_tid) {
+	errno = EINVAL;
 	return 0;
     }
 
-    /* Map the pages we have to write to. */
-    pages = (unsigned char *)mmap_pages(&xstate->xa_instance,addr,
-					length,&offset,&no_pages,
-					PROT_WRITE,pid);
-    if (!pages) {
-	errno = EFAULT;
+    if (__xen_vm_pgd(target,tid,&pgd)) {
+	verror("could not read pgd for tid %"PRIiTID"!\n",tid);
+		return NULL;
+    }
+
+    return xstate->memops->read_tid(target,tid,pgd,vaddr,length,buf);
+}
+
+unsigned long xen_vm_write_pid(struct target *target,tid_t tid,ADDR vaddr,
+			       unsigned long length,unsigned char *buf) {
+    struct xen_vm_state *xstate;
+    uint64_t pgd = 0;
+
+    xstate = (struct xen_vm_state *)target->state;
+
+    if (!xstate->memops || !xstate->memops->write_tid) {
+	errno = EINVAL;
 	return 0;
     }
 
-    assert(offset == page_offset);
-    vdebug(9,LA_TARGET,LF_XV,
-	   "write dom %d: addr=0x%"PRIxADDR" offset=%d pid=%d len=%d mapped pages=%d\n",
-	   xstate->id,addr,page_offset,pid,length,no_pages);
+    if (__xen_vm_pgd(target,tid,&pgd)) {
+	verror("could not read pgd for tid %"PRIiTID"!\n",tid);
+	return 0;
+    }
 
-    memcpy(pages + offset,buf,length);
-
-    if (munmap(pages,no_pages * page_size))
-	vwarn("munmap of %p failed\n",pages);
-
-    return length;
+    return xstate->memops->write_tid(target,tid,pgd,vaddr,length,buf);
 }
-#endif
-
-#ifdef ENABLE_LIBVMI
-/*
- * Reads a block of memory from the target.  If @buf is non-NULL, we
- * assume it is at least @length bytes long; the result is placed into
- * @buf and @buf is returned.  If @buf is NULL, we allocate a buffer
- * large enough to hold the result (@length if @length >0; if @length is
- * 0 we attempt to read a string at that address; we stop when we hit a
- * NULL byte).
- *
- * On error, returns NULL, and sets errno.
- */
-unsigned char *xen_vm_read_pid(struct target *target, int pid, ADDR addr,
-				  unsigned long target_length,
-				  unsigned char *buf)
-{
-    struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
-    vmi_instance_t vmi = xstate->vmi_instance;
-    int alloced = 0;
-    size_t cc;
-    struct xen_vm_spec *xspec = \
-	(struct xen_vm_spec *)target->spec->backend_spec;
-
-    if (xspec->clear_libvmi_caches_each_time) {
-	vmi_v2pcache_flush(vmi);
-	vmi_pidcache_flush(vmi);
-    }
-
-    vdebug(16,LA_TARGET,LF_XV,
-	   "read dom %d: addr=0x%"PRIxADDR" len=%d pid=%d\n",
-	   xstate->id,addr,target_length,pid);
-
-    /* if length == 0, we are copying in a string. */
-    if (target_length == 0)
-	return (unsigned char *)vmi_read_str_va(vmi, (addr_t)addr, pid);
-
-    /* allocate buffer if necessary */
-    if (!buf) {
-	buf = malloc(target_length + 1);
-	alloced = 1;
-    }
-
-    /* read the data */
-    if (buf) {
-	cc = vmi_read_va(vmi, (addr_t)addr, pid, buf, target_length);
-
-	/* there is no provision for a partial read, assume an error */
-	if ((unsigned long)cc != target_length) {
-	    if (cc)
-		verror("vmi_read_va returns partial data (%lu of %lu)\n",
-		       (unsigned long)cc, target_length);
-	    else 
-		verror("vmi_read_va returns no data (%lu of %lu)\n",
-		       (unsigned long)cc, target_length);
-	    if (alloced)
-		free(buf);
-	    return NULL;
-	}
-	else {
-	    vdebug(16,LA_TARGET,LF_XV,
-		   "read dom %d: addr=0x%"PRIxADDR" len=%d pid=%d SUCCESS\n",
-		   xstate->id,addr,target_length,pid);
-	}
-    }
-    else
-	verror("could not malloc buf\n");
-
-    return buf;
-}
-
-/*
- * Writes @length bytes from @buf to @addr.  Returns the number of bytes
- * written (and sets errno nonzero if there is an error).  Successful if
- * @return == @length.
- */
-unsigned long xen_vm_write_pid(struct target *target, int pid, ADDR addr,
-			   unsigned long length, unsigned char *buf)
-{
-    struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
-    struct xen_vm_spec *xspec = \
-	(struct xen_vm_spec *)target->spec->backend_spec;
-
-    if (xspec->clear_libvmi_caches_each_time) {
-	vmi_v2pcache_flush(xstate->vmi_instance);
-	vmi_pidcache_flush(xstate->vmi_instance);
-    }
-
-    vdebug(16,LA_TARGET,LF_XV,
-	   "write dom %d: addr=0x%"PRIxADDR" len=%d pid=%d\n",
-	   xstate->id,addr,length,pid);
-
-    return (unsigned long)vmi_write_va(xstate->vmi_instance, (addr_t)addr,
-				       pid, buf, (size_t)length);
-}
-#endif
 
 /* Register mapping.
  *

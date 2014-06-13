@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -21,6 +21,7 @@
 #include "glib_wrapper.h"
 #include "target_api.h"
 #include "target.h"
+#include "memcache.h"
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
 
@@ -32,11 +33,11 @@ int value_set_addr(struct value *value,ADDR addr) {
     return 0;
 }
 
-int value_set_mmap(struct value *value,ADDR addr,struct mmap_entry *mmap,
+int value_set_mmap(struct value *value,ADDR addr,struct memcache_mmap_entry *mme,
 		   char *offset_ptr) {
+    value->ismmap = 1;
     value->buf = offset_ptr;
     value->res.addr = addr;
-    value->mmap = mmap;
     value->region_stamp = value->range->region->stamp;
     value->res_ip = target_read_creg(value->thread->target,value->thread->tid,
 				     CREG_IP);
@@ -44,6 +45,7 @@ int value_set_mmap(struct value *value,ADDR addr,struct mmap_entry *mmap,
 }
 
 int value_set_reg(struct value *value,REG reg) {
+    value->isreg = 1;
     value->res.reg = reg;
     value->region_stamp = 0;
     value->res_ip = target_read_creg(value->thread->target,value->thread->tid,
@@ -210,7 +212,6 @@ struct value *value_clone(struct value *in) {
     out->thread = in->thread;
     out->range = in->range;
     out->region_stamp = in->region_stamp;
-    out->mmap = in->mmap;
     out->ismmap = in->ismmap;
     out->isreg = in->isreg;
     out->isstring = in->isstring;
@@ -229,13 +230,9 @@ void value_free(struct value *value) {
     REFCNT trefcnt;
 
     if (value->ismmap) {
-	if (value->range)
-	    target_release_mmap_entry(value->range->region->space->target,
-				      value->mmap);
-	else {
-	    verror("value for symbol %s was mmap'd, but has no range!\n",
-		   value->lsymbol->symbol->name);
-	}
+	/*
+	 * XXX: if we ever link mmaps and values, handle refcnt stuff here.
+	 */
     }
     else if (!value->parent_value)
 	free(value->buf);

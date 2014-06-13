@@ -57,6 +57,9 @@ TargetXenSpecT =
     element noHVMSetContext { xsd:boolean }?,
     element noClearHWDbgReg { xsd:boolean }?,
     element noUseMultiplexer { xsd:boolean }?,
+    element clearMemCachesEachException { xsd:boolean }?,
+    element useXenAccess { xsd:boolean }?,
+    element useLibVMI { xsd:boolean }?,
     element dominfoTimeout { xsd:int }?
 
 TargetXenSpec = element targetXenSpec { TargetXenSpecT }

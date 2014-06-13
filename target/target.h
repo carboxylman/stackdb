@@ -29,6 +29,7 @@
 #include "config.h"
 #include "log.h"
 
+#include "memcache.h"
 #include "target_api.h"
 #include "dwdebug.h"
 #ifdef ENABLE_DISTORM
@@ -649,15 +650,6 @@ int target_bsymbol_resolve_bounds(struct target *target,
 				  struct bsymbol *bsymbol,ADDR base_addr,
 				  ADDR *start,ADDR *end,int *is_noncontiguous,
 				  ADDR *alt_start,ADDR *alt_end);
-/**
- ** Location loading functions.
- **/
-struct mmap_entry *location_mmap(struct target *target,
-				 struct memregion *region,
-				 struct location *location,
-				 load_flags_t flags,char **offset,
-				 struct array_list *symbol_chain,
-				 struct memrange **range_saveptr);
 
 /**
  ** Target name-value filters.  Eventually, this is intended to support
@@ -701,7 +693,7 @@ struct value *value_create_noalloc(struct target_thread *thread,
 void value_set_strlen(struct value *value,int len);
 
 int value_set_addr(struct value *value,ADDR addr);
-int value_set_mmap(struct value *value,ADDR addr,struct mmap_entry *mmap,
+int value_set_mmap(struct value *value,ADDR addr,struct memcache_mmap_entry *mme,
 		   char *offset_ptr);
 int value_set_reg(struct value *value,REG reg);
 int value_set_child(struct value *value,struct value *parent_value,ADDR addr);
@@ -905,16 +897,6 @@ struct bsymbol {
 
     REFCNT refcnt;
     REFCNT refcntw;
-};
-
-/*
- * An mmap entry records a mapping of target memory we made while
- * loading a value.
- */
-struct mmap_entry {
-    char *base_address;
-    int pages;
-    int refcnt;
 };
 
 #endif

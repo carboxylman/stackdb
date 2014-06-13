@@ -1149,6 +1149,8 @@ int target_close(struct target *target) {
 	free(mmod);
     }
 
+    /* XXX: should we deal with memcache?  No, let backends do it. */
+
     vdebug(5,LA_TARGET,LF_TARGET,"detach target(%s)\n",target->name);
     if ((rc = target->ops->detach(target))) {
 	verror("detach target(%s) failed: %s\n",target->name,strerror(errno));

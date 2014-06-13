@@ -19,18 +19,6 @@
 #include "target.h"
 #include "dwdebug_priv.h"
 
-struct mmap_entry *location_mmap(struct target *target,
-				 struct memregion *region,
-				 struct location *location,
-				 load_flags_t flags,char **offset,
-				 struct array_list *symbol_chain,
-				 struct memrange **range_saveptr) {
-    struct mmap_entry *mme;
-
-    /* XXX: fill in later. */
-    return NULL;
-}
-
 /**
  ** The interface to the dwdebug library's lsymbol_resolve* and
  ** symbol_resolve* functions.

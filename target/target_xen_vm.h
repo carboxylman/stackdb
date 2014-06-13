@@ -19,19 +19,15 @@
 #ifndef __TARGET_XEN_VM_H__
 #define __TARGET_XEN_VM_H__
 
+#include "config.h"
 
 #include <xenctrl.h>
 #include <xen/xen.h>
 #ifdef __x86_64__
 #include <xen/hvm/save.h>
 #endif
-#ifdef ENABLE_XENACCESS
-#include <xenaccess/xenaccess.h>
-#endif
-#ifdef ENABLE_LIBVMI
-#include <libvmi/libvmi.h>
-#endif
 
+#include "target_arch_x86.h"
 #include "evloop.h"
 
 extern struct target_ops xen_vm_ops;
@@ -77,7 +73,9 @@ struct xen_vm_spec {
 
     unsigned int no_hw_debug_reg_clear:1,
 	         no_hvm_setcontext:1,
-	         clear_libvmi_caches_each_time:1,
+	         clear_mem_caches_each_exception:1,
+	         use_libvmi:1,
+	         use_xenaccess:1,
 	         no_use_multiplexer:1;
 };
 
@@ -124,6 +122,13 @@ struct xen_vm_state {
     vcpu_info_t vcpuinfo; /* Also part of loading dominfo. */
     int dominfo_valid;
 
+    /* The most recent set of paging flags. */
+    arch_x86_v2p_flags_t v2p_flags;
+
+    /* Which memops are we using? */
+    struct xen_vm_mem_ops *memops;
+    void *memops_priv;
+
 #ifdef __x86_64__
     uint8_t *hvm_context_buf;
     uint32_t hvm_context_bufsiz;
@@ -131,16 +136,6 @@ struct xen_vm_state {
 #endif
 
     int evloop_fd;
-
-#ifdef ENABLE_XENACCESS
-    /* XenAccess instance used to read/write domain's memory */
-    xa_instance_t xa_instance;
-#endif
-#ifdef ENABLE_LIBVMI
-    /* VMI instance used to read/write domain's memory */
-    vmi_instance_t vmi_instance;
-    int vmi_page_size;
-#endif
 };
 
 struct target *xen_vm_instantiate(struct target_spec *spec,
@@ -153,5 +148,27 @@ unsigned char *xen_vm_read_pid(struct target *target,int pid,ADDR addr,
 			       unsigned long target_length,unsigned char *buf);
 unsigned long xen_vm_write_pid(struct target *target,int pid,ADDR addr,
 			       unsigned long length,unsigned char *buf);
+
+/*
+ * We support several different memory backends for Xen VMs.
+ */
+struct xen_vm_mem_ops {
+    int (*init)(struct target *target);
+    int (*attach)(struct target *target);
+    int (*handle_exception_any)(struct target *target);
+    int (*handle_exception_ours)(struct target *target);
+    int (*handle_pause)(struct target *target);
+    int (*addr_v2p)(struct target *target,tid_t tid,ADDR pgd,
+		    ADDR vaddr,ADDR *paddr);
+    unsigned char *(*read_phys)(struct target *target,ADDR paddr,
+				unsigned long length,unsigned char *buf);
+    unsigned long (*write_phys)(struct target *target,ADDR paddr,
+				unsigned long length,unsigned char *buf);
+    unsigned char *(*read_tid)(struct target *target,tid_t tid,ADDR pgd,ADDR addr,
+			       unsigned long target_length,unsigned char *buf);
+    unsigned long (*write_tid)(struct target *target,tid_t tid,ADDR pgd,ADDR addr,
+			       unsigned long length,unsigned char *buf);
+    int (*fini)(struct target *target);
+};
 
 #endif /* __TARGET_XEN_VM_H__ */

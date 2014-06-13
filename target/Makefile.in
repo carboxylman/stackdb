@@ -31,15 +31,11 @@ CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
 	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug 
 CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
 ifeq ($(ENABLE_XENACCESS),"1")
-	CFLAGS += -DENABLE_XENACCESS $(XENACCESS_FLAGS) -DENABLE_XENSUPPORT
-	CFLAGS += -I$(XENACCESS_INC)
-	PCCFLAGS += -DENABLE_XENACCESS $(XENACCESS_FLAGS) -DENABLE_XENSUPPORT
-	PCCFLAGS += -I$(XENACCESS_INC)
+	CFLAGS += $(XENACCESS_FLAGS) -I$(XENACCESS_INC)
+	PCCFLAGS += $(XENACCESS_FLAGS) -I$(XENACCESS_INC)
 endif
 ifeq ($(ENABLE_LIBVMI),"1")
-	CFLAGS += -DENABLE_LIBVMI -DENABLE_XENSUPPORT
 	CFLAGS += -I$(LIBVMI)/include/libvmi
-	PCCFLAGS += -DENABLE_LIBVMI -DENABLE_XENSUPPORT
 	PCCFLAGS += -I$(LIBVMI)/include/libvmi
 endif
 ifeq ($(ENABLE_DISTORM),"1")
@@ -50,13 +46,17 @@ ifeq ($(ENABLE_DISTORM),"1")
 endif
 
 LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS) -ldl
+ifeq ($(ENABLE_XENSUPPORT),"1")
+	LDFLAGS += -lxenctrl -lxenstore -lc
+	PCLDFLAGS += -lxenctrl -lxenstore -lc
+endif
 ifeq ($(ENABLE_XENACCESS),"1")
-	LDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)
-	PCLDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)
+	LDFLAGS += -L$(XENACCESS_LIBDIR)
+	PCLDFLAGS += -L$(XENACCESS_LIBDIR)
 endif
 ifeq ($(ENABLE_LIBVMI),"1")
-	LDFLAGS += -lxenctrl -lxenstore -lc -L$(LIBVMI)/lib -lvmi
-	PCLDFLAGS += -lxenctrl -lxenstore -lc -L$(LIBVMI)/lib -lvmi
+	LDFLAGS += -L$(LIBVMI)/lib -lvmi
+	PCLDFLAGS += -L$(LIBVMI)/lib -lvmi
 endif
 ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
@@ -75,11 +75,18 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h $(TOP_SRCDIR)/dwdebug/dwdebug_priv.h 
 OBJECTS := target.lo target_api.lo target_generic.lo memory.lo location.lo \
 	symbol.lo value.lo probe.lo probe_lib.lo probe_value.lo probe_filter.lo \
 	target_nv_filter.lo \
-	target_os.lo target_process.lo target_os_linux_generic.lo
+	target_os.lo target_process.lo target_os_linux_generic.lo \
+	target_arch_x86.lo memcache.lo
 OBJECTS += target_linux_userproc.lo target_php.lo
 ifeq ($(ENABLE_XENSUPPORT),"1")
-	OBJECTS += target_xen_vm.lo target_xen_vm_util.lo \
+	OBJECTS += target_xen_vm.lo target_xen_vm_mem_builtin.lo \
 		target_xen_vm_process.lo
+endif
+ifeq ($(ENABLE_XENACCESS),"1")
+	OBJECTS += target_xen_vm_mem_xenaccess.lo
+endif
+ifeq ($(ENABLE_LIBVMI),"1")
+	OBJECTS += target_xen_vm_mem_libvmi.lo
 endif
 ifeq ($(ENABLE_DISTORM),"1")
 	OBJECTS += disasm.lo

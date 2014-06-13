@@ -18,6 +18,7 @@
 
 
 #include "target_os.h"
+#include "target_os_linux_generic.h"
 #include <unistd.h>
 
 /* Macros for caomputing the CPU LOAD */
@@ -301,7 +302,7 @@ int ps_gather(struct target *target, struct value * value, void * data) {
 	return 1;
     }
 
-    linux_list_for_each_entry(target, task_struct_bsymbol, listhead_bsymbol,
+    os_linux_list_for_each_entry(target, task_struct_bsymbol, listhead_bsymbol,
 					"children", 0, gather_child_info, NULL);
     
     */
@@ -357,7 +358,7 @@ int process_info() {
 	return 1;
     }
 
-    ret_val = linux_list_for_each_struct(target, init_task_bsymbol, "tasks",0,ps_gather, NULL);
+    ret_val = os_linux_list_for_each_struct(target, init_task_bsymbol, "tasks",0,ps_gather, NULL);
 
     return ret_val;
 
@@ -481,8 +482,8 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	mem_addr = v_addr(fd_value);
 	//fprintf(stdout,"INFO: mem_addr = 0x%"PRIxADDR"\n",mem_addr);
 
-	mem_addr = mem_addr + (target->ptrsize * i);
-	if(!target_read_addr(target, mem_addr, target->ptrsize, 
+	mem_addr = mem_addr + (target->arch->wordsize * i);
+	if(!target_read_addr(target, mem_addr, target->arch->wordsize, 
 			(unsigned char *)&file_addr)) {
 	    fprintf(stdout,"ERROR: target_read_addr failed.\n");
 	    exit(0);
@@ -731,7 +732,7 @@ int file_info() {
 	return 1;
     }
 
-    ret_val = linux_list_for_each_struct(target, init_task_bsymbol, "tasks", 0,
+    ret_val = os_linux_list_for_each_struct(target, init_task_bsymbol, "tasks", 0,
 	    gather_file_info, NULL);
     return ret_val;
 }
@@ -810,7 +811,7 @@ int module_info() {
 	    \t(name ");
     fclose(fp);
     */
-    ret_val =  linux_list_for_each_entry(target, module_bsymbol, listhead_bsymbol,
+    ret_val =  os_linux_list_for_each_entry(target, module_bsymbol, listhead_bsymbol,
 					    "list",0, gather_module_info, NULL);
     
     //fp = fopen(base_fact_file, "a+");
@@ -1148,7 +1149,7 @@ int process_cpu_utilization() {
 	return 1;
     }
 
-    ret_val = linux_list_for_each_struct(target, init_task_bsymbol, "tasks", 0,
+    ret_val = os_linux_list_for_each_struct(target, init_task_bsymbol, "tasks", 0,
 	    gather_cpu_utilization, NULL);
     return ret_val;
 }
@@ -1357,7 +1358,7 @@ int object_info() {
 	return 1;
     }
 
-    ret_val = linux_list_for_each_struct(target, init_task_bsymbol, "tasks", 0,
+    ret_val = os_linux_list_for_each_struct(target, init_task_bsymbol, "tasks", 0,
 	    gather_object_info, NULL);
     return ret_val;
 }
@@ -1628,7 +1629,7 @@ int commandline_info() {
 	fprintf(stdout,"ERROR: Could not lookup the init_task_symbol\n");
 	return 1;
     }
-    ret_val = linux_list_for_each_struct(target, init_task_bsymbol, "tasks", 0,
+    ret_val = os_linux_list_for_each_struct(target, init_task_bsymbol, "tasks", 0,
 	    gather_commandline_info, NULL);
     return ret_val;
 }

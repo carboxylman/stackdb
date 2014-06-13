@@ -102,6 +102,9 @@
       <xs:element minOccurs="0" ref="vmi1:noHVMSetContext"/>
       <xs:element minOccurs="0" ref="vmi1:noClearHWDbgReg"/>
       <xs:element minOccurs="0" ref="vmi1:noUseMultiplexer"/>
+      <xs:element minOccurs="0" ref="vmi1:clearMemCachesEachException"/>
+      <xs:element minOccurs="0" ref="vmi1:useXenAccess"/>
+      <xs:element minOccurs="0" ref="vmi1:useLibVMI"/>
       <xs:element minOccurs="0" ref="vmi1:dominfoTimeout"/>
     </xs:sequence>
   </xs:complexType>
@@ -112,6 +115,9 @@
   <xs:element name="noHVMSetContext" type="xs:boolean"/>
   <xs:element name="noClearHWDbgReg" type="xs:boolean"/>
   <xs:element name="noUseMultiplexer" type="xs:boolean"/>
+  <xs:element name="clearMemCachesEachException" type="xs:boolean"/>
+  <xs:element name="useXenAccess" type="xs:boolean"/>
+  <xs:element name="useLibVMI" type="xs:boolean"/>
   <xs:element name="dominfoTimeout" type="xs:int"/>
   <xs:element name="targetXenSpec" type="vmi1:TargetXenSpecT"/>
   <xs:complexType name="TargetPtraceSpecT">

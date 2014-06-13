@@ -358,7 +358,7 @@ extern char *POLL_STRINGS[];
 
 typedef enum {
     LOAD_FLAG_NONE = 0,
-    LOAD_FLAG_SHOULD_MMAP = 1,
+    LOAD_FLAG_NO_MMAP = 1,
     LOAD_FLAG_MUST_MMAP = 2,
     LOAD_FLAG_NO_CHECK_BOUNDS = 4,
     LOAD_FLAG_NO_CHECK_VISIBILITY = 8,
@@ -2269,10 +2269,13 @@ struct target {
     int action_id_counter;
 
     /*
-     * If we mmap any of the target's memory, this hashtable will have
-     * the map entry.
+     * If we cache any of the target's v2p mappings or mmap its memory,
+     * this is the struct the backends should initialize, populate, and
+     * use.  See memcache.h...  For now, backends interact with the
+     * memcache, and the target API does not.  Backends should control
+     * it for now.
      */
-    GHashTable *mmaps;
+    struct memcache *memcache;
 
     /* Cache of loaded code, by address range. */
     clrange_t code_ranges;
@@ -2759,9 +2762,6 @@ struct value {
 	    isreg:1,
 	    isstring:1,
 	    isconst:1;
-
-    /* If this value is mmap'd instead of alloc'd, store that too. */
-    struct mmap_entry *mmap;
 
     /*
      * The location of the value.
