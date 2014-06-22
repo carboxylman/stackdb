@@ -114,7 +114,7 @@
      (slot name (type STRING))
      (multislot command (type SYMBOL))) 
 
-    (deffacts base-facts
+(deffacts base-facts
      (known-processes "swapper/0" "init" "kthreadd" "ksoftirqd/0" "kworker/0:0" 
       "kworker/0:0H" "kworker/u:0" "kworker/u:0H" "migration/0" "rcu_bh"
       "rcu_sched" "watchdog/0" "cpuset" "khelper" "kdevtmpfs" "netns" "xenwatch"
@@ -126,11 +126,15 @@
       "atd" "mysqld" "ntpd" "getty" "flush-202:1" "apache2" "kworker/u:1" "login"
       "bash" "repair_submodul" "python" "perl" "httpd" "sh" "su" "helper")
      
-     ;(mandatory-process 
-     ; (name "apache2")
-     ; (command /usr/bin/sudo /etc/init.d/apache2 start HOME=/ TERM=linux /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)) 
+     (mandatory-process 
+	(name "apache2")
+	(command /usr/bin/sudo /etc/init.d/apache2 start HOME=/ TERM=linux /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)) 
 
-     (known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport" "lp" "repair_driver" "sled_object_module" "psaction_module" "close_file_module" "killsocket_module")
+     (mandatory-process 
+	(name "sshd")
+	(command /usr/bin/sudo /usr/sbin/sshd  HOME=/ TERM=linux /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)) 
+
+     (known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport" "lp" "repair_driver" "sled_object_module" "psaction_module" "close_file_module" "killsocket_module" "start_process_module" "sled_object_module")
      (process-with-udp "rpcbind" "ntpd" "mysqld" "apache2")                 
      (process-with-tcp  "mysqld"  "rpcbind" "sshd" "ntpd" "apache2") 
      (process-with-reg-files-opened "rpcbind" "rsyslogd" "ntpd" "cron" "atd" "mysqld" "udevd")
@@ -149,25 +153,83 @@
       "udevd" "rpcbind" "sshd" "upstart-socket-"  "cron"
       "atd" "ntpd" "getty" "flush-202:1" "login" "bash" "apache2" "kworker/u:1" "repair_submodul" "python")
 
-     ;	(known-objects
-     ;	    (name "bash")
-     ;	    (object-list  "bash"  "libnss_files-2.15.so"    
-     ;	    "libnss_nis-2.15.so"  "libnsl-2.15.so" 
-     ;	    "libnss_compat-2.15.so"  "locale-archive"  "libc-2.15.so"
-     ;	    "libdl-2.15.so" "libtinfo.so.5.9" "ld-2.15.so")) ;ld-2.15.so
-     (known-objects 
-      ( name "test")
-      ( object-list  "libc-2.15.so"  "ld-2.15.so"  ));test
-     
-     (known-objects
-      (name "apache2")
-      (object-list "libnss_files-2.15.so" "libnss_nis-2.15.so" "libnsl-2.15.so"  "libnss_compat-2.15.so" "mod_status.so"  "mod_setenvif.so"   "mod_reqtimeout.so"  "mod_negotiation.so" "mod_env.so" "mod_dir.so" "libz.so.1.2.3.4" "mod_deflate.so" "mod_autoindex.so" "mod_authz_user.so" "mod_authz_host.so" "mod_authz_groupfile.so" "mod_authz_default.so" "mod_authn_file.so"  "mod_auth_basic.so" "mod_alias.so"  "libdl-2.15.so" "libuuid.so.1.3.0"
-       "libexpat.so.1.5.2"   "libcrypt-2.15.so"  "libc-2.15.so"  "libpthread-2.15.so"  "libapr-1.so.0.4.6"   "libaprutil-1.so.0.3.12"   "libpcre.so.3.12.1"  "ld-2.15.so"  "dev/zero"  "ld-2.15.so" "libgcc_s.so.1" "mod_mime.so" "mod_cgid.so" "apache2" "libm-2.15.so" "libresolv-2.15.so" "libnss_dns-2.15.so"));
 
-   (known-objects
-    (name "httpd")
-    ( object-list  "httpd"  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libm-2.15.so"  "mod_rewrite.so"  "mod_alias.so"  "mod_userdir.so"  "mod_speling.so"  "mod_actions.so"  "mod_imagemap.so"  "mod_dir.so"  "mod_negotiation.so"  "mod_vhost_alias.so"  "mod_dav_fs.so"  "mod_cgi.so"  "mod_info.so"  "mod_asis.so"  "mod_autoindex.so"  "mod_status.so"  "mod_dav.so"  "mod_mime.so"  "mod_proxy_balancer.so"  "mod_proxy_ajp.so"  "mod_proxy_scgi.so"  "mod_proxy_http.so"  "mod_proxy_ftp.so"  "mod_proxy_connect.so"  "mod_proxy.so"  "mod_version.so"  "mod_setenvif.so"  "mod_unique_id.so"  "mod_usertrack.so"  "mod_ident.so"  "mod_headers.so"  "mod_expires.so"  "mod_cern_meta.so"  "mod_mime_magic.so"  "mod_env.so"  "mod_logio.so"  "mod_log_forensic.so"  "mod_log_config.so"  "libz.so.1.2.3.4"  "mod_deflate.so"  "mod_substitute.so"  "mod_filter.so"  "mod_include.so"  "mod_ext_filter.so"  "mod_reqtimeout.so"  "mod_dumpio.so"  "mod_dbd.so"  "mod_auth_digest.so"  "mod_auth_basic.so"  "mod_authz_default.so"  "mod_authz_owner.so"  "mod_authz_dbm.so"  "mod_authz_user.so"  "mod_authz_groupfile.so"  "mod_authz_host.so"  "mod_authn_default.so"  "mod_authn_dbd.so"  "mod_authn_anon.so"  "mod_authn_dbm.so"  "mod_authn_file.so"  "libdl-2.15.so"  "libcrypt-2.15.so"  "libexpat.so.0.5.0"  "libc-2.15.so"  "libpthread-2.15.so"  "libapr-1.so.0.4.5"  "libaprutil-1.so.0.4.1"  "ld-2.15.so"  "dev/zero"  "ld-2.15.so"  )); mod_uni_mem.so
-     
+    ( known-objects 
+    	( name "init")
+      	( object-list  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libc-2.15.so"  "librt-2.15.so"  "libpthread-2.15.so"  "libdbus-1.so.3.5.8"  "libnih-dbus.so.1.0.0"  "libnih.so.1.0.0"  "ld-2.15.so"  "init"  ))
+    
+    ( known-objects 
+    	( name "upstart-udev-br")
+      	( object-list  "librt-2.15.so"  "libc-2.15.so"  "libudev.so.0.13.0"  "libpthread-2.15.so"  "libdbus-1.so.3.5.8"  "libnih-dbus.so.1.0.0"  "libnih.so.1.0.0"  "ld-2.15.so"  "upstart-udev-bridge"  ))
+
+    ( known-objects 
+    	( name "udevd")
+      	( object-list  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libpthread-2.15.so"  "libdl-2.15.so"  "libc-2.15.so"  "librt-2.15.so"  "libselinux.so.1"  "ld-2.15.so"  "udevd"  ))
+
+    ( known-objects 
+    	( name "udevd")
+      	( object-list  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libpthread-2.15.so"  "libdl-2.15.so"  "libc-2.15.so"  "librt-2.15.so"  "libselinux.so.1"  "ld-2.15.so"  "udevd"  ))
+    
+    ( known-objects 
+    	( name "udevd")
+      	( object-list  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libpthread-2.15.so"  "libdl-2.15.so"  "libc-2.15.so"  "librt-2.15.so"  "libselinux.so.1"  "ld-2.15.so"  "udevd"  ))
+
+    ( known-objects 
+	( name "upstart-socket-")
+      	( object-list  "librt-2.15.so"  "libc-2.15.so"  "libpthread-2.15.so"  "libdbus-1.so.3.5.8"  "libnih-dbus.so.1.0.0"  "libnih.so.1.0.0"  "ld-2.15.so"  "upstart-socket-bridge"  ))
+
+    ( known-objects 
+    	( name "dbus-daemon")
+      	( object-list  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libdl-2.15.so"  "libc-2.15.so"  "librt-2.15.so"  "libpthread-2.15.so"  "libselinux.so.1"  "libexpat.so.1.5.2"  "ld-2.15.so"  "dbus-daemon"  ))
+
+    ( known-objects 
+    	( name "rpcbind")
+      	( object-list  "rpcbind"  "libnss_files-2.15.so"  "libdl-2.15.so"  "libgssglue.so.1.0.0"  "libnsl-2.15.so"  "libc-2.15.so"  "libpthread-2.15.so"  "libtirpc.so.1.0.10"  "libwrap.so.0.7.6"  "ld-2.15.so"  ))
+
+    ( known-objects 
+    	( name "rsyslogd")
+      	( object-list  "rsyslogd"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "imklog.so"  "imuxsock.so"  "libnss_files-2.15.so"  "lmnet.so"  "libc-2.15.so"  "librt-2.15.so"  "libdl-2.15.so"  "libpthread-2.15.so"  "libz.so.1.2.3.4"  "ld-2.15.so"  ))
+
+    ( known-objects 
+    	( name "cron")
+      	( object-list  "cron"  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libdl-2.15.so"  "libc-2.15.so"  "libselinux.so.1"  "libpam.so.0.83.0"  "ld-2.15.so"  ))
+    
+    ( known-objects 
+    	( name "atd")
+      	( object-list  "atd"  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libdl-2.15.so"  "libc-2.15.so"  "libpam.so.0.83.0"  "ld-2.15.so"  ))
+
+    ( known-objects 
+    	( name "mysqld")
+	( object-list  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnss_compat-2.15.so"  "libgcc_s.so.1"  "libnsl-2.15.so"  "libc-2.15.so"  "libm-2.15.so"  "libstdc++.so.6.0.16"  "libpthread-2.15.so"  "libdl-2.15.so"  "libcrypt-2.15.so"  "libwrap.so.0.7.6"  "librt-2.15.so"  "libz.so.1.2.3.4"  "ld-2.15.so"  "mysqld"  ))
+
+    ( known-objects 
+    	( name "login")
+      	( object-list  "login"  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnss_compat-2.15.so"  "pam_umask.so"  "pam_mail.so"  "pam_motd.so"  "libutil-2.15.so"  "pam_lastlog.so"  "pam_limits.so"  "pam_group.so"  "pam_permit.so"  "pam_deny.so"  "libcrypt-2.15.so"  "libnsl-2.15.so"  "pam_unix.so"  "pam_env.so"  "libselinux.so.1"  "pam_selinux.so"  "pam_nologin.so"  "pam_securetty.so"  "pam_faildelay.so"  "libdl-2.15.so"  "libc-2.15.so"  "libpam_misc.so.0.82.0"  "libpam.so.0.83.0"  "ld-2.15.so"  "libpam.so.0.83.0"))
+    
+    
+    ( known-objects 
+    	( name "bash")
+	( object-list  "bash"  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "locale-archive"  "libc-2.15.so"  "libdl-2.15.so"  "libtinfo.so.5.9"  "ld-2.15.so"  "gconv-modules.cache"  "ld-2.15.so" "libutil-2.15.so" ))
+
+    ( known-objects 
+    	( name "httpd")
+      	( object-list  "httpd"  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libm-2.15.so"  "mod_uni_mem.so"  "mod_rewrite.so"  "mod_alias.so"  "mod_userdir.so"  "mod_speling.so"  "mod_actions.so"  "mod_imagemap.so"  "mod_dir.so"  "mod_negotiation.so"  "mod_vhost_alias.so"  "mod_dav_fs.so"  "mod_cgi.so"  "mod_info.so"  "mod_asis.so"  "mod_autoindex.so"  "mod_status.so"  "mod_dav.so"  "mod_mime.so"  "mod_proxy_balancer.so"  "mod_proxy_ajp.so"  "mod_proxy_scgi.so"  "mod_proxy_http.so"  "mod_proxy_ftp.so"  "mod_proxy_connect.so"  "mod_proxy.so"  "mod_version.so"  "mod_setenvif.so"  "mod_unique_id.so"  "mod_usertrack.so"  "mod_ident.so"  "mod_headers.so"  "mod_expires.so"  "mod_cern_meta.so"  "mod_mime_magic.so"  "mod_env.so"  "mod_logio.so"  "mod_log_forensic.so"  "mod_log_config.so"  "libz.so.1.2.3.4"  "mod_deflate.so"  "mod_substitute.so"  "mod_filter.so"  "mod_include.so"  "mod_ext_filter.so"  "mod_reqtimeout.so"  "mod_dumpio.so"  "mod_dbd.so"  "mod_auth_digest.so"  "mod_auth_basic.so"  "mod_authz_default.so"  "mod_authz_owner.so"  "mod_authz_dbm.so"  "mod_authz_user.so"  "mod_authz_groupfile.so"  "mod_authz_host.so"  "mod_authn_default.so"  "mod_authn_dbd.so"  "mod_authn_anon.so"  "mod_authn_dbm.so"  "mod_authn_file.so"  "libdl-2.15.so"  "libcrypt-2.15.so"  "libexpat.so.0.5.0"  "libc-2.15.so"  "libpthread-2.15.so"  "libapr-1.so.0.4.5"  "libaprutil-1.so.0.4.1"  "ld-2.15.so"  "dev/zero"  "ld-2.15.so"  ))
+    
+    ( known-objects 
+    	( name "sshd")
+      	( object-list  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnss_compat-2.15.so"  "libresolv-2.15.so"  "libkeyutils.so.1.4"  "libkrb5support.so.0.1"  "libk5crypto.so.3.1"  "libdl-2.15.so"  "libnsl-2.15.so"  "libc-2.15.so"  "libcom_err.so.2.1"  "libkrb5.so.3.3"  "libgssapi_krb5.so.2.2"  "libcrypt-2.15.so"  "libz.so.1.2.3.4"  "libutil-2.15.so"  "libcrypto.so.1.0.0"  "libpthread-2.15.so"  "libselinux.so.1"  "libpam.so.0.83.0"  "libwrap.so.0.7.6"  "ld-2.15.so"  "sshd"  ))
+
+    ( known-objects 
+    	( name "ntpd")
+      	( object-list  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libresolv-2.15.so"  "libnss_dns-2.15.so"  "libnss_files-2.15.so"  "libpthread-2.15.so"  "libc-2.15.so"  "libcap.so.2.22"  "librt-2.15.so"  "libm-2.15.so"  "libopts.so.25.10.0"  "ld-2.15.so"  "ntpd"  ))
+
+
+    ( known-objects 
+    	( name "apache2")
+      	( object-list  "httpd"  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libm-2.15.so"  "mod_uni_mem.so"  "mod_rewrite.so"  "mod_alias.so"  "mod_userdir.so"  "mod_speling.so"  "mod_actions.so"  "mod_imagemap.so"  "mod_dir.so"  "mod_negotiation.so"  "mod_vhost_alias.so"  "mod_dav_fs.so"  "mod_cgi.so"  "mod_info.so"  "mod_asis.so"  "mod_autoindex.so"  "mod_status.so"  "mod_dav.so"  "mod_mime.so"  "mod_proxy_balancer.so"  "mod_proxy_ajp.so"  "mod_proxy_scgi.so"  "mod_proxy_http.so"  "mod_proxy_ftp.so"  "mod_proxy_connect.so"  "mod_proxy.so"  "mod_version.so"  "mod_setenvif.so"  "mod_unique_id.so"  "mod_usertrack.so"  "mod_ident.so"  "mod_headers.so"  "mod_expires.so"  "mod_cern_meta.so"  "mod_mime_magic.so"  "mod_env.so"  "mod_logio.so"  "mod_log_forensic.so"  "mod_log_config.so"  "libz.so.1.2.3.4"  "mod_deflate.so"  "mod_substitute.so"  "mod_filter.so"  "mod_include.so"  "mod_ext_filter.so"  "mod_reqtimeout.so"  "mod_dumpio.so"  "mod_dbd.so"  "mod_auth_digest.so"  "mod_auth_basic.so"  "mod_authz_default.so"  "mod_authz_owner.so"  "mod_authz_dbm.so"  "mod_authz_user.so"  "mod_authz_groupfile.so"  "mod_authz_host.so"  "mod_authn_default.so"  "mod_authn_dbd.so"  "mod_authn_anon.so"  "mod_authn_dbm.so"  "mod_authn_file.so"  "libdl-2.15.so"  "libcrypt-2.15.so"  "libexpat.so.0.5.0"  "libc-2.15.so"  "libpthread-2.15.so"  "libapr-1.so.0.4.5"  "libaprutil-1.so.0.4.1"  "ld-2.15.so"  "dev/zero"  "ld-2.15.so"  ))
+
+
+
      ;	
      ;(known-open-files
      ;	    (name "mysqld")
@@ -185,12 +247,12 @@
      ;	    "time_zone_transition_type.MYD " "ibdXzyvI" "ibllKoER" "ibhfBa90" "ibdsC3Ha" "ibXM1Wgk" 
      ;	     "error.log"))
 
-     (known-open-files
-      (name "helper")
-      (file-names "NONE"))
+    (known-open-files
+	(name "helper")
+	(file-names "NONE"))
 
 
-     (known-process-cred
+    (known-process-cred
       (name "swapper/0")
       (uid 0)
       (euid 0)
@@ -1280,6 +1342,10 @@
     (deftemplate recovery-action
      (slot function-name (type SYMBOL))
      (multislot arg_list (type SYMBOL)))
+
+    (deftemplate handle-multiple-threads
+     (slot name (type STRING))
+     (slot stage (type SYMBOL)))
 
     (deftemplate unknown-process-recovery-prev-action
      (slot prev_action (type SYMBOL))

@@ -107,7 +107,7 @@
 		    (index ?index)
 		    (original ?address)
 		    (base_address ?base_address))
-	=> 
+	 => 
 	(assert (recovery-action
 		    (function-name fix_syscall_entry)
 		    (arg_list  ?base_address ?index ?address)))
@@ -151,7 +151,7 @@
 		    (pid ?pid)))
 	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
 	(save-facts "state_information/udp_state_info.fac" visible open-udp-socket-recovery-prev-action)
-	(printout t "RECOVERY: Closed UDP sockets of process " ?name1 crlf)))
+	(printout t "RECOVERY: Closed UDP sockets of process " ?name1 crlf))
 
 (defrule close-udp-socket_1
 	(declare (salience 20))
@@ -211,7 +211,7 @@
 		    (pid ?pid)))
 	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
 	(save-facts "state_information/tcp_state_info.fac" visible open-tcp-socket-recovery-prev-action)
-	(printout t "RECOVERY: Closed tcp sockets of process " ?name1 crlf)))
+	(printout t "RECOVERY: Closed tcp sockets of process " ?name1 crlf))
 
 (defrule close-tcp-socket_1
 	(declare (salience 20))
@@ -347,20 +347,30 @@
 		(name ?name)
 		(pid ?pid)
 		(object-list $?list))
-    (not (str-compare ?name "apache2"))
+    (mandatory-process 
+		(name ?name)
+		(command $?command))
+    (not (exists (unload-unknown-object-prev-action
+		         ( prev_action kill_process |sled_object)
+			 (name ?name1))))
+    (not (exists (handle-multiple-threads
+		    (name ?name)
+		    (stage one ))))
     =>
     (assert (recovery-action
-		(function-name unload_objects)
-		(arg_list ?pid $?list)))
+		(function-name restart_process)
+		(arg_list ?pid $?command )))
     (retract ?f)
     (assert (unload-unknown-object-prev-action
-		(prev_action  sled_object)
+		(prev_action  restart_process)
 		(name ?name)
 		(pid ?pid)))
+    (assert (handle-multiple-threads
+		(name ?name)
+		(stage zero)))
     (save-facts "state_information/recovery_action.fac" visible recovery-action)
     (save-facts "state_information/unload_unknown_object_state_info.fac" visible unload-unknown-object-prev-action)
-    (printout t "RECOVERY: Sleding the unknown objects" $?list  crlf))
-
+    (printout t "RECOVERY: Restarting the process " ?name  crlf))
 
 (defrule unload-unknown-objects_01
     (declare (salience 20))
@@ -369,9 +379,68 @@
 		(pid ?pid)
 		(object-list $?list))
     ?of <- (unload-unknown-object-prev-action
+		(prev_action  restart_process)
+		(name ?name))
+    (not (exists (handle-multiple-threads
+		    (name ?name)
+		    (stage zero))))
+    =>
+    (retract ?f)
+    (retract ?of)
+    (assert (recovery-action
+		(function-name kill_process)
+		(arg_list  ?name ?pid )))
+    (assert (handle-multiple-threads
+		(name ?name)
+		(stage one)))
+    (save-facts "state_information/recovery_action.fac" visible recovery-action)
+    (printout t "RECOVERY: The unknown objets "?list " were found to be loaded agian. Hence terminating the process "  ?name  crlf))
+
+(defrule unload-unknown-objects_02
+    (declare (salience 30))
+    ?f <- (unknown-object-list
+		(name ?name)
+		(pid ?pid)
+		(object-list $?list))
+    ?of <- (unload-unknown-object-prev-action
+		(prev_action  restart_process)
+		(name ?name))
+    (not (exists (handle-multiple-threads
+		    (name ?name)
+		    (stage zero))))
+    (test (= (str-compare ?name "apache2") 0))
+    =>
+    (retract ?f)
+    (retract ?of)
+    (assert (recovery-action
+		(function-name unload_module)
+		(arg_list ?pid $?list )))
+    (assert (unload-unknown-object-prev-action
+		(prev_action  sled_object)
+		(name ?name)
+		(pid ?pid)))
+     (assert (handle-multiple-threads
+		(name ?name)
+		(stage one)))
+    (save-facts "state_information/recovery_action.fac" visible recovery-action)
+    (save-facts "state_information/unload_unknown_object_state_info.fac" visible unload-unknown-object-prev-action)
+    (printout t "RECOVERY: Sleding the unknown objects " $?list " loaded by the process " ?name crlf))
+
+
+(defrule unload-unknown-objects_03
+    (declare (salience 40))
+    ?f <- (unknown-object-list
+		(name ?name)
+		(pid ?pid)
+		(object-list $?list))
+    ?of <- (unload-unknown-object-prev-action
 		(prev_action  sled_object)
 		(name ?name)
 		(pid ?pid))
+    (not (exists (handle-multiple-threads
+		    (name ?name)
+		    (stage one))))
+    (test (= (str-compare ?name "apache2") 0))
     =>
     (retract ?f)
     (save-facts "state_information/recovery_action.fac" visible recovery-action)
@@ -467,6 +536,7 @@
 		(function-name start_process)
 		(arg_list $?command)))
     (retract ?f)
+    (save-facts "state_information/recovery_action.fac" visible recovery-action)
     (printout t "RECOVERY: Starting the process " ?name  crlf))
 
 ; rule to terminate root shells
