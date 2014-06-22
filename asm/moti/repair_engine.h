@@ -40,6 +40,7 @@ struct ack_rec {
 };
 
 extern ADDR syscall_table_vm;
+extern struct pe_argp_state opts;
 
 /* get the producer address in the request ring channel */
 ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
@@ -94,7 +95,6 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 	goto fail;
     }
     index = v_u32(v);
-    //fprintf(stdout,"INFO: %s index is %d\n",index_name, index);
     value_free(v);
 
     /* read the size of the ring buffer in terms of record */
@@ -117,7 +117,6 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
     }
     size_of_a_rec = v_u32(v);
     value_free(v);
-
     value_free(value);
 
     /* 
@@ -149,10 +148,10 @@ int load_command_func(int cmd_id, int submodule_id, void * argv, int argc) {
     ci_error_t ret = CI_SUCCESS;
 
 
-    //fprintf(stdout,"INFO: In the load_command_funtion.\n");
-    /* Pause the target */
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: In the load_command_funtion.\n");
+    
     if ((status = target_status(target)) != TSTATUS_PAUSED) {
-	//fprintf(stdout,"INFO: Pausing the target\n");
 	if (target_pause(target)) {
 	    fprintf(stderr,"Failed to pause the target \n");
 	    ret = CI_TPAUSE_ERR;
@@ -170,6 +169,7 @@ int load_command_func(int cmd_id, int submodule_id, void * argv, int argc) {
 	ret = CI_LOOKUP_ERR;
 	goto failure;
     }
+    
     /* Get the type for the command structure  and load it*/
     bs = target_lookup_sym(target,"struct cmd_rec", NULL,
 	    "repair_driver", SYMBOL_TYPE_FLAG_TYPE);
@@ -348,7 +348,6 @@ failure:
     }
 
     if ((status = target_status(target)) == TSTATUS_PAUSED) {
-	//fprintf(stdout,"INFO: Resuming the target\n");
 	if (target_resume(target)) {
 	    fprintf(stdout, "ERROR: Failed to resume target.\n ");
 	}
@@ -367,7 +366,8 @@ int result_ready() {
     struct value *v=NULL;
     ci_error_t ret;
     
-    //fprintf(stdout,"INFO: Check if the result is ready to be read.\n");
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: Check if the result is ready to be read.\n");
     while (1) {
 	if ((status = target_status(target)) != TSTATUS_PAUSED) {
 	    if (target_pause(target)) {
@@ -402,7 +402,6 @@ int result_ready() {
 	}
 
 	ready = v_i32(v);
-
 	if(ready) {
 	    res = value_update_i32(v, ready--);
 	    if(res== -1) {
@@ -452,7 +451,8 @@ int get_result(struct ack_rec *result) {
     int res;
     char buf[500];
 
-    fprintf(stdout,"INFO: Reading the result.\n");
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: Reading the result.\n");
     
     if ((res = target_status(target)) != TSTATUS_PAUSED) {
 	if(target_pause(target)){
@@ -482,17 +482,21 @@ int get_result(struct ack_rec *result) {
     
     int *ptr = NULL;
     ptr =(int *) buf;
-    fprintf(stdout,"submodule %u\n",*ptr);
+    if (opts.dump_debug)
+	fprintf(stdout,"submodule %u\n",*ptr);
     ptr++;
-    fprintf(stdout,"cmd %u\n",*ptr);
+    if (opts.dump_debug)
+	fprintf(stdout,"cmd %u\n",*ptr);
     ptr++;
-    fprintf(stdout,"argc %u\n",*ptr);
+    if (opts.dump_debug)
+	fprintf(stdout,"argc %u\n",*ptr);
     ptr++;
-    fprintf(stdout,"pid %u\n",*ptr);
+    if (opts.dump_debug)
+	fprintf(stdout,"pid %u\n",*ptr);
 
 
-
-    fprintf(stdout,"INFO: result record address %"PRIxADDR"\n",ack_ptr); 
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: result record address %"PRIxADDR"\n",ack_ptr); 
 
     /* Get the type for the acknowledgment structure  and load it */
     bs = target_lookup_sym(target, "struct ack_rec", NULL,
@@ -509,7 +513,6 @@ int get_result(struct ack_rec *result) {
 	ret = CI_LOAD_ERR;
 	goto get_result_fail;
     }
-
 
     ack_struct_type = bsymbol_get_symbol(bs);
     if(!ack_struct_type){
@@ -536,7 +539,8 @@ int get_result(struct ack_rec *result) {
     }
     result->submodule_id = v_u32(v);
     value_free(v);
-    fprintf(stdout,"INFO: submodule_id  %u\n",result->submodule_id);
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: submodule_id  %u\n",result->submodule_id);
 
     /* get the command id */
     v = target_load_value_member(target, tlctxt, value, "cmd_id", NULL, LOAD_FLAG_NONE);
@@ -547,7 +551,8 @@ int get_result(struct ack_rec *result) {
     }
     result->cmd_id = v_u32(v);
     value_free(v);
-     fprintf(stdout,"INFO: cmd_id  %u\n",result->cmd_id);
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: cmd_id  %u\n",result->cmd_id);
 
     /* get the command execution status 
     v = target_load_value_member(target, tlctxt, value, "exec_status", NULL,
@@ -706,6 +711,11 @@ int function_name_to_id(char * function_name, int* function_id, int* submodule_i
 	*submodule_id = 7;
 	return 0;
     }
+    else if (!strncmp(function_name,"restart_process", 15)) {
+	 *function_id = 0;
+	 *submodule_id = 8;
+	 return 0;
+    }
 
     return 1;
 }
@@ -724,17 +734,20 @@ int parse_recovery_action() {
     void *arguments = NULL;
     struct ack_rec result;
 
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: in parse recovery_action.\n");
+
     /* Open the recovey_action file */
     fp = fopen("state_information/recovery_action.fac", "r");
     if(fp == NULL) {
 	fprintf(stdout,"WARINING: Failed to open the recovery action file, continuing.\n");
 	return 1;
     }
-    //fprintf(stdout,"INFO: in parse recovery_action.\n");
 
     /* now read one fact at a time and parse it */
     while(fgets(fact,1024,fp) != NULL) {
-	fprintf(stdout,"INFO: Fact read : %s\n",fact);
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Recovery fact read : %s\n",fact);
 
 	/* Tokenize the fact */
 	i = 0;
@@ -745,7 +758,8 @@ int parse_recovery_action() {
 	cur_token = (char *) strtok(NULL, delim);
 
 	strcpy(function_name, cur_token); 
-	//fprintf(stdout,"INFO: function invoked is %s\n",function_name);
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: function invoked is %s\n",function_name);
 	cur_token = (char *) strtok(NULL, delim);
 
 	/* Now parse all the arguments that are to be passed to that function */
@@ -753,7 +767,8 @@ int parse_recovery_action() {
 	    if(cur_token == NULL) break;
 	    argc++;
 	    strcpy(args[i],cur_token);
-	    //printf("INFO: args[%d] = %s\n",i,args[i]);
+	    if (opts.dump_debug)
+		fprintf(stdout ,"INFO: args[%d] = %s\n",i,args[i]);
 	    i++;
 	}
 
@@ -802,13 +817,14 @@ int parse_recovery_action() {
 		}
 	    	
 		/* Get result of command execution */
-		if(result_ready()){
-		    //if(get_result(&result)) {
-		    //	fprintf(stdout,"ERROR: Failed to result of command execution.\n");
-		   // }
+		result_ready();
+		/*
+		if(get_result(&result)) {
+			fprintf(stdout,"ERROR: Failed to result of command execution.\n");
+		 }
 		}
 
-		/* Display the result 
+		// Display the result 
 		if(result.submodule_id != 0 || result.cmd_id !=0) {
 		    fprintf(stdout,"ERROR: Invalid result read.\n");
 		    continue;
@@ -855,7 +871,7 @@ int parse_recovery_action() {
 		    base = strtoul(args[0], NULL, 16);
 		    index = strtoul(args[1], NULL, 0);
 		    address = strtoul(args[2], NULL, 16);
-		    //fprintf(stdout,"INFO: base :%"PRIxADDR" index: %d  addr : %"PRIxADDR" \n",base, index, address);
+		    
 		    memcpy((void *)long_ptr, (void *) &base, sizeof(long));
 		    long_ptr++;
 		    memcpy((void *)long_ptr, (void *) &index, sizeof(long));
@@ -914,7 +930,7 @@ int parse_recovery_action() {
 	    case 4: /* sled loaded objects objects */
 		char_ptr = (char *) arguments;
 		pid = atoi(args[0]);
-		fprintf(stdout,"INFO: PID = %d\n",pid);
+		//fprintf(stdout,"INFO: PID = %d\n",pid);
 		/* copy the PID */
 		memcpy((void*)char_ptr, (void *)&pid, sizeof( int));
 		char_ptr =  char_ptr + sizeof(int);
@@ -925,7 +941,7 @@ int parse_recovery_action() {
 		    length++;
 		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
 		    char_ptr = char_ptr + sizeof(int);
-		    fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
+		    //fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
 		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char)));
 		    char_ptr =  char_ptr + (length * sizeof(char)) ;
 		}
@@ -942,13 +958,13 @@ int parse_recovery_action() {
 	    case 5: /* close open files */
 		char_ptr = (char *) arguments;
 		pid = atoi(args[0]);
-		fprintf(stdout,"INFO: PID = %d\n",pid);
+		//fprintf(stdout,"INFO: PID = %d\n",pid);
 		/* copy the PID */
 		memcpy((void*)char_ptr, (void *)&pid, sizeof( int));
 		char_ptr =  char_ptr + sizeof(int);
 		length = strlen(args[1]);
 		length++;
-		fprintf(stdout,"INFO: Length = %d\n",length);
+		//fprintf(stdout,"INFO: Length = %d\n",length);
 		
 		/* copy the length of the file name */
 		memcpy((void*)char_ptr, (void *)&length, sizeof( int));
@@ -956,7 +972,7 @@ int parse_recovery_action() {
 
 		/* copy the file name */
 		memcpy((void*)char_ptr, (void*)&args[1], (length * sizeof(char)) + 1);
-		fprintf(stdout,"INFO: File = %s\n",args[1]);
+		//fprintf(stdout,"INFO: File = %s\n",args[1]);
 
 		argc = 3;
 		ret = load_command_func(function_id,submodule_id,arguments,argc);
@@ -966,16 +982,16 @@ int parse_recovery_action() {
 		}
 		result_ready();
 		break;
-
 	    case 6: /*start a process */
 		char_ptr = (char *) arguments;
 		argc--;
+		fprintf(stdout,"INFO: Starting a process.\n"); 
 		/* load the command line arguments */
 		for(i= 0; i< (argc - 3 ) ;i++) {
 		    length = strlen(args[i]);
 		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
 		    char_ptr = char_ptr + sizeof(int);
-		    fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
+		    //fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
 		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char)) + 1);
 		    char_ptr =  char_ptr + (length * sizeof(char)) + 1; ;
 		}
@@ -988,7 +1004,7 @@ int parse_recovery_action() {
 		    length = strlen(args[i]);
 		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
 		    char_ptr = char_ptr + sizeof(int);
-		    fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
+		    //fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
 		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char))+1);
 		    char_ptr =  char_ptr + ((length * sizeof(char)) + 1);
 
@@ -1087,8 +1103,62 @@ int parse_recovery_action() {
 	    
 		result_ready();
 	
-		break; 
-	    default: break; 
+		break;
+	    case 8: 	
+		int_ptr = (int *) arguments;
+		pid = atoi(args[0]);
+		memcpy((void *)int_ptr, (void *) &pid, sizeof(int));
+		int_ptr++;
+		fprintf(stdout,"INFO: Invoking function to restart  process : %d \n", pid);
+		/* Only passing the pid to the recovery component */
+		ret = load_command_func(0,0,arguments,1);
+		if(ret) {
+		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
+		    return 1;
+		}
+	    	
+		/* Get result of command execution */
+		result_ready();
+		bzero(arguments, 500);
+		
+		/* restart a process */
+		char_ptr = (char *) arguments;
+		argc = argc - 1;
+		/* load the command line arguments */
+		for(i= 1; i< (argc - 3 ) ;i++) {
+		    length = strlen(args[i]);
+		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
+		    char_ptr = char_ptr + sizeof(int);
+		    //fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
+		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char)) + 1);
+		    char_ptr =  char_ptr + (length * sizeof(char)) + 1; ;
+		}
+		i = 0;
+		memcpy((void *)char_ptr, (void*)&i, sizeof(int));
+		char_ptr = char_ptr + sizeof(int);
+
+		/* load the environment */
+		for( i = (argc-3) ; i < argc; i++) {
+		    length = strlen(args[i]);
+		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
+		    char_ptr = char_ptr + sizeof(int);
+		    //fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
+		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char))+1);
+		    char_ptr =  char_ptr + ((length * sizeof(char)) + 1);
+
+		}
+		i = 0;
+		memcpy((void *)char_ptr, (void*)&i, sizeof(int));
+		char_ptr = char_ptr + sizeof(int);
+		
+		ret = load_command_func(0,6,arguments,argc);
+		if(ret) {
+		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
+		    return 1;
+		}
+		result_ready();
+		break;
+		    default: break; 
 		fprintf(stdout,"ERROR: Invalid function called.\n");
 	}
 
@@ -1100,7 +1170,3 @@ int parse_recovery_action() {
     fclose(fp);
     return 0;
 }
-
-
-
-

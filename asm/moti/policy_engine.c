@@ -78,21 +78,6 @@ unsigned long **function_prologue = NULL;
 char *res = NULL;
 ADDR syscall_table_vm;
 
-struct pe_argp_state {
-    char *app_file_path;
-    char *recovery_rules_file;
-    int wait_time;
-    int dump_timing;
-
-    int argc;
-    char **argv;
-    /* Grab this from the child parser. */
-    struct target_spec *tspec;
-};
-
-struct pe_argp_state opts;
-
-
 
 int save_sys_call_table_entries() {
 
@@ -103,10 +88,9 @@ int save_sys_call_table_entries() {
     struct value *v;
     struct target_location_ctxt *tlctxt;
     
-
-    fprintf(stdout,"INFO: Saving the state of the initial system call table.\n");
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: Saving the state of the initial system call table.\n");
     /* Load the syscall table */
-
     bs = target_lookup_sym(target,"sys_call_table",NULL,NULL,
 				    SYMBOL_TYPE_FLAG_VAR);
     if (!bs) {
@@ -123,18 +107,16 @@ int save_sys_call_table_entries() {
 	bs = NULL;
 	exit(0);
     }
-
     syscall_table_vm = value_addr(v);
-
-    fprintf(stdout,"INFO: Symbol syscall_table is at address %lx\n",
-		    syscall_table_vm);
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: Symbol syscall_table is at address %lx\n",
+							syscall_table_vm);
     value_free(v);
     bsymbol_release(bs);
     bs = NULL;
 
-
-
-    fprintf(stdout,"INFO: Loading the syscall table.\n");
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: Loading the syscall table.\n");
     if(target_os_syscall_table_load(target)) {
 	fprintf(stdout,"ERROR: Failed to load the syscall table.\n");
 	return 1;
@@ -145,10 +127,10 @@ int save_sys_call_table_entries() {
 	fprintf(stdout,"ERROR: Failed to get the max number of target sysscalls.\n");
 	return 1;
     }
-    fprintf(stdout,"INFO: maximum number of system calls %d \n",max_num);
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: maximum number of system calls %d \n",max_num);
 
     /* Allocate memory for the sys_call_table and sys_call_names */
-
     sys_call_table  = (unsigned long *) malloc(max_num * sizeof(unsigned long));
     if(sys_call_table == NULL) {
 	fprintf(stdout,"ERROR: Failed to allocate memory for sys_call_table.\n");
@@ -166,17 +148,16 @@ int save_sys_call_table_entries() {
 	exit(0);
     }
 
-
     for(i = 0; i < max_num; i++) {
 	sc = target_os_syscall_lookup_num(target, i);
 	if(!sc) {
 	    continue;
 	}
 	if(sc->bsymbol) {
-	    /*
-	    fprintf(stdout,"%d\t %"PRIxADDR"\t%s\n", sc->num, sc->addr, 
+	    
+	    if (opts.dump_debug)
+		fprintf(stdout,"%d\t %"PRIxADDR"\t%s\n", sc->num, sc->addr, 
 					    bsymbol_get_name(sc->bsymbol));
-	    */
 	    sys_call_table[sc->num] = sc->addr;
 	    sys_call_names[sc->num] =  (char *) malloc(100* sizeof(char));
 	    if(sys_call_names[sc->num] == NULL) {
@@ -191,9 +172,7 @@ int save_sys_call_table_entries() {
 		fprintf(stdout, "ERROR: Could not read 8 bytes at 0x%"PRIxADDR"!\n",sc->addr);
 		exit(0);
 	    }
-	    //fprintf(stdout,"INFO: prologue : %lx %lx \n",*(unsigned long *)prologue,*(unsigned long *)(prologue +8) );
 	    memcpy(function_prologue[sc->num], &prologue,16);
-	    //fprintf(stdout,"INFO : 0-8 bytes : %lx  0-16 bytes %lx\n",function_prologue[sc->num][0], function_prologue[sc->num][1]);
 	    
 	}
     }
@@ -230,8 +209,7 @@ int generate_snapshot() {
     gettimeofday(&tm1, NULL);
 
     /* Pause the target */
-    if ((status = target_status(target)) != TSTATUS_PAUSED) {
-	fprintf(stdout,"INFO: Pausing the target\n");
+    if ((status = target_status(target)) != TSTATUS_PAUSED) {	
 	if (target_pause(target)) {
 		fprintf(stderr,"Failed to pause the target \n");
 		result = 1;
@@ -245,7 +223,6 @@ int generate_snapshot() {
 	fprintf(stderr,"INFO: Time taken to pause the target is %llu ms\n", t); 
 		    
     /* Start making calls to each of the VMI function */ 
-     
     gettimeofday(&tm1, NULL);
     result = process_info();
     if(result) {
@@ -270,7 +247,6 @@ int generate_snapshot() {
     if (opts.dump_timing)
 	fprintf(stderr,"INFO: Time taken to get file info is %llu ms\n", t); 
 
-    
     gettimeofday(&tm1, NULL);
     result = module_info();
     if(result) {
@@ -295,8 +271,7 @@ int generate_snapshot() {
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
     if (opts.dump_timing)
 	fprintf(stdout,"INFO: Time taken to get cpu load info is %llu ms\n", t); 
-    
-    
+        
    /*
     result = process_cpu_utilization();
     if(result) {
@@ -305,7 +280,6 @@ int generate_snapshot() {
 	goto resume;
     }
     */
-    
     
     gettimeofday(&tm1, NULL);
     result = object_info();
@@ -353,11 +327,9 @@ int generate_snapshot() {
     if (opts.dump_timing)
 	fprintf(stderr,"INFO: Time taken to check for hooked system calls is %llu ms\n", t); 
    
-    
 resume:
     gettimeofday(&tm1, NULL);
     if ((status = target_status(target)) == TSTATUS_PAUSED) {
-	//fprintf(stdout,"INFO: Resuming the target\n");
 	if (target_resume(target)) {
 	    fprintf(stdout, "ERROR: Failed to resume target.\n ");
 	    result = 1;
@@ -366,8 +338,7 @@ resume:
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
     if (opts.dump_timing)
-	fprintf(stderr,"INFO: Time taken to resume the target is %llu ms\n", t); 
-
+	fprintf(stderr,"INFO: Time taken to resume the target is %llu ms\n", t);
     return result;
 }
 
@@ -376,12 +347,16 @@ resume:
 #define PE_ARGP_REC_FILE    0x474748
 #define PE_ARGP_WAIT_TIME   0x474749
 #define PE_ARGP_DUMP_TIMING 0x47474a
+#define PE_ARGP_DUMP_DEBUG  0x47474b
+#define PE_ARGP_DISABLE_RECOVERY 0x47474c
 
 struct argp_option pe_argp_opts[] = {
     { "pe-app-knowledge-file",PE_ARGP_APP_FILE,"FILE",0,"The application knowledge CLIPS file; defaults to ./application_knowledge.cls.",0 },
     { "pe-recovery-rules-file",PE_ARGP_REC_FILE,"FILE",0,"The recovery rules CLIPS file; defaults to ./recovery_contructs.cls",0 },
     { "pe-interval",PE_ARGP_WAIT_TIME,"SECONDS",0,"The wait time in between policy engine checks of the domain; defaults to 120 seconds",0 },
     { "pe-dump-timing",PE_ARGP_DUMP_TIMING,NULL,0,"Dump timing info to stderr.",0 },
+    { "pe-dump-debug",PE_ARGP_DUMP_DEBUG,NULL,0,"Dump debug info to stdout.",0},
+    { "pe-disable-recovery",PE_ARGP_DISABLE_RECOVERY,NULL,0,"Disable the recovery component.",0},
         { 0,0,0,0,0,0 },
 };
 
@@ -430,6 +405,12 @@ error_t pe_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case PE_ARGP_DUMP_TIMING:
 	opts->dump_timing = 1;
 	break;
+    case PE_ARGP_DUMP_DEBUG:
+	opts->dump_debug = 1;
+	break;
+    case PE_ARGP_DISABLE_RECOVERY:
+	opts->disable_recovery = 1;
+	break;
 
     default:
 	return ARGP_ERR_UNKNOWN;
@@ -454,7 +435,6 @@ int main( int argc, char** argv) {
     FILE *fp;
     struct stat st = {0};
 
-
     memset(&opts,0,sizeof(opts));
     opts.app_file_path = "application_knowledge.cls";
     opts.recovery_rules_file = "recovery_contructs.cls";
@@ -471,24 +451,22 @@ int main( int argc, char** argv) {
     atexit(target_fini);
     atexit(dwdebug_fini);
 
-
+     printf("recovery = %d ,debug = %d\n",opts.disable_recovery,opts.dump_debug);
      target = target_instantiate(tspec,NULL);
      if (!target) {
 	fprintf(stdout,"ERROR: Could not instantiate target!\n");
 	exit(0);
      }
-     //target_snprintf(target,targetstr,sizeof(targetstr));
     if (target_open(target)) {
 	fprintf(stdout,"ERROR: Could not open %s!\n",targetstr);
 	exit(0);
     }
 
-
-    //fprintf(stdout,"INFO: Initializing the CLIPS environment.\n");
-    // Initialize the CLIPS environment
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: Initializing the CLIPS environment.\n");
     InitializeEnvironment();
 
-    // Create a directory  with files to keep track of state information.
+    /* Create a directory  with files required to keep track of state information. */
     if(stat("state_information", &st) == 1) {
 	mkdir("state_information",0700);
     }
@@ -511,44 +489,38 @@ int main( int argc, char** argv) {
     fclose(fp);
 
 
-
-
-    
     /* Copy the initil system_call_table contents */
-      result = save_sys_call_table_entries();
+    result = save_sys_call_table_entries();
     if(result) {
 	fprintf(stdout,"ERROR: Failed to save the initial system call table entries.\n");
 	exit(0);
     }
-    // Start an infinite loop to periodically execute steps 3.1 to 3.5 
-    while(1) {
-	
-	fprintf(stdout,"============================ITERATION %d ============================\n",iteration++);
-        fprintf(stdout,"INFO: Loading the application level rules\n");
+    
+    while(1) {	
+	fprintf(stdout,"============================ ITERATION %d ============================\n",iteration++);
+        if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Loading the application level rules\n");
 	result = Load(opts.app_file_path);
 	    if(result != 1) {
 	    fprintf(stdout,"ERROR: Failed to load the application rules file\n");
 	    exit(0);
 	}	
  
-
 	// Generate a time stamp for the base facts file name
 	result = generate_timestamp(base_fact_file);
 	if(!result) {
 	    fprintf(stdout,"Failed to generate timestamp");
 	    exit(0);
 	}
-	fprintf(stdout," INFO: Base fact file name  = %s\n",base_fact_file);
+	if (opts.dump_debug)
+	    fprintf(stdout," INFO: Base fact file name  = %s\n",base_fact_file);
 
-	// Make call to the base VMI  base function. This function invokes all the 
-	// VMI tools that gather state information of the virtual appliance/
-	
-
+	/*  Make call to the base VMI  base function. This function invokes all
+	    the VMI tools that gather state information of the virtual appliance 
+	*/	
 	static struct timeval tm1;
 	gettimeofday(&tm1, NULL);
-
 	result = generate_snapshot();
-
 	static struct timeval tm2;
 	gettimeofday(&tm2, NULL);
 	if( result) {
@@ -559,34 +531,43 @@ int main( int argc, char** argv) {
 	unsigned long long t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
 	fprintf(stdout,"INFO: Time taken to generate the snapshot is %llu ms\n", t); 
 
-
-	//fprintf(stdout,"INFO: Resetting the CLIPS environemnt\n");
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Resetting the CLIPS environemnt\n");
 	Reset();
 	
-	//result = Watch("all");
-	//if(!result) {
-	//    fprintf(stdout,"Error: Faild to watch \n");
-	//}
+	if (opts.dump_debug) {
+	    result = Watch("all");
+	    if(!result) {
+		fprintf(stdout,"Error: Faild to watch \n");
+	    }
+	}
 	
-	//fprintf(stdout,"INFO: Loading the base facts file\n");
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Loading the base facts file\n");
 	result = LoadFacts(base_fact_file);
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
 	   exit(0);
 	}
-	// Load previous cpu utilization state
+	
+	/* Load previous cpu utilization state */
 	result = LoadFacts("state_information/cpu_state_info.fac");
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the tcp_state_info file.\n");
 	   exit(0);
 	}
 
-	//fprintf(stdout,"INFO: Parsing the base facts through the application rules\n");
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Parsing the base facts through the application rules\n");
 	result = Run(-1L);
-	fprintf(stdout,"INFO : %d application rules were fired\n",result);
-	// At this time the anomaly facts are generated.
-	
-	//fprintf(stdout,"INFO: Loading the state information of recovery facts from the previous execution \n");
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO : %d application rules were fired\n",result);
+	/* At this time the anomaly facts are generated. Now load the
+	 * state information from the previos iteration.
+	 */
+
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Loading the state information of recovery facts from the previous execution \n");
 	result = LoadFacts("state_information/process_state_info.fac");
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the process_state_info file.\n");
@@ -610,21 +591,21 @@ int main( int argc, char** argv) {
 	   fprintf(stdout,"ERROR: Failed to load the tcp_state_info file.\n");
 	   exit(0);
 	}
+
 	result = LoadFacts("state_information/process_priv_state_info.fac");
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the process_priv_info file.\n");
 	   exit(0);
 	}
+
 	result = LoadFacts("state_information/unload_unknown_object_state_info.fac");
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the unload_unknown_object_info file.\n");
 	   exit(0);
 	}
 
-
-	// We have to run them through the recovery rules now.
-	
-	//fprintf(stdout,"INFO: Loading the  recovery rules file\n");
+	if (opts.dump_debug)	
+	    fprintf(stdout,"INFO: Loading the  recovery rules file\n");
 	result = Load(opts.recovery_rules_file);
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
@@ -632,18 +613,23 @@ int main( int argc, char** argv) {
 	}
 
 	result = Run(-1L);
-	fprintf(stdout,"INFO : %d recovery rules were fired\n",result);
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO : %d recovery rules were fired\n",result);
 	
-	//fprintf(stdout,"INFO: Parsing the recovery action file.\n");
-        result = parse_recovery_action();
-	if(result) {
-	    fprintf(stdout,"ERROR: parse_recovery_action function call failed.\n");
-	    exit(0);
+	if(!opts.disable_recovery) {
+	    if (opts.dump_debug)
+		fprintf(stdout,"INFO: Parsing the recovery action file.\n");
+	    result = parse_recovery_action();
+	    if(result) {
+		fprintf(stdout,"ERROR: parse_recovery_action function call failed.\n");
+		exit(0);
+	    }
 	}
 	
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Clearing up all the facts and rules\n");
 	Clear();
-	fprintf(stdout,"INFO: Clearing up all the facts and rules\n");
-	fprintf(stdout," Sleeping for %d seconds\n", opts.wait_time);
+	fprintf(stdout," Sleeping for %d seconds before the next iteration.\n", opts.wait_time);
 	sleep(opts.wait_time);
     }
 
