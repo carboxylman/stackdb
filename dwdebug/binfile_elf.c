@@ -119,6 +119,7 @@ static const char *elf_binfile_get_backend_name(void) {
 
 static int elf_binfile_close(struct binfile *binfile) {
     struct binfile_elf *bfelf = (struct binfile_elf *)binfile->priv;
+    int had_dwfl = 0;
 
     if (bfelf->ebl) {
 	ebl_closebackend(bfelf->ebl);
@@ -127,10 +128,20 @@ static int elf_binfile_close(struct binfile *binfile) {
     if (bfelf->dwfl) {
 	dwfl_end(bfelf->dwfl);
 	bfelf->dwfl = NULL;
+	had_dwfl = 1;
     }
     if (bfelf->elf) {
-	elf_end(bfelf->elf);
-	bfelf->elf = NULL;
+	if (binfile->image && had_dwfl) {
+	    /*
+	     * NB: dwfl_end already called elf_end; don't!  See
+	     * dwarf_load_debuginfo().
+	     */
+	    bfelf->elf = NULL;
+	}
+	else if (bfelf->elf) {
+	    elf_end(bfelf->elf);
+	    bfelf->elf = NULL;
+	}
     }
     if (binfile->fd > -1) {
 	close(binfile->fd);
