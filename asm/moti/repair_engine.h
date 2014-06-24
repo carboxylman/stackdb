@@ -106,6 +106,12 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
     }
     size_in_recs = v_u32(v);
     value_free(v);
+    if(size_in_recs == 0){
+	fprintf(stderr,"Got bogus value (0) for size_in_recs\n");
+	ret = CI_LOAD_ERR;
+	v = NULL;
+	goto fail;
+    }
 
     /* read the size of each record */
     v = target_load_value_member(target, tlctxt, value, "size_of_a_rec", NULL,
@@ -117,6 +123,12 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
     }
     size_of_a_rec = v_u32(v);
     value_free(v);
+    if(size_of_a_rec == 0){
+	fprintf(stderr,"Got bogus value (0) for size_of_a_rec\n");
+	ret = CI_LOAD_ERR;
+	v = NULL;
+	goto fail;
+    }
     value_free(value);
 
     /* 
@@ -131,6 +143,9 @@ fail:
     }
     if(v) {
 	value_free(v);
+    }
+    if(value) {
+	value_free(value);
     }
     return 0;
 
