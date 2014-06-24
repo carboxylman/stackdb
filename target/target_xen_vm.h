@@ -71,6 +71,9 @@ struct xen_vm_spec {
     char *replay_dir;
     int dominfo_timeout;
 
+    /* Max memcache limit, in bytes.  Backends must honor this! */
+    unsigned long int memcache_mmap_size;
+
     unsigned int no_hw_debug_reg_clear:1,
 	         no_hvm_setcontext:1,
 	         clear_mem_caches_each_exception:1,

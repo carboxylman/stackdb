@@ -352,9 +352,10 @@ struct target_ops xen_vm_ops = {
     .disable_feature = xen_vm_disable_feature,
 };
 
-#define XV_ARGP_USE_XENACCESS    0x550001
-#define XV_ARGP_USE_LIBVMI       0x550002
-#define XV_ARGP_CLEAR_MEM_CACHES 0x550003
+#define XV_ARGP_USE_XENACCESS      0x550001
+#define XV_ARGP_USE_LIBVMI         0x550002
+#define XV_ARGP_CLEAR_MEM_CACHES   0x550003
+#define XV_ARGP_MEMCACHE_MMAP_SIZE 0x550004
 
 struct argp_option xen_vm_argp_opts[] = {
     /* These options set a flag. */
@@ -373,6 +374,8 @@ struct argp_option xen_vm_argp_opts[] = {
     { "use-xenaccess",XV_ARGP_USE_XENACCESS,NULL,0,
           "Clear mem caches on each debug exception.",-4 },
 #endif
+    { "memcache-mmap-size",XV_ARGP_MEMCACHE_MMAP_SIZE,"BYTES",0,
+          "Max size (bytes) of the mmap cache (default 128MB).",-4 },
     { "no-hvm-setcontext",'V',NULL,0,
           "Don't use HVM-specific libxc get/set context functions to access"
           "virtual CPU info.",-4 },
@@ -416,6 +419,8 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
     if (xspec->use_xenaccess)
 	ac += 1;
 #endif
+    if (xspec->memcache_mmap_size)
+	ac += 2;
     if (xspec->config_file)
 	ac += 2;
     if (xspec->replay_dir)
@@ -452,6 +457,12 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
     if (xspec->use_xenaccess)
 	av[j++] = strdup("--use-xenaccess");
 #endif
+    if (xspec->memcache_mmap_size) {
+	av[j++] = strdup("--memcache-mmap-size");
+	av[j] = malloc(32);
+	snprintf(av[j],32,"%lu",xspec->memcache_mmap_size);
+	j++;
+    }
     if (xspec->config_file) {
 	av[j++] = strdup("-c");
 	av[j++] = strdup(xspec->config_file);
@@ -512,7 +523,7 @@ error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     if (ourkey) {
 	if (spec->target_type == TARGET_TYPE_NONE) {
 	    spec->target_type = TARGET_TYPE_XEN;
-	    xspec = calloc(1,sizeof(*xspec));
+	    xspec = xen_vm_build_spec();
 	    spec->backend_spec = xspec;
 	}
 	else if (spec->target_type != TARGET_TYPE_XEN) {
@@ -582,6 +593,9 @@ error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	xspec->use_xenaccess = 1;
 	break;
 #endif
+    case XV_ARGP_MEMCACHE_MMAP_SIZE:
+	xspec->memcache_mmap_size = atoi(arg);
+	break;
     case 'r':
 	xspec->replay_dir = strdup(arg);
 	break;
@@ -616,6 +630,8 @@ struct xen_vm_spec *xen_vm_build_spec(void) {
     struct xen_vm_spec *xspec;
 
     xspec = calloc(1,sizeof(*xspec));
+    /* default to 128MB. */
+    xspec->memcache_mmap_size = 128 * 1024 * 1024;
 
     return xspec;
 }

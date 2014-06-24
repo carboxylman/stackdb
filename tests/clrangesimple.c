@@ -145,7 +145,7 @@ int main(int argc,char **argv) {
 
     clrangesimple_foreach(cl,__clrangesimple_print,NULL);
 
-    clrangesimple_free(cl,NULL);
+    clrangesimple_free(cl,NULL,NULL);
 
     return failures;
 }

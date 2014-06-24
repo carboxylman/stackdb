@@ -55,8 +55,10 @@ struct xen_vm_mem_builtin_state {
 int xen_vm_mem_builtin_init(struct target *target) {
     struct xen_vm_state *xstate;
     struct xen_vm_mem_builtin_state *mstate;
+    struct xen_vm_spec *xspec;
 
     xstate = (struct xen_vm_state *)target->state;
+    xspec = (struct xen_vm_spec *)target->spec->backend_spec;
 
     mstate = (struct xen_vm_mem_builtin_state *)NULL; //calloc(1,sizeof(*mstate));
 
@@ -69,7 +71,7 @@ int xen_vm_mem_builtin_init(struct target *target) {
 	return -1;
     }
 
-    target->memcache = memcache_create(0,0,NULL);
+    target->memcache = memcache_create(0,xspec->memcache_mmap_size,NULL);
 
     return 0;
 }
@@ -95,6 +97,8 @@ int xen_vm_mem_builtin_handle_exception_ours(struct target *target) {
     if (xspec->clear_mem_caches_each_exception) {
 	memcache_invalidate_all(target->memcache);
     }
+    else
+	memcache_inc_ticks(target->memcache,1);
 
     return 0;
 }
@@ -112,6 +116,8 @@ int xen_vm_mem_builtin_handle_pause(struct target *target) {
     if (xspec->clear_mem_caches_each_exception) {
 	memcache_invalidate_all(target->memcache);
     }
+    else
+	memcache_inc_ticks(target->memcache,1);
 
     return 0;
 }
@@ -165,10 +171,11 @@ static void *__xen_vm_mem_builtin_mmap_phys(struct target *target,ADDR paddr,
 					    unsigned long *plength) {
     struct xen_vm_state *xstate;
     xen_pfn_t *pfn_arr;
-    int num,i;
+    int num,i,again;
     OFFSET paddr_offset;
     ADDR lpaddr,pfn;
     void *mmap;
+    unsigned long int evicted;
 
     xstate = (struct xen_vm_state *)target->state;
 
@@ -186,13 +193,36 @@ static void *__xen_vm_mem_builtin_mmap_phys(struct target *target,ADDR paddr,
 	pfn_arr[i] = pfn + i;
     }
 
+    again = 0;
+ again:
     mmap = xc_map_foreign_pages(xc_handle,xstate->id,prot,pfn_arr,num);
     //mmap = xc_map_foreign_range(xc_handle,xstate->id,prot,num * __PAGE_SIZE,
     //				pfn);
     if (!mmap) {
-	verror("failed to mmap %d pages at paddr 0x%"PRIxADDR
-	       " (page 0x%"PRIxADDR")!\n",
-	       num,paddr,lpaddr);
+	if (again) {
+	    verror("failed to mmap %d pages at paddr 0x%"PRIxADDR
+		   " (page 0x%"PRIxADDR"); aborting!\n",
+		   num,paddr,lpaddr);
+	}
+	else {
+	    vwarnopt(5,LA_TARGET,LF_XV,
+		     "failed to mmap %d pages at paddr 0x%"PRIxADDR
+		     " (page 0x%"PRIxADDR"); evicting and trying again!\n",
+		     num,paddr,lpaddr);
+	}
+
+	if (!again) {
+	    evicted = memcache_lru_evict_mmap(target->memcache,MEMCACHE_TAG_ANY,
+					      MEMCACHE_VIRT,num * __PAGE_SIZE);
+	    if (evicted < (unsigned long int)(num * __PAGE_SIZE))
+		evicted += memcache_lru_evict_mmap(target->memcache,
+						   MEMCACHE_TAG_ANY,
+						   MEMCACHE_PHYS,
+						   num * __PAGE_SIZE - evicted);
+	    errno = 0;
+	    again = 1;
+	    goto again;
+	}
 	if (!errno)
 	    errno = EFAULT;
 	return NULL;
@@ -252,7 +282,10 @@ unsigned char *xen_vm_mem_builtin_read_phys_str(struct target *target,
 	    vwarn("memcache_get_mmap error: v 0x%"PRIxADDR" len %lu: %s (%d); continuing\n",
 		  addr,1ul,strerror(errno),rc);
 	}
-	if (!mmap) {
+	if (mmap) {
+	    didmmap = savedmmap = 0;
+	}
+	else {
 	    mmap = __xen_vm_mem_builtin_mmap_phys(target,paddr,mlen,PROT_WRITE,
 						  NULL,NULL,NULL);
 	    if (!mmap) {
@@ -262,12 +295,11 @@ unsigned char *xen_vm_mem_builtin_read_phys_str(struct target *target,
 		    free(lbuf);
 		return NULL;
 	    }
-	    didmmap = savedmmap = 0;
-	}
-	else {
-	    /* Cache it. */
+
 	    didmmap = 1;
 	    savedmmap = 0;
+
+	    /* Cache it. */
 	    rc = memcache_set_mmap(target->memcache,0,pbase,MEMCACHE_PHYS,
 				   mmap,plength);
 	    if (rc == 1) {
@@ -425,12 +457,13 @@ static void *__xen_vm_mem_builtin_mmap_virt(struct target *target,
 					    unsigned long *vlength) {
     struct xen_vm_state *xstate;
     xen_pfn_t *pfn_arr;
-    int num,i,rc;
+    int num,i,rc,again;
     ADDR paddr;
     OFFSET vaddr_offset;
     ADDR pfn;
     void *mmap;
     ADDR lvaddr;
+    unsigned long int evicted;
 
     xstate = (struct xen_vm_state *)target->state;
 
@@ -454,11 +487,37 @@ static void *__xen_vm_mem_builtin_mmap_virt(struct target *target,
 	pfn_arr[i] = pfn;
     }
 
+    again = 0;
+ again:
     mmap = xc_map_foreign_pages(xc_handle,xstate->id,prot,pfn_arr,num);
     if (!mmap) {
-	verror("failed to mmap %d pages at vaddr 0x%"PRIxADDR
-	       " (for 0x%"PRIxADDR") (first page paddr 0x%"PRIxADDR")!\n",
-	       num,lvaddr,vaddr,pfn_arr[0] * __PAGE_SIZE);
+	if (again) {
+	    verror("failed to mmap %d pages at vaddr 0x%"PRIxADDR
+		   " (for 0x%"PRIxADDR") (first page paddr 0x%"PRIxADDR");"
+		   " aborting!\n",
+		   num,lvaddr,vaddr,pfn_arr[0] * __PAGE_SIZE);
+	}
+	else {
+	    vwarnopt(5,LA_TARGET,LF_XV,
+		     "failed to mmap %d pages at vaddr 0x%"PRIxADDR
+		     " (for 0x%"PRIxADDR") (first page paddr 0x%"PRIxADDR");"
+		     " evicting and trying again!\n",
+		     num,lvaddr,vaddr,pfn_arr[0] * __PAGE_SIZE);
+	}
+
+	if (!again) {
+	    evicted = memcache_lru_evict_mmap(target->memcache,MEMCACHE_TAG_ANY,
+					      MEMCACHE_VIRT,num * __PAGE_SIZE);
+	    if (evicted < (unsigned long int)(num * __PAGE_SIZE))
+		evicted += memcache_lru_evict_mmap(target->memcache,
+						   MEMCACHE_TAG_ANY,
+						   MEMCACHE_PHYS,
+						   num * __PAGE_SIZE - evicted);
+	    errno = 0;
+	    again = 1;
+	    goto again;
+	}
+
 	if (!errno)
 	    errno = EFAULT;
 	return NULL;

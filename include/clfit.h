@@ -115,8 +115,10 @@ typedef int (*clrangesimple_foreach_handler)(Word_t start,Word_t end,void *data,
 					     void *hpriv);
 int clrangesimple_foreach(clrangesimple_t clr,
 			  clrangesimple_foreach_handler handler,void *hpriv);
-typedef void (*clrangesimple_free_dtor)(Word_t start,Word_t end,void *data);
-void clrangesimple_free(clrangesimple_t clr,clrangesimple_free_dtor dtor);
+typedef void (*clrangesimple_free_dtor)(Word_t start,Word_t end,void *data,
+					void *dtor_data);
+void clrangesimple_free(clrangesimple_t clr,clrangesimple_free_dtor dtor,
+			void *dtor_data);
 
 /*
  * The clmatch functions are simply Judy arrays... you can add one or

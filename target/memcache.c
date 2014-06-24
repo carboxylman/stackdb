@@ -27,7 +27,8 @@
 /*
  * Local prototypes.
  */
-static void __memcache_clrangesimple_dtor(ADDR start,ADDR end,void *data);
+static void __memcache_clrangesimple_dtor(ADDR start,ADDR end,void *data,
+					  void *dtor_data);
 
 struct memcache *memcache_create(unsigned long int max_v2p,
 				 unsigned long int max_mmap_size,
@@ -57,9 +58,11 @@ void memcache_destroy(struct memcache *memcache) {
 	memcache_invalidate_all_mmap(memcache,(ADDR)kp);
 	g_hash_table_destroy(mte->v2p_cache);
 
-	clrangesimple_free(mte->mmap_cache_p,__memcache_clrangesimple_dtor);
+	clrangesimple_free(mte->mmap_cache_p,__memcache_clrangesimple_dtor,
+			   memcache);
 	mte->mmap_cache_p = clrangesimple_create();
-	clrangesimple_free(mte->mmap_cache_v,__memcache_clrangesimple_dtor);
+	clrangesimple_free(mte->mmap_cache_v,__memcache_clrangesimple_dtor,
+			   memcache);
 	mte->mmap_cache_v = clrangesimple_create();
 
 	if (memcache->tag_priv_dtor)
@@ -88,15 +91,21 @@ int memcache_invalidate_all_v2p(struct memcache *memcache,ADDR tag) {
 	g_hash_table_iter_remove(&iter);
     }
 
+    mte->oldest_v2p = ADDRMAX;
+
     return 0;
 }
 
-static void __memcache_clrangesimple_dtor(ADDR start,ADDR end,void *data) {
+static void __memcache_clrangesimple_dtor(ADDR start,ADDR end,void *data,
+					  void *dtor_data) {
+    struct memcache *memcache;
     struct memcache_mmap_entry *mme;
 
+    memcache = (struct memcache *)dtor_data;
     mme = (struct memcache_mmap_entry *)data;
 
     munmap(mme->mem,mme->mem_len);
+    memcache->current_mmap_size -= mme->mem_len;
 
     vdebug(8,LA_TARGET,LF_MEMCACHE,
 	   "munmap(0x%p,%lu) (0x%"PRIxADDR",0x%"PRIxADDR")\n",
@@ -113,10 +122,15 @@ int memcache_invalidate_all_mmap(struct memcache *memcache,ADDR tag) {
     if (!mte)
 	return 0;
 
-    clrangesimple_free(mte->mmap_cache_p,__memcache_clrangesimple_dtor);
+    clrangesimple_free(mte->mmap_cache_p,__memcache_clrangesimple_dtor,memcache);
     mte->mmap_cache_p = clrangesimple_create();
-    clrangesimple_free(mte->mmap_cache_v,__memcache_clrangesimple_dtor);
+    clrangesimple_free(mte->mmap_cache_v,__memcache_clrangesimple_dtor,memcache);
     mte->mmap_cache_v = clrangesimple_create();
+
+    mte->oldest_mmap_p = ADDRMAX;
+    mte->oldest_mmap_v = ADDRMAX;
+    mte->oldest_mmap_p_ticks = 0;
+    mte->oldest_mmap_v_ticks = 0;
 
     return 0;
 }
@@ -155,55 +169,63 @@ int __memcache_clrangesimple_foreach_inc_ticks(Word_t start,Word_t end,void *dat
     return 0;
 }
 
-void memcache_inc_ticks(struct memcache *memcache,unsigned int new_ticks) {
-    GHashTableIter iter,iter2;
-    gpointer vp,kp2,vp2;
+static void _memcache_inc_ticks_tag_entry(struct memcache *memcache,
+					  struct memcache_tag_entry *mte,
+					  unsigned int new_ticks) {
+    GHashTableIter iter2;
+    gpointer kp2,vp2;
     ADDR vaddr;
-    struct memcache_tag_entry *mte;
     struct memcache_v2p_entry *mve;
     ADDR oldest;
     unsigned int ticks;
     struct __clrs_foreach_inc_ticks_data d;
 
+    /*
+     * Use ADDRMAX as our magic value because mmaps only happen at
+     * page boundaries, and anything ending in 0xfff is not a page
+     * boundary, basically.  And nobody has < 4096B pages.
+     */
+    oldest = ADDRMAX;
+    ticks = 0;
+    g_hash_table_iter_init(&iter2,mte->v2p_cache);
+    while (g_hash_table_iter_next(&iter2,&kp2,&vp2)) {
+	vaddr = (ADDR)kp2;
+	mve = (struct memcache_v2p_entry *)vp2;
+
+	mve->unused_ticks += new_ticks;
+	if (mve->unused_ticks > ticks) {
+	    ticks = mve->unused_ticks;
+	    oldest = vaddr;
+	}
+    }
+    mte->oldest_v2p = oldest;
+
+    d.new_ticks = new_ticks;
+    d.max_unused_ticks = 0;
+    d.max_unused_ticks_addr = ADDRMAX;
+    clrangesimple_foreach(mte->mmap_cache_p,
+			  __memcache_clrangesimple_foreach_inc_ticks,&d);
+    mte->oldest_mmap_p = d.max_unused_ticks_addr;
+    mte->oldest_mmap_p_ticks = d.max_unused_ticks;
+
+    d.new_ticks = new_ticks;
+    d.max_unused_ticks = 0;
+    d.max_unused_ticks_addr = ADDRMAX;
+    clrangesimple_foreach(mte->mmap_cache_v,
+			  __memcache_clrangesimple_foreach_inc_ticks,&d);
+    mte->oldest_mmap_v = d.max_unused_ticks_addr;
+    mte->oldest_mmap_v_ticks = d.max_unused_ticks;
+}
+
+void memcache_inc_ticks(struct memcache *memcache,unsigned int new_ticks) {
+    GHashTableIter iter;
+    gpointer vp;
+    struct memcache_tag_entry *mte;
+
     g_hash_table_iter_init(&iter,memcache->cache);
     while (g_hash_table_iter_next(&iter,NULL,&vp)) {
 	mte = (struct memcache_tag_entry *)vp;
-
-	/*
-	 * Use ADDRMAX as our magic value because mmaps only happen at
-	 * page boundaries, and anything ending in 0xfff is not a page
-	 * boundary, basically.  And nobody has < 4096B pages.
-	 */
-	oldest = ADDRMAX;
-	ticks = 0;
-	g_hash_table_iter_init(&iter2,mte->v2p_cache);
-	while (g_hash_table_iter_next(&iter2,&kp2,&vp2)) {
-	    vaddr = (ADDR)kp2;
-	    mve = (struct memcache_v2p_entry *)vp2;
-
-	    mve->unused_ticks += new_ticks;
-	    if (mve->unused_ticks > ticks) {
-		ticks = mve->unused_ticks;
-		oldest = vaddr;
-	    }
-	}
-	mte->oldest_v2p = oldest;
-
-	d.new_ticks = new_ticks;
-	d.max_unused_ticks = 0;
-	d.max_unused_ticks_addr = ADDRMAX;
-	clrangesimple_foreach(mte->mmap_cache_p,
-			      __memcache_clrangesimple_foreach_inc_ticks,
-			      &d);
-	mte->oldest_mmap_p = d.max_unused_ticks_addr;
-
-	d.new_ticks = new_ticks;
-	d.max_unused_ticks = 0;
-	d.max_unused_ticks_addr = ADDRMAX;
-	clrangesimple_foreach(mte->mmap_cache_v,
-			      __memcache_clrangesimple_foreach_inc_ticks,
-			      &d);
-	mte->oldest_mmap_v = d.max_unused_ticks_addr;
+	_memcache_inc_ticks_tag_entry(memcache,mte,new_ticks);
     }
 }
 
@@ -227,11 +249,16 @@ int memcache_get_v2p(struct memcache *memcache,ADDR tag,ADDR va,
 	   "CACHE HIT: v 0x%"PRIxADDR" -> p 0x%"PRIxADDR" (tag 0x%"PRIxADDR")\n",
 	   va,mve->pa,tag);
 
+    /* Invalidate this entry and our current guess of oldest, if necessary. */
     mve->unused_ticks = 0;
+    if (mte->oldest_v2p == va)
+	mte->oldest_v2p = ADDRMAX;
+
     if (pa)
 	*pa = mve->pa;
     if (tag_priv)
 	*tag_priv = mte->priv;
+
     return 0;
 }
 
@@ -277,7 +304,21 @@ int memcache_get_mmap(struct memcache *memcache,ADDR tag,ADDR pa,
 	   (flags & MEMCACHE_VIRT) ? "v" : "p",
 	   __pa_start,mme->mem_len,mme->mem,pa,pa_len);
 
+    /* Invalidate this entry and our current guess of oldest, if necessary. */
     mme->unused_ticks = 0;
+    if (flags & MEMCACHE_VIRT) {
+	if (mte->oldest_mmap_v == __pa_start) {
+	    mte->oldest_mmap_v = ADDRMAX;
+	    mte->oldest_mmap_v_ticks = 0;
+	}
+    }
+    else {
+	if (mte->oldest_mmap_p == __pa_start) {
+	    mte->oldest_mmap_p = ADDRMAX;
+	    mte->oldest_mmap_p_ticks = 0;
+	}
+    }
+
     if (pa_start)
 	*pa_start = __pa_start;
     if (pa_offset)
@@ -288,6 +329,7 @@ int memcache_get_mmap(struct memcache *memcache,ADDR tag,ADDR pa,
 	*mem_len = mme->mem_len;
     if (tag_priv)
 	*tag_priv = mte->priv;
+
     return 0;
 }
 
@@ -299,6 +341,8 @@ static struct memcache_tag_entry *__memcache_mte_create(void *tag_priv) {
     mte->oldest_v2p = ADDRMAX;
     mte->oldest_mmap_p = ADDRMAX;
     mte->oldest_mmap_v = ADDRMAX;
+    mte->oldest_mmap_p_ticks = 0;
+    mte->oldest_mmap_v_ticks = 0;
     mte->v2p_cache = g_hash_table_new_full(g_direct_hash,g_direct_equal,
 					   NULL,NULL);
     mte->mmap_cache_p = clrangesimple_create();
@@ -352,10 +396,6 @@ int memcache_set_v2p(struct memcache *memcache,ADDR tag,ADDR va,ADDR pa) {
     mve->unused_ticks = 0;
     mve->pa = pa;
 
-    /*
-     * XXX: deal with oldest_v2p and LRU...
-     */
-
     return 0;
 }
 
@@ -366,6 +406,8 @@ int memcache_set_mmap(struct memcache *memcache,ADDR tag,ADDR pa,
     struct memcache_mmap_entry *mme;
     int rc;
     clrangesimple_t *clr;
+    unsigned long int overage = 0;
+    unsigned long int evicted = 0;
 
     mte = (struct memcache_tag_entry *) \
 	g_hash_table_lookup(memcache->cache,(gpointer)tag);
@@ -383,6 +425,30 @@ int memcache_set_mmap(struct memcache *memcache,ADDR tag,ADDR pa,
     if (flags & MEMCACHE_VIRT)
 	clr = &mte->mmap_cache_v;
 
+    if ((memcache->current_mmap_size + mem_len) > memcache->max_mmap_size) {
+	overage =
+	    (memcache->current_mmap_size + mem_len) - memcache->max_mmap_size;
+
+	vdebug(8,LA_TARGET,LF_MEMCACHE,
+	       "need to evict %lu bytes to make room for new %lu byte chunk!\n",
+	       overage,mem_len);
+
+	evicted = memcache_lru_evict_mmap(memcache,MEMCACHE_TAG_ANY,
+					  MEMCACHE_VIRT,overage);
+	if (evicted < overage)
+	    evicted += memcache_lru_evict_mmap(memcache,MEMCACHE_TAG_ANY,
+					       MEMCACHE_PHYS,overage - evicted);
+
+	if (evicted < overage) {
+	    vwarnopt(8,LA_TARGET,LF_MEMCACHE,
+		     "could not evict %lu bytes to make room for new %lu byte"
+		     " chunk; only evited %lu bytes; cannot cache mmap!\n",
+		     overage,mem_len,evicted);
+	    errno = ENOMEM;
+	    return -1;
+	}
+    }
+
     rc = clrangesimple_add(clr,pa,pa + mem_len,mme);
     if (rc == -1) {
 	vwarn("internal error; cannot cache mmap of %s 0x%"PRIxADDR" at 0x%p!\n",
@@ -398,13 +464,148 @@ int memcache_set_mmap(struct memcache *memcache,ADDR tag,ADDR pa,
 	return 1;
     }
 
+    memcache->current_mmap_size += mem_len;
+
     vdebug(8,LA_TARGET,LF_MEMCACHE,
 	   "CACHE ENTRY %s 0x%"PRIxADDR" len %lu tag 0x%"PRIxADDR" (at 0x%p)\n",
 	   (flags & MEMCACHE_VIRT) ? "v" : "p",pa,mem_len,tag,mem);
 
-    /*
-     * XXX: deal with oldest_mmap and LRU...
-     */
+    return 0;
+}
+
+int __memcache_clrangesimple_print(ADDR start,ADDR end,void *data,void *hpriv) {
+    struct memcache_mmap_entry *mme = (struct memcache_mmap_entry *)data;
+
+    vdebug(9,LA_TARGET,LF_MEMCACHE,
+	   "Range 0x%"PRIxADDR",0x%"PRIxADDR" (ticks %u len %lu)\n",
+	   start,end,mme->unused_ticks,mme->mem_len);
 
     return 0;
+}
+
+unsigned long int memcache_lru_evict_mmap(struct memcache *memcache,ADDR tag,
+					  memcache_flags_t flags,
+					  unsigned long int mem_len) {
+    GHashTableIter iter;
+    gpointer kp,vp;
+    struct memcache_tag_entry *mte;
+    struct memcache_tag_entry *oldest_mte;
+    struct memcache_mmap_entry *mme;
+    ADDR oldest,end;
+    unsigned int ticks;
+    int is_phys;
+    unsigned long int evicted = 0;
+    int rc;
+    int didinc = 0;
+
+    if (flags == 0)
+	flags = MEMCACHE_VIRT | MEMCACHE_PHYS;
+
+    while (evicted < mem_len) {
+	if (memcache->current_mmap_size == 0) {
+	    vdebug(8,LA_TARGET,LF_MEMCACHE,
+		   "cache is empty; evicted %lu of requested %lu bytes\n",
+		   evicted,mem_len);
+	    break;
+	}
+
+	ticks = 0;
+	is_phys = 0;
+	oldest = ADDRMAX;
+	oldest_mte = NULL;
+
+	g_hash_table_iter_init(&iter,memcache->cache);
+	while (g_hash_table_iter_next(&iter,&kp,&vp)) {
+	    didinc = 0;
+	    mte = (struct memcache_tag_entry *)vp;
+	    if (tag != MEMCACHE_TAG_ANY && (ADDR)kp != tag)
+		continue;
+
+	    if (flags & MEMCACHE_PHYS) {
+		if (mte->oldest_mmap_p == ADDRMAX) {
+		    _memcache_inc_ticks_tag_entry(memcache,mte,0);
+		    didinc = 1;
+		}
+
+		if (mte->oldest_mmap_p < ADDRMAX
+		    && mte->oldest_mmap_p_ticks > ticks) {
+		    ticks = mte->oldest_mmap_p_ticks;
+		    oldest = mte->oldest_mmap_p;
+		    oldest_mte = mte;
+		    is_phys = 1;
+		}
+	    }
+
+	    if (flags & MEMCACHE_VIRT) {
+		if (mte->oldest_mmap_v == ADDRMAX && !didinc)
+		    _memcache_inc_ticks_tag_entry(memcache,mte,0);
+
+		if (mte->oldest_mmap_v < ADDRMAX
+		    && mte->oldest_mmap_v_ticks > ticks) {
+		    ticks = mte->oldest_mmap_v_ticks;
+		    oldest = mte->oldest_mmap_v;
+		    oldest_mte = mte;
+		    is_phys = 0;
+		}
+	    }
+	}
+
+	mme = NULL;
+	if (oldest_mte) {
+	    /* We have one to evict; do it! */
+	    if (is_phys)
+		rc = clrangesimple_remove(&oldest_mte->mmap_cache_p,oldest,&end,
+					  (void **)&mme);
+	    else
+		rc = clrangesimple_remove(&oldest_mte->mmap_cache_v,oldest,&end,
+					  (void **)&mme);
+
+	    if (rc < 0) {
+		verror("failed to remove range in eviction; aborting!");
+		break;
+	    }
+	    else if (rc == 1) {
+		verror("could not find cached range 0x%"PRIxADDR
+		       " in eviction; BUG!; aborting!\n",oldest);
+		if (is_phys)
+		    clrangesimple_foreach(oldest_mte->mmap_cache_p,
+					  __memcache_clrangesimple_print,NULL);
+		else
+		    clrangesimple_foreach(oldest_mte->mmap_cache_v,
+					  __memcache_clrangesimple_print,NULL);
+		break;
+	    }
+	    else {
+		evicted += mme->mem_len;
+
+		munmap(mme->mem,mme->mem_len);
+		memcache->current_mmap_size -= mme->mem_len;
+
+		if (is_phys) {
+		    oldest_mte->oldest_mmap_p = ADDRMAX;
+		    oldest_mte->oldest_mmap_p_ticks = 0;
+		}
+		else {
+		    oldest_mte->oldest_mmap_v = ADDRMAX;
+		    oldest_mte->oldest_mmap_v_ticks = 0;
+		}
+
+		vdebug(8,LA_TARGET,LF_MEMCACHE,
+		       "munmap(0x%p,%lu) (%s 0x%"PRIxADDR",0x%"PRIxADDR")\n",
+		       mme->mem,mme->mem_len,is_phys ? "p" : "v",oldest,end);
+
+		free(mme);
+	    }
+	}
+	else {
+	    vwarn("could not find anything to evict; evicted %lu of %lu bytes\n",
+		  evicted,mem_len);
+	    break;
+	}
+    }
+
+    vdebug(8,LA_TARGET,LF_MEMCACHE,
+	   "evicted %lu of requested %lu bytes\n",evicted,mem_len);
+
+    return evicted;
 }

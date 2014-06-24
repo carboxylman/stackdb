@@ -38,6 +38,12 @@
  * target wants to use.  For an OS target, it would probably be the pgd.
  */
 
+/*
+ * NB: TAG_ANY is a wildcard tag for some functions; therefore, never
+ * use it as a legitimate tag!
+ */
+#define MEMCACHE_TAG_ANY ADDRMAX
+
 typedef void (*memcache_tag_priv_dtor)(ADDR tag,void *tag_priv);
 
 typedef enum {
@@ -82,11 +88,17 @@ struct memcache_tag_entry {
      * Every time we increment ticks, we calculate the oldest entry.
      * Then it's ready for our LRU eviction.  We use ADDRMAX as the
      * magic value saying there is no "max" entry (i.e., there *is* no
-     * entry :)).
+     * entry :)).  This can happen if memcache_lru_evict_mmap has to
+     * evict more than one (oldest) mapping, for instance.  It's a win
+     * to keep these calculated only when we inc_ticks, though.  If we
+     * need them and they're not available, we can calculate them
+     * quickly.
      */
     ADDR oldest_v2p;
     ADDR oldest_mmap_p;
     ADDR oldest_mmap_v;
+    unsigned int oldest_mmap_p_ticks;
+    unsigned int oldest_mmap_v_ticks;
 };
 
 struct memcache_v2p_entry {
@@ -131,5 +143,17 @@ int memcache_set_mmap(struct memcache *memcache,ADDR tag,ADDR pa,
 		      memcache_flags_t flags,
 		      void *mem,unsigned long int mem_len);
 
+/*
+ * A dumb little LRU evictor.  Just makes sure to evict (at least)
+ * mem_len.  It doesn't try to evict smartly -- i.e., even if the oldest
+ * is a big huge mmap and there's a slightly less-used smaller map right
+ * there, we'll evict that anyway.  Also, for us, it might make more
+ * sense to evict virt ranges rather than physical pages... but no :).
+ * Return number of bytes evicted; might be less than requested if          
+ * we couldn't find enough!
+ */
+unsigned long int memcache_lru_evict_mmap(struct memcache *memcache,ADDR tag,
+					  memcache_flags_t flags,
+					  unsigned long int mem_len);
 
 #endif /* __MEMCACHE_H__ */
