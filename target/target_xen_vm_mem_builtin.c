@@ -276,6 +276,10 @@ unsigned char *xen_vm_mem_builtin_read_phys_str(struct target *target,
 	    coffset = voffset;
 	}
 
+	mmap = NULL;
+	pbase = 0;
+	plength = 0;
+
 	rc = memcache_get_mmap(target->memcache,0,paddr,1,MEMCACHE_PHYS,
 			       &pbase,NULL,(void **)&mmap,&plength,NULL);
 	if (rc < 0) {
@@ -578,15 +582,22 @@ unsigned char *xen_vm_mem_builtin_read_v_str(struct target *target,
 	    coffset = voffset;
 	}
 
+	mmap = NULL;
+	pbase = 0;
+	plength = 0;
+
 	rc = memcache_get_mmap(target->memcache,0,paddr,1,MEMCACHE_PHYS,
 			       &pbase,NULL,(void **)&mmap,&plength,NULL);
 	if (rc < 0) {
 	    vwarn("memcache_get_mmap error: v 0x%"PRIxADDR" len %lu: %s (%d); continuing\n",
 		  addr,1ul,strerror(errno),rc);
 	}
-	if (!mmap) {
+	if (mmap) {
+	    didmmap = savedmmap = 0;
+	}
+	else {
 	    mmap = __xen_vm_mem_builtin_mmap_phys(target,paddr,mlen,PROT_WRITE,
-						  NULL,NULL,NULL);
+						  NULL,NULL,&plength);
 	    if (!mmap) {
 		verror("could not mmap p 0x%"PRIxADDR" (after translating"
 		       " v 0x%"PRIxADDR"; start v 0x%"PRIxADDR")!\n",
@@ -595,12 +606,11 @@ unsigned char *xen_vm_mem_builtin_read_v_str(struct target *target,
 		    free(lbuf);
 		return NULL;
 	    }
-	    didmmap = savedmmap = 0;
-	}
-	else {
-	    /* Cache it. */
+
 	    didmmap = 1;
 	    savedmmap = 0;
+
+	    /* Cache it. */
 	    rc = memcache_set_mmap(target->memcache,0,pbase,MEMCACHE_PHYS,
 				   mmap,plength);
 	    if (rc == 1) {

@@ -250,7 +250,7 @@ int memcache_get_v2p(struct memcache *memcache,ADDR tag,ADDR va,
 	   va,mve->pa,tag);
 
     /* Invalidate this entry and our current guess of oldest, if necessary. */
-    mve->unused_ticks = 0;
+    mve->unused_ticks = 1;
     if (mte->oldest_v2p == va)
 	mte->oldest_v2p = ADDRMAX;
 
@@ -305,7 +305,7 @@ int memcache_get_mmap(struct memcache *memcache,ADDR tag,ADDR pa,
 	   __pa_start,mme->mem_len,mme->mem,pa,pa_len);
 
     /* Invalidate this entry and our current guess of oldest, if necessary. */
-    mme->unused_ticks = 0;
+    mme->unused_ticks = 1;
     if (flags & MEMCACHE_VIRT) {
 	if (mte->oldest_mmap_v == __pa_start) {
 	    mte->oldest_mmap_v = ADDRMAX;
@@ -393,7 +393,7 @@ int memcache_set_v2p(struct memcache *memcache,ADDR tag,ADDR va,ADDR pa) {
 	       va,mve->pa,pa,tag);
     }
 
-    mve->unused_ticks = 0;
+    mve->unused_ticks = 1;
     mve->pa = pa;
 
     return 0;
@@ -419,7 +419,7 @@ int memcache_set_mmap(struct memcache *memcache,ADDR tag,ADDR pa,
     mme = (struct memcache_mmap_entry *)calloc(1,sizeof(*mme));
     mme->mem = mem;
     mme->mem_len = mem_len;
-    mme->unused_ticks = 0;
+    mme->unused_ticks = 1;
 
     clr = &mte->mmap_cache_p;
     if (flags & MEMCACHE_VIRT)
