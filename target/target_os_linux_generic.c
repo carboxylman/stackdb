@@ -73,7 +73,7 @@ int os_linux_attach(struct target *target) {
     for (i = 0; i < slen; ++i) {
 	if (isdigit(lstate->kernel_filename[i])
 	    && (i + 1) < slen && lstate->kernel_filename[i + 1] == '.') {
-	    lstate->kernel_version = &lstate->kernel_filename[i];
+	    lstate->kernel_version = strdup(&lstate->kernel_filename[i]);
 	    break;
 	}
     }
@@ -301,6 +301,8 @@ int os_linux_attach(struct target *target) {
  errout:
     if (lstate->task_struct_addr_to_thread) 
 	g_hash_table_destroy(lstate->task_struct_addr_to_thread);
+    if (lstate->kernel_version)
+	free(lstate->kernel_version);
     if (lstate->kernel_filename)
 	free(lstate->kernel_filename);
     if (lstate->kernel_elf_filename)
@@ -342,6 +344,8 @@ int os_linux_fini(struct target *target) {
     if (lstate->module_type)
 	bsymbol_release(lstate->module_type);
 
+    if (lstate->kernel_version)
+	free(lstate->kernel_version);
     if (lstate->kernel_elf_filename)
 	free(lstate->kernel_elf_filename);
     if (lstate->kernel_sysmap_filename)
