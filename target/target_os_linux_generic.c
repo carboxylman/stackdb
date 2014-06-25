@@ -259,6 +259,10 @@ int os_linux_attach(struct target *target) {
 	    fclose(cf);
 	}
     }
+    else {
+	vwarn("could not read kernel config from %s; strange errors may result!\n",
+	      pbuf);
+    }
 
     if (!lstate->kernel_elf_filename) {
 	verror("could not infer kernel ELF file (vmlinux) from %s; aborting!\n",
