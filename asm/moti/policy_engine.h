@@ -766,6 +766,7 @@ int gather_module_info(struct target *target, struct value * value, void * data)
 	    \t(name  \"%s\"))\n",module_name); 
     
     fclose(fp);
+    return 0;
 }
 
 
@@ -828,6 +829,7 @@ int cpu_load_info()
     memcpy( (void *)&avenrun1, (avenrun_value->buf + 8), 8);
     avenrun1 = avenrun1 + (FIXED_1/200);
     
+    memcpy( (void *)&avenrun2, (avenrun_value->buf + 16), 8);
     avenrun2 = avenrun2 + (FIXED_1/200);
 
     fp = fopen(base_fact_file, "a+");
@@ -869,7 +871,7 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
     struct value *jiffies_value;
 
     struct target_location_ctxt *tlctxt;
-    struct bsysmbol *jiffies_bsymbol;
+    struct bsymbol *jiffies_bsymbol;
     target_status_t status;
     FILE * fp;
     int pid, i = 0;
@@ -1058,6 +1060,7 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
     value_free(prev_stime_value);
     value_free(sched_entity_value);
     value_free(jiffies_value);
+    return 0;
 }
 
 int process_cpu_utilization() {
@@ -1257,6 +1260,7 @@ nextptr:
     }
     fprintf(fp," ))\n");
     fclose(fp);
+    return 0;
 }
 
 int object_info() {

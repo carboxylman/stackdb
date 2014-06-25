@@ -446,7 +446,7 @@ int main( int argc, char** argv) {
     target_status_t tstat;
     int iteration = 1;
     FILE *fp;
-    struct stat st = {0};
+    struct stat st;
 
     memset(&opts,0,sizeof(opts));
     opts.app_file_path = "application_knowledge.cls";
@@ -673,5 +673,5 @@ exit:
 	printf("Monitoring failed with %d!\n",tstat);
 	return 1;
     }
-
+    return 0;
 }

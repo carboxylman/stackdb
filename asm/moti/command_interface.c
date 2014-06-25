@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -86,6 +86,11 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 	goto fail;
     }
     size_in_recs = v_u32(v);
+    if(size_in_recs == 0){
+	fprintf(stderr,"Got bogus value (0) for size_in_recs\n");
+	ret = CI_LOAD_ERR;
+	goto fail;
+    }
     value_free(v);
 
     /* read the size of each record */
@@ -97,8 +102,12 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 	goto fail;
     }
     size_of_a_rec = v_u32(v);
+    if(size_of_a_rec == 0){
+	fprintf(stderr,"Got bogus value (0) for size_of_a_rec\n");
+	ret = CI_LOAD_ERR;
+	goto fail;
+    }
     value_free(v);
-
     value_free(value);
 
     /* 
@@ -113,6 +122,9 @@ fail:
     }
     if(v) {
 	value_free(v);
+    }
+    if(value) {
+	value_free(value);
     }
     return 0;
 

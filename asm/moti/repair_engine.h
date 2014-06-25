@@ -58,7 +58,7 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
     bs = target_lookup_sym(target, symbol_name, NULL, "repair_driver",
 	    SYMBOL_TYPE_FLAG_VAR);
     if (!bs) {
-	fprintf(stderr, "ERROR: Could not lookup symbol req_ring_channel.\n");
+	fprintf(stderr, "ERROR: Could not lookup symbol %s.\n", symbol_name);
 	ret = CI_LOOKUP_ERR;
 	goto fail;
     }
@@ -72,10 +72,11 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 
     value = target_load_symbol(target, tlctxt, bs, LOAD_FLAG_NONE);
     if (!value) {
-	fprintf(stderr, "ERROR: could not load value of symbol req_ring_channel\n");
+	fprintf(stderr, "ERROR: could not load value of symbol %s\n", symbol_name);
 	ret = CI_LOAD_ERR;
 	goto fail;
     }
+fprintf(stderr, "%s@%p=%p\n", symbol_name, value_addr(value), v_addr(value));
 
     /* read the base address of the record */
     v = target_load_value_member(target, tlctxt,  value, "recs", NULL, LOAD_FLAG_NONE);
@@ -85,6 +86,7 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 	goto fail;
     }
     rec_base_ptr = v_addr(v);
+fprintf(stderr, "recs@%p=%x\n", value_addr(v), rec_base_ptr);
     value_free(v);
 
     /* read the producer index value */
@@ -95,6 +97,7 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 	goto fail;
     }
     index = v_u32(v);
+fprintf(stderr, "%s@%p=%x\n", index_name, value_addr(v), index);
     value_free(v);
 
     /* read the size of the ring buffer in terms of record */
@@ -105,13 +108,13 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 	goto fail;
     }
     size_in_recs = v_u32(v);
-    value_free(v);
+fprintf(stderr, "size_in_recs@%p=%x\n", value_addr(v), size_in_recs);
     if(size_in_recs == 0){
 	fprintf(stderr,"Got bogus value (0) for size_in_recs\n");
 	ret = CI_LOAD_ERR;
-	v = NULL;
 	goto fail;
     }
+    value_free(v);
 
     /* read the size of each record */
     v = target_load_value_member(target, tlctxt, value, "size_of_a_rec", NULL,
@@ -122,13 +125,12 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 	goto fail;
     }
     size_of_a_rec = v_u32(v);
-    value_free(v);
     if(size_of_a_rec == 0){
 	fprintf(stderr,"Got bogus value (0) for size_of_a_rec\n");
 	ret = CI_LOAD_ERR;
-	v = NULL;
 	goto fail;
     }
+    value_free(v);
     value_free(value);
 
     /* 
@@ -374,12 +376,12 @@ failure:
 int result_ready() {
 
     target_status_t status;
-    struct bsymbol *bs;
+    struct bsymbol *bs=NULL;
     struct target_location_ctxt *tlctxt;
     int ready;
     int res;
     struct value *v=NULL;
-    ci_error_t ret;
+    ci_error_t ret = CI_SUCCESS;
     
     if (opts.dump_debug)
 	fprintf(stdout,"INFO: Check if the result is ready to be read.\n");
