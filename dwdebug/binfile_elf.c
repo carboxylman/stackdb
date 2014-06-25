@@ -352,11 +352,11 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
     Elf_Scn *scn;
     Elf_Data *edata;
     uint8_t *done_sections;
-    char *kallsyms_str;
+    char *config_str;
     int kallsyms = 0;
     int kallsyms_after_init = 0;
-    char *set_module_ronx_str;
     int set_module_ronx = 0;
+    int module_unload = 1;
     int major = 0,minor = 0,patch = 0;
     char *tmp;
 
@@ -399,8 +399,8 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
 	if ((tmp = (char *)g_hash_table_lookup(config,"__VERSION_PATCH")))
 	    patch = atoi(tmp);
 
-	kallsyms_str = g_hash_table_lookup(config,"CONFIG_KALLSYMS");
-	if (kallsyms_str && (*kallsyms_str == 'y' || *kallsyms_str == 'Y'))
+	config_str = g_hash_table_lookup(config,"CONFIG_KALLSYMS");
+	if (config_str && (*config_str == 'y' || *config_str == 'Y'))
 	    kallsyms = 1;
 
 	if (kallsyms
@@ -408,11 +408,17 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
 		|| (major == 2 && minor == 6 && patch >= 32)))
 	    kallsyms_after_init = 1;
 
-	set_module_ronx_str = 
+	config_str = 
 	    g_hash_table_lookup(config,"CONFIG_DEBUG_SET_MODULE_RONX");
-	if (set_module_ronx_str 
-	    && (*set_module_ronx_str == 'y' || *set_module_ronx_str == 'Y'))
+	if (config_str 
+	    && (*config_str == 'y' || *config_str == 'Y'))
 	    set_module_ronx = 1;
+
+	config_str = 
+	    g_hash_table_lookup(config,"CONFIG_MODULE_UNLOAD");
+	if (config_str 
+	    && (*config_str == 'n' || *config_str == 'N'))
+	    module_unload = 0;
     }
 
     /*
@@ -443,7 +449,25 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
 	    && (strcmp(secname,".symtab") == 0
 		|| strcmp(secname,".strtab") == 0))
 	    bfielf->shdrs[i].sh_flags |= SHF_ALLOC;
-	else if (strcmp(secname,".modinfo") == 0) 
+
+	/*
+	 * Per-CPU data is special.
+	 */
+	if (strcmp(secname,".data..percpu") == 0)
+	    bfielf->shdrs[i].sh_flags &= ~(unsigned long)SHF_ALLOC;
+
+	/*
+	 * Don't load version info, nor modinfo
+	 */
+	if (strcmp(secname,"__versions") == 0)
+	    bfielf->shdrs[i].sh_flags &= ~(unsigned long)SHF_ALLOC;
+	if (strcmp(secname,".modinfo") == 0) 
+	    bfielf->shdrs[i].sh_flags &= ~(unsigned long)SHF_ALLOC;
+
+	/*
+	 * Don't load exit sections if CONFIG_MODULE_UNLOAD is n.
+	 */
+	if (!module_unload && strncmp(secname,".exit",5) == 0)
 	    bfielf->shdrs[i].sh_flags &= ~(unsigned long)SHF_ALLOC;
     }
 
@@ -950,7 +974,7 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 		     * recombine sections.
 		     */
 		    if (!(bfelf->shdrs[rsym.st_shndx].sh_flags & SHF_ALLOC)) {
-			vdebug(20,LA_DEBUG,LF_ELF,
+			vdebug(9,LA_DEBUG,LF_ELF,
 			       "skipping reloc for non-alloc section %d\n",
 			       rsym.st_shndx);
 			continue;
@@ -1035,13 +1059,16 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 		    goto errout;
 		}
 
-		shdr_new->sh_flags = bfelfinst->shdrs[i].sh_flags;
+		if (shdr_new->sh_flags != bfelfinst->shdrs[i].sh_flags) {
+		    shdr_new->sh_flags = bfelfinst->shdrs[i].sh_flags;
 
-		if (gelf_update_shdr(scn,shdr_new)) {
-		    vwarnopt(3,LA_DEBUG,LF_ELF,
-			     "could not update sh_flags for section %d; skipping"
-			     " but debuginfo reloc might be broken!\n",i);
-		    continue;
+		    if (gelf_update_shdr(scn,shdr_new)) {
+			vwarnopt(3,LA_DEBUG,LF_ELF,
+				 "could not update sh_flags for section %d;"
+				 " skipping; debuginfo reloc might be broken!\n",
+				 i);
+			continue;
+		    }
 		}
 	    }
 	}
