@@ -76,7 +76,6 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 	ret = CI_LOAD_ERR;
 	goto fail;
     }
-fprintf(stderr, "%s@%p=%p\n", symbol_name, value_addr(value), v_addr(value));
 
     /* read the base address of the record */
     v = target_load_value_member(target, tlctxt,  value, "recs", NULL, LOAD_FLAG_NONE);
@@ -86,7 +85,6 @@ fprintf(stderr, "%s@%p=%p\n", symbol_name, value_addr(value), v_addr(value));
 	goto fail;
     }
     rec_base_ptr = v_addr(v);
-fprintf(stderr, "recs@%p=%x\n", value_addr(v), rec_base_ptr);
     value_free(v);
 
     /* read the producer index value */
@@ -97,7 +95,6 @@ fprintf(stderr, "recs@%p=%x\n", value_addr(v), rec_base_ptr);
 	goto fail;
     }
     index = v_u32(v);
-fprintf(stderr, "%s@%p=%x\n", index_name, value_addr(v), index);
     value_free(v);
 
     /* read the size of the ring buffer in terms of record */
@@ -108,7 +105,6 @@ fprintf(stderr, "%s@%p=%x\n", index_name, value_addr(v), index);
 	goto fail;
     }
     size_in_recs = v_u32(v);
-fprintf(stderr, "size_in_recs@%p=%x\n", value_addr(v), size_in_recs);
     if(size_in_recs == 0){
 	fprintf(stderr,"Got bogus value (0) for size_in_recs\n");
 	ret = CI_LOAD_ERR;
