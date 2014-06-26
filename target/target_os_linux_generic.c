@@ -2039,6 +2039,8 @@ struct target_os_ops os_linux_generic_os_ops = {
     .os_version_cmp = os_linux_version_cmp,
 
     .thread_get_pgd_phys = os_linux_thread_get_pgd_phys,
+    .thread_is_user = os_linux_thread_is_user,
+    .thread_get_leader = os_linux_thread_get_leader,
 
     .syscall_table_load = os_linux_syscall_table_load,
     .syscall_table_unload = os_linux_syscall_table_unload,
