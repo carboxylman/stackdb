@@ -395,6 +395,11 @@ unsigned char *xen_vm_mem_builtin_read_phys(struct target *target,ADDR paddr,
     }
 
  out:
+    /* allocate buffer if necessary */
+    if (!buf) {
+	buf = malloc(length + 1);
+	buf[length] = '\0';
+    }
     memcpy(buf,mmap + poffset,length);
     /*
      * Only unmap if the mmap wasn't cache, or if we couldn't cache the
@@ -713,6 +718,11 @@ unsigned char *xen_vm_mem_builtin_read_tid(struct target *target,
     }
 
  out:
+    /* allocate buffer if necessary */
+    if (!buf) {
+	buf = malloc(length + 1);
+	buf[length] = '\0';
+    }
     memcpy(buf,mmap + voffset,length);
     /*
      * Only unmap if the mmap wasn't cache, or if we couldn't cache the
