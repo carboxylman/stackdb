@@ -4109,6 +4109,9 @@ int action_sched(struct probe *probe,struct action *action,
     unsigned int code_len = 0;
     struct probepoint *probepoint;
     struct target *target;
+    int i;
+    struct array_list *idata_list;
+    struct inst_data *idata;
 
     if (action->probe != NULL) {
 	verror("action already associated with probe!\n");
@@ -4183,37 +4186,79 @@ int action_sched(struct probe *probe,struct action *action,
 		    code = NULL;
 		}
 		else {
-		    if (*code == 0x55) {
-			free(code);
+		    /*
+		     * Check both for first instruction 0x55; any
+		     * instruction 0x55 (to catch functions that callq
+		     * elsewhere as their first instr); and disasm the
+		     * prologue to see %sp delta .  Then we can pick
+		     * which method we can use later.
+		     */
+
+		    /*
+		     * Don't require the first instruction to be 0x55
+		     * (push %ebp); look for it at any point in the
+		     * function!  We could also look for 0xc9 (leave).
+		     */
+		    if (*code == 0x55)
 			action->detail.ret.prologue_uses_bp = 1;
+		    else if (disasm_generic(target,code,code_len,
+					    &idata_list,1) == 0) {
+			for (i = 0; i < array_list_len(idata_list); ++i) {
+			    idata = (struct inst_data *) \
+				array_list_item(idata_list,i);
+			    if (idata->type == 0x55) {
+				action->detail.ret.prologue_uses_bp = 1;
+				break;
+			    }
+			}
+			if (idata_list)
+			    array_list_deep_free(idata_list);
+		    }
+		    else {
+			vwarnopt(8,LA_PROBE,LF_ACTION,
+				 "could not disassemble code in range"
+				 "0x%"PRIxADDR"-0x%"PRIxADDR
+				 " for function %s!\n",
+				 probepoint->symbol_addr,probepoint->addr,
+				 probepoint->bsymbol ? probepoint->bsymbol->lsymbol->symbol->name : "<UNKNOWN>");
+		    }
+
+		    if (action->detail.ret.prologue_uses_bp) {
 			vdebug(3,LA_PROBE,LF_ACTION,
-			       "skipping prologue disassembly for function %s: first instr push EBP\n",
+			       "function %s: pushes EBP (can leave; ret)\n",
 			       probepoint->bsymbol ? probepoint->bsymbol->lsymbol->symbol->name : "<UNKNOWN>");
 		    }
 #ifdef ENABLE_DISTORM
-		    else if (disasm_get_prologue_stack_size(target,code,code_len,
-							    &action->detail.ret.prologue_sp_offset)) {
-			verror("could not disassemble function prologue that needed stack tracking for return action!\n");
-			free(code);
-			return -1;
+
+		    /*
+		     * Ok, now disasm the prologue.
+		     */
+		    if (disasm_get_prologue_stack_size(target,code,code_len,
+						       &action->detail.ret.prologue_sp_offset)) {
+			verror("could not disassemble function prologue"
+			       " to track stack growth for return action!\n");
 		    }
 		    else {
+			action->detail.ret.prologue_has_sp_offset = 1;
+
 			vdebug(3,LA_PROBE,LF_ACTION,
 			       "disassembled prologue for function %s: sp moved %d\n",
 			       probepoint->bsymbol ? probepoint->bsymbol->lsymbol->symbol->name : "<UNKNOWN>",
 			       action->detail.ret.prologue_sp_offset);
 		    }
 #else
-		    else {
+		    {
 			verror("disasm support disabled; cannot check prologue"
 			       " to unwind stack frame function %s!\n",
 			       probepoint->bsymbol			\
 			           ? probepoint->bsymbol->lsymbol->symbol->name \
 			           : "<UNKNOWN>");
-			free(code);
-			return -1;
 		    }
 #endif
+
+		    /* Clean up. */
+		    free(code);
+		    code = NULL;
 		}
 	    }
 	}
@@ -4232,10 +4277,19 @@ int action_sched(struct probe *probe,struct action *action,
 		 && !target->threadctl
 		 && target->full_ret_instr_count > 1
 		 && target->spec->bpmode == THREAD_BPMODE_SEMI_STRICT) {
-	    verror("cannot do non-boosted, multi-instruction return"
-		   " on strict target without threadctl!\n");
-	    errno = ENOTSUP;
-	    return -1;
+	    if (action->detail.ret.prologue_has_sp_offset) {
+		vdebug(8,LA_PROBE,LF_ACTION,
+		       "cannot use multi-instr full return; but can use SP"
+		       " adjustment and single-instr return\n");
+
+		action->detail.ret.prologue_uses_bp = 0;
+	    }
+	    else {
+		verror("cannot do non-boosted, multi-instruction return"
+		       " on strict target without threadctl!\n");
+		errno = ENOTSUP;
+		return -1;
+	    }
 	}
 
 	/*
