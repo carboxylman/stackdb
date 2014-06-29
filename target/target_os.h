@@ -111,6 +111,11 @@ int target_os_thread_get_pgd_phys(struct target *target,tid_t tid,ADDR *pgdp);
 int target_os_thread_is_user(struct target *target,tid_t tid);
 tid_t target_os_thread_get_leader(struct target *target,tid_t tid);
 
+int target_os_signal_enqueue(struct target *target,tid_t tid,
+			     int signo,void *data);
+const char *target_os_signal_to_name(struct target *target,int signo);
+int target_os_signal_from_name(struct target *target,const char *name);
+
 int target_os_syscall_table_load(struct target *target);
 int target_os_syscall_table_unload(struct target *target);
 GHashTable *target_os_syscall_table_get(struct target *target);
@@ -168,11 +173,15 @@ struct target_os_ops {
     /*
      * Signals.
      */
-    int (*signal_enqueue)(struct target *target,tid_t tid,int signo,void *data);
-    int (*signal_dequeue)(struct target *target,tid_t tid,int signo);
-    int (*signal_get_mask)(struct target *target,tid_t tid,
+    const char *(*signal_to_name)(struct target *target,int signo);
+    int (*signal_from_name)(struct target *target,const char *name);
+    int (*signal_enqueue)(struct target *target,struct target_thread *tthread,
+			  int signo,void *data);
+    int (*signal_dequeue)(struct target *target,struct target_thread *tthread,
+			  int signo);
+    int (*signal_get_mask)(struct target *target,struct target_thread *tthread,
 			   unsigned char **maskbytes,int *masklen);
-    int (*signal_set_mask)(struct target *target,tid_t tid,
+    int (*signal_set_mask)(struct target *target,struct target_thread *tthread,
 			   unsigned char *maskbytes,int masklen);
 
     /*

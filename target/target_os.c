@@ -61,6 +61,22 @@ tid_t target_os_thread_get_leader(struct target *target,tid_t tid) {
 	return -1;
 }
 
+int target_os_signal_enqueue(struct target *target,tid_t tid,
+			     int signo,void *data) {
+    struct target_thread *tthread = target_load_thread(target,tid,0);
+    if (!tthread)
+	return -1;
+    SAFE_TARGET_OS_OP(target,signal_enqueue,-1,target,tthread,signo,data);
+}
+
+const char *target_os_signal_to_name(struct target *target,int signo) {
+    SAFE_TARGET_OS_OP(target,signal_to_name,NULL,target,signo);
+}
+
+int target_os_signal_from_name(struct target *target,const char *name) {
+    SAFE_TARGET_OS_OP(target,signal_from_name,-1,target,name);
+}
+
 int target_os_syscall_table_load(struct target *target) {
     SAFE_TARGET_OS_OP(target,syscall_table_load,-1,
 		      target);

@@ -1191,6 +1191,215 @@ struct target_thread *os_linux_thread_get_leader(struct target *target,
     return leader;
 }
 
+int os_linux_signal_enqueue(struct target *target,struct target_thread *tthread,
+			    int signo,void *data) {
+    struct os_linux_thread_state *ltstate =
+	(struct os_linux_thread_state *)tthread->personality_state;
+    struct value *value;
+    struct value *signal_v;
+    struct value *signal_pending_v;
+    struct value *signal_pending_signal_v;
+    struct value *v;
+    uint32_t sigmask = 1UL << (signo - 1);
+    const char *signame;
+
+    /* The only reason this should be NULL is if it's a kernel thread. */
+    if (!ltstate->task_struct) {
+	vwarnopt(5,LA_TARGET,LF_OSLINUX,
+		 "thread %d did not have a task struct value!\n",tthread->tid);
+	return -1;
+    }
+
+    value = ltstate->task_struct;
+
+    signame = target_os_signal_to_name(target,signo);
+
+    vdebug(5,LA_TARGET,LF_OSLINUX,
+	   "sending %s (%d) to %d %s\n",
+	   signame,signo,tthread->tid,tthread->name);
+
+    /* Load task_struct.signal (which is a struct signal_struct *) */
+    signal_v = target_load_value_member(target,NULL,value,"signal",NULL,
+					LOAD_FLAG_AUTO_DEREF);
+    /* Load task_struct.signal->shared_pending */
+    signal_pending_v =
+	target_load_value_member(target,NULL,signal_v,"shared_pending",
+				 NULL,LOAD_FLAG_NONE);
+    /* Load task-struct.signal->shared_pending.signal, which is
+     * technically a struct containing an array, but we know what parts
+     * of it to update, so we do it "raw".
+     */
+    signal_pending_signal_v =
+	target_load_value_member(target,NULL,signal_pending_v,"signal",
+				 NULL,LOAD_FLAG_NONE);
+    /* Set a pending SIGSTOP in the pending sigset. */
+    if (value_update_zero(signal_pending_signal_v,(char *)&sigmask,
+			  sizeof(uint32_t))) {
+	verror("could not setup pending signal %s (%d) to %d %s!\n",
+	       signame,signo,tthread->tid,tthread->name);
+	return -1;
+    }
+    target_store_value(target,signal_pending_signal_v);
+    value_free(signal_pending_signal_v);
+    value_free(signal_pending_v);
+
+    /* Now, set some junk in the signal struct.  We really should do
+     * these three things for each thread in the process, but for now,
+     * assume single-threaded processes!
+     */
+    /*
+     * NB: don't set SIGNAL_GROUP_EXIT, after all.  It interferes with
+     * SIGSTOP delivery, and does not seem necessary for KILL.  Although
+     * maybe that's because I haven't tried to kill a multithreaded
+     * program...
+     */
+    /*
+#define LOCAL_SIGNAL_GROUP_EXIT       0x00000008
+    v = target_load_value_member(target,NULL,signal_v,"flags",NULL,
+                                 LOAD_FLAG_NONE);
+    value_update_u32(v,LOCAL_SIGNAL_GROUP_EXIT);
+    target_store_value(target,v);
+    value_free(v);
+
+    v = target_load_value_member(target,NULL,signal_v,"group_exit_code",
+				 NULL,LOAD_FLAG_NONE);
+    value_update_i32(v,signo);
+    target_store_value(target,v);
+    value_free(v);
+    */
+
+    v = target_load_value_member(target,NULL,signal_v,"group_stop_count",
+				 NULL,LOAD_FLAG_NONE);
+    value_update_i32(v,0);
+    target_store_value(target,v);
+    value_free(v);
+
+    value_free(signal_v);
+
+    signal_pending_signal_v = 
+	target_load_value_member(target,NULL,value,"pending.signal",NULL,
+				 LOAD_FLAG_AUTO_DEREF);
+    if (value_update_zero(signal_pending_signal_v,(char *)&sigmask,
+			  sizeof(uint32_t))) {
+	verror("could not setup pending signal %d!\n",signo);
+	return -1;
+    }
+    target_store_value(target,signal_pending_signal_v);
+    value_free(signal_pending_signal_v);
+
+#define LOCAL_TIF_SIGPENDING          (1UL << 2)
+
+    /*
+     * Finally, set SIGPENDING in the task_struct's thread_info struct.
+     *
+     * NB: task_struct->thread_info is already loaded in ltstate -- so
+     * just use it and let it get updated in thread flush at
+     * target_resume!
+     */
+    ltstate->thread_info_flags |= LOCAL_TIF_SIGPENDING;
+    tthread->dirty = 1;
+
+    return 0;
+}
+
+struct os_linux_signame {
+    char *name;
+    int signo;
+};
+
+static struct os_linux_signame sigmap[] = {
+    { "SIGHUP",SIGHUP },
+    { "SIGINT",SIGINT },
+    { "SIGQUIT",SIGQUIT },
+    { "SIGILL",SIGILL },
+    { "SIGTRAP",SIGTRAP },
+    { "SIGABRT",SIGABRT },
+    { "SIGIOT",SIGIOT },
+    { "SIGBUS",SIGBUS },
+    { "SIGFPE",SIGFPE },
+    { "SIGKILL",SIGKILL },
+    { "SIGUSR1",SIGUSR1 },
+    { "SIGSEGV",SIGSEGV },
+    { "SIGUSR2",SIGUSR2 },
+    { "SIGPIPE",SIGPIPE },
+    { "SIGALRM",SIGALRM },
+    { "SIGTERM",SIGTERM },
+    { "SIGSTKFLT",SIGSTKFLT },
+    { "SIGCLD",SIGCLD },
+    { "SIGCHLD",SIGCHLD },
+    { "SIGCONT",SIGCONT },
+    { "SIGSTOP",SIGSTOP },
+    { "SIGTSTP",SIGTSTP },
+    { "SIGTTIN",SIGTTIN },
+    { "SIGTTOU",SIGTTOU },
+    { "SIGURG",SIGURG },
+    { "SIGXCPU",SIGXCPU },
+    { "SIGXFSZ",SIGXFSZ },
+    { "SIGVTALRM",SIGVTALRM },
+    { "SIGPROF",SIGPROF },
+    { "SIGWINCH",SIGWINCH },
+    { "SIGPOLL",SIGPOLL },
+    { "SIGIO",SIGIO },
+    { "SIGPWR",SIGPWR },
+    { "SIGSYS",SIGSYS },
+    { NULL,-1 },
+};
+
+const char *os_linux_signal_to_name(struct target *target,int signo) {
+    unsigned int i;
+
+    for (i = 0; i < sizeof(sigmap) / sizeof(struct os_linux_signame); ++i) {
+	if (!sigmap[i].name)
+	    continue;
+	if (sigmap[i].signo == signo)
+	    return sigmap[i].name;
+    }
+    return NULL;
+}
+
+int os_linux_signal_from_name(struct target *target,const char *name) {
+    unsigned int i;
+    unsigned int len;
+    char *argcopy = NULL;
+
+    if (isdigit(*name))
+	return atoi(name);
+
+    argcopy = strdup(name);
+    len = strlen(argcopy);
+    for (i = 0; i < len; ++i)
+	argcopy[i] = toupper(argcopy[i]);
+
+    for (i = 0; i < sizeof(sigmap) / sizeof(struct os_linux_signame); ++i) {
+	if (!sigmap[i].name)
+	    continue;
+	if (strcmp(sigmap[i].name,argcopy) == 0) {
+	    free(argcopy);
+	    return sigmap[i].signo;
+	}
+    }
+
+    free(argcopy);
+
+    /* Prepend SIG and try again. */
+    len = strlen(name) + 3 + 1;
+    argcopy = (char *)malloc(len);
+    snprintf(argcopy,len,"SIG%s",name);
+    for (i = 0; i < len; ++i)
+	argcopy[i] = toupper(argcopy[i]);
+    for (i = 0; i < sizeof(sigmap) / sizeof(struct os_linux_signame); ++i) {
+	if (!sigmap[i].name)
+	    continue;
+	if (strcmp(sigmap[i].name,argcopy) == 0) {
+	    free(argcopy);
+	    return sigmap[i].signo;
+	}
+    }
+
+    free(argcopy);
+    return -1;
+}
+
 static void __os_linux_syscalls_by_num_dtor(struct target *target,
 					    char *key,void *value) {
     GHashTableIter iter;
@@ -2041,6 +2250,9 @@ struct target_os_ops os_linux_generic_os_ops = {
     .thread_get_pgd_phys = os_linux_thread_get_pgd_phys,
     .thread_is_user = os_linux_thread_is_user,
     .thread_get_leader = os_linux_thread_get_leader,
+    .signal_enqueue = os_linux_signal_enqueue,
+    .signal_to_name = os_linux_signal_to_name,
+    .signal_from_name = os_linux_signal_from_name,
 
     .syscall_table_load = os_linux_syscall_table_load,
     .syscall_table_unload = os_linux_syscall_table_unload,

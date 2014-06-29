@@ -56,6 +56,7 @@ At this point, only one directive is supported.
 ProbeFilter <symbol_name> [id(<probeFilterId>)] [when(pre|post)] [disable()]  \
     [vfilter(value1=/regex/,value2=/regex/,...)]                              \
     [print()] [bt([<target_id>[,<thread_name_or_id>]])]                       \
+    [signal(<target_id>,<thread_name_or_id>,<signo_or_name>)]                \]
     [report(rt=i|f,tn=<typename>,tid=<typeid>,rv=<resultvalue>,msg="<msg>",   \
             ttctx=all|hier|self|none),bt=0|1)]                                \
     [enable(<probeFilterId>)] [disable(<probeFilterId>)] [remove(<probeFilterId>)] \
@@ -157,6 +158,21 @@ the syntax.
     it will print out all threads for which
     strcmp(<thread_name_or_id>,thread->name) matches.  If you specify a
     thread number, it will print out that thread -- if it exists.
+
+  signal(<target_id>,<thread_name_or_id>,<signo_or_signame>)
+
+    This command injects a signal into a thread in an OS.
+    If you specify -1 for <target_id> instead of a target id, it will
+    signal a thread in the target that is currently executing (i.e.,
+    the one that hit the probe); otherwise, the target you specified
+    will be used.  If you don't specify <thread_name_or_id>, it will
+    signal the current thread.  If you use the value '0', it will
+    signal all threads in the target.  If you specify a thread name,
+    it will signal all threads for which
+    strcmp(<thread_name_or_id>,thread->name) matches.  If you specify a
+    thread number, it will signal that thread -- if it exists.
+    <signo_or_signame> is a signal number or signal name (i.e., SIGKILL,
+    SIGINT, etc).
 
   report(rt=i|f,tn=<typename>,tid=<typeid>,rv=<resultvalue>,msg="<msg>",   \
          ttctx=all|hier|self|none),ttdetail=<-2|-1|0|1|2>,bt=0|1) {1}

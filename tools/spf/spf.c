@@ -56,6 +56,7 @@ typedef enum {
     SPF_ACTION_BT      = 8,
     SPF_ACTION_BTUP    = 9,
     SPF_ACTION_BTALL   = 10,
+    SPF_ACTION_SIGNAL  = 11,
 } spf_action_type_t;
 
 struct spf_action {
@@ -95,6 +96,11 @@ struct spf_action {
 	    int tid;
 	    char *thid;
 	} bt;
+	struct {
+	    int tid;
+	    char *thid;
+	    char *sigdesc;
+	} signal;
     };
 };
 
@@ -429,6 +435,82 @@ void spf_backtrace(struct target *t,tid_t ctid,char *tiddesc) {
     fflush(stdout);
 }
 
+int spf_signal(struct target *t,tid_t ctid,char *tiddesc,char *sigdesc) {
+    struct array_list *tids;
+    tid_t tid;
+    int i;
+    tid_t stid = -1;
+    struct target_thread *tthread;
+    char *endptr = NULL;
+    int rc;
+    int signo;
+
+    signo = target_os_signal_from_name(t,sigdesc);
+
+    if (tiddesc) {
+	stid = (int)strtol(tiddesc,&endptr,10);
+	if (tiddesc == endptr) 
+	    stid = -1;
+	else
+	    tiddesc = NULL;
+    }
+    else 
+	stid = -1;
+
+    /*
+     * If stid == 0 or tiddesc, do them all.
+     *
+     * If it == -1 && !tiddesc, do ctid.
+     *
+     * If it >= 0, do that one.
+     */
+
+    if (stid == -1 && !tiddesc) {
+	tids = array_list_create(1);
+	array_list_append(tids,(void *)(uintptr_t)ctid);
+    
+	printf("Signaling target '%s' (current thread %d):\n\n",t->name,ctid);
+    }
+    else if (stid > 0) {
+	tids = array_list_create(1);
+	array_list_append(tids,(void *)(uintptr_t)stid);
+    
+	printf("Signaling target '%s' (thread %d):\n\n",t->name,stid);
+    }
+    else if (tiddesc) {
+	tids = target_list_tids(t);
+    
+	printf("Signaling target '%s' (thread name %s):\n\n",t->name,tiddesc);
+    }
+    else {
+	tids = target_list_tids(t);
+    
+	printf("Signaling target '%s' (all threads):\n\n",t->name);
+    }
+
+    array_list_foreach_fakeptr_t(tids,i,tid,uintptr_t) {
+	tthread = target_lookup_thread(t,tid);
+	if (!tthread)
+	    continue;
+
+	if ((tiddesc && !tthread->name)
+	    || (tiddesc && strcmp(tiddesc,tthread->name)))
+	    continue;
+
+	rc = target_os_signal_enqueue(t,tid,signo,NULL);
+	if (rc < 0)
+	    fprintf(stdout,"thread %"PRIiTID": (error!)\n",tid);
+	else if (rc == 0)
+	    fprintf(stdout,"thread %"PRIiTID": success\n",tid);
+	else
+	    fprintf(stdout,"thread %"PRIiTID": unknown status %d\n",tid,rc);
+    }
+
+    fflush(stdout);
+
+    return 0;
+}
+
 result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		 struct probe *trigger,struct probe *base) {
     GHashTableIter iter;
@@ -445,7 +527,7 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
     struct spf_action *spfa;
     struct probe *fprobe;
     result_t retval = RESULT_SUCCESS;
-    struct target *btt;
+    struct target *btt,*st;
 
     /*
      * Do all the actions.
@@ -694,6 +776,20 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		btt = probe->target;
 
 	    spf_backtrace(btt,tid,spfa->bt.thid);
+	}
+	else if (spfa->atype == SPF_ACTION_SIGNAL) {
+	    if (spfa->signal.tid > 1) {
+		st = target_lookup_target_id(spfa->signal.tid);
+		if (!st) {
+		    verror("no existing target with id '%d'!\n",
+			   spfa->signal.tid);
+		    return RESULT_SUCCESS;
+		}
+	    }
+	    else
+		st = probe->target;
+
+	    spf_signal(st,tid,spfa->signal.thid,spfa->signal.sigdesc);
 	}
 	else {
 	    verror("probe %s: bad action type %d -- BUG!\n",
@@ -2068,6 +2164,43 @@ struct spf_config *load_config_file(char *file) {
 			else if (lpc == 1)
 			    spfa->bt.thid = strdup(token);
 			else 
+			    goto err;
+
+			++lpc;
+		    }
+		    bufptr = nextbufptr;
+
+		    spff->actions = g_slist_append(spff->actions,spfa);
+		    spfa = NULL;
+		}
+		else if (strcmp(token,"signal") == 0) {
+		    spfa = calloc(1,sizeof(*spfa));
+		    spfa->atype = SPF_ACTION_SIGNAL;
+
+		    /* Set some defaults. */
+		    spfa->signal.tid = -1;
+		    spfa->signal.thid = NULL;
+
+		    char *nextbufptr = NULL;
+		    nextbufptr = _get_next_non_enc_esc(bufptr,')');
+		    if (!nextbufptr)
+			goto err;
+		    *nextbufptr = '\0';
+		    ++nextbufptr;
+		    token = NULL;
+		    token2 = NULL;
+		    saveptr = NULL;
+
+		    int lpc = 0;
+		    while ((token = strtok_r((!token) ? bufptr : NULL,",",
+					     &saveptr))) {
+			if (lpc == 0)
+			    spfa->signal.tid = atoi(token);
+			else if (lpc == 1)
+			    spfa->signal.thid = strdup(token);
+			else if (lpc == 2)
+			    spfa->signal.sigdesc = strdup(token);
+			else
 			    goto err;
 
 			++lpc;
