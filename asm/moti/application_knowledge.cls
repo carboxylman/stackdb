@@ -1,7 +1,6 @@
-
 ;==========================Template for base facts ===============================
 
-    (deftemplate task-struct
+(deftemplate task-struct
      (slot comm (type STRING))
      (slot pid (type INTEGER))
      (slot tgid (type INTEGER))
@@ -22,11 +21,11 @@
      (slot gid (type INTEGER))
      (slot egid (type INTEGER))
      (slot sgid (type INTEGER))
-    (slot fsgid (type INTEGER))
-    (slot parent_pid (type INTEGER))
-(slot parent_name (type STRING)))
+     (slot fsgid (type INTEGER))
+     (slot parent_pid (type INTEGER))
+     (slot parent_name (type STRING)))
 
-    (deftemplate opened-files
+(deftemplate opened-files
      (slot comm (type STRING))
      (slot pid (type INTEGER))
      (slot lnk_count (type INTEGER) (default 0))
@@ -45,15 +44,15 @@
      (multislot sock_files (type STRING) ( default "NONE"))
      (slot num_opened_files (type INTEGER) ( default 0)))
 
-    (deftemplate loaded-module
+(deftemplate loaded-module
      (slot name (type STRING)))
 
-    (deftemplate cpu-load
+(deftemplate cpu-load
      (slot one-min (type FLOAT))
      (slot five-min (type FLOAT))
      (slot fifteen-min (type FLOAT)))
 
-    (deftemplate cpu_utilization
+(deftemplate cpu_utilization
      (slot comm (type STRING))
      (slot pid (type INTEGER))
      (slot utime (type INTEGER))
@@ -65,40 +64,171 @@
      (slot utilization (type FLOAT)))
 
 
-    (deftemplate loaded-objects
+(deftemplate loaded-objects
      (slot comm (type STRING))
      (slot pid (type INTEGER))
      (multislot objects (type STRING)))
 
-    (deftemplate tampered_sys_call  
+(deftemplate tampered_sys_call  
      (slot name (type STRING))
      (slot original (type INTEGER))
      (slot current (type INTEGER))
      (slot index (type INTEGER))
      (slot base_address (type INTEGER)))
 
-    (deftemplate hooked_sys_call
+(deftemplate hooked_sys_call
      (slot name (type STRING))
      (slot original-0-8 (type STRING))
      (slot original-8-16 (type STRING))
      (slot address (type STRING)))
 
 
-    (deftemplate command_line
+(deftemplate command_line
      (slot command (type STRING))
      (slot environment (type STRING)))
 
-    ;===========Users application level knowledge captured facts====================
 
-    (deftemplate known-objects
+;============================== Template for anomaly facts =============================
+
+(deftemplate unknown-process
+     (slot name (type STRING))
+     (slot pid (type INTEGER)))
+
+(deftemplate unknown-module
+     (slot name (type STRING)))
+
+(deftemplate tampered-syscall
+     (slot name (type STRING))
+     (slot index (type INTEGER))
+     (slot original (type INTEGER))
+     (slot base_address (type INTEGER)))
+
+(deftemplate hooked-syscall
+     (slot name (type STRING))
+     (slot address (type STRING))
+     (slot original-0-8 (type STRING))
+     (slot original-8-16 (type STRING)))
+
+
+(deftemplate open-udp-socket
+     (slot name (type STRING))
+     (slot pid (type INTEGER)))
+
+(deftemplate open-tcp-socket
+     (slot name (type STRING))
+     (slot pid (type INTEGER)))
+
+(deftemplate open-reg-file
+     (slot name  (type STRING))
+     (slot pid (type INTEGER))
+     (slot file_name (type STRING)))
+
+(deftemplate per-process-cpu-utilization
+     (slot name (type STRING))
+     (slot pid (type INTEGER))
+     (slot cpu (type FLOAT) (default 0.0))
+     (slot count (type INTEGER)(default 0)))
+
+(deftemplate priv-escalated-process
+     (slot name (type STRING))
+     (slot pid (type INTEGER))
+     (slot parent_pid (type INTEGER)))
+    ;(slot original_uid (type INTEGER)) how do we get the original values
+    ;(slot original_gid (type INTEGER))) or do we assign random non root values.
+
+(deftemplate unknown-object-list
+     (slot name (type STRING))
+     (slot pid (type INTEGER))
+     (multislot object-list (type STRING) (default "NULL")))
+
+(deftemplate unknown-open-files
+     (slot name (type STRING))
+     (slot pid (type INTEGER))
+     (slot file (type STRING)))
+    
+(deftemplate wrong-process-cred
+     (slot name (type STRING))
+     (slot pid (type INTEGER))
+     (slot uid (type INTEGER))
+     (slot gid (type INTEGER)))
+
+(deftemplate wrong-process-hierarchies
+     (slot name (type STRING))
+     (slot pid (type INTEGER)))
+
+(deftemplate missing-process
+     (slot name (type STRING))
+     (multislot command (type SYMBOL)))
+
+(deftemplate root-shells
+     (slot name (type STRING))
+     (slot pid (type INTEGER)))
+
+(deftemplate root-shells
+     (slot name (type STRING))
+     (slot pid (type INTEGER)))
+
+;=================templates  for recovery facts ===================================
+
+    ;A common recovery fact template for all receovery actions
+(deftemplate recovery-action
+     (slot function-name (type SYMBOL))
+     (multislot arg_list (type SYMBOL)))
+
+(deftemplate handle-multiple-threads
+     (slot name (type STRING))
+     (slot stage (type SYMBOL)))
+
+(deftemplate unknown-process-recovery-prev-action
+     (slot prev_action (type SYMBOL))
+     (slot name (type STRING)))
+
+
+(deftemplate unknown-module-recovery-prev-action
+     (slot prev_action (type SYMBOL))
+     (slot name (type STRING)))
+
+
+(deftemplate open-udp-socket-recovery-prev-action
+     (slot prev_action (type SYMBOL))
+     (slot name (type STRING))
+     (slot pid (type INTEGER)))
+
+
+(deftemplate open-tcp-socket-recovery-prev-action
+     (slot prev_action (type SYMBOL))
+     (slot name (type STRING))
+     (slot pid (type INTEGER)))
+
+
+;(deftemplate priv-escalation-recovery-prev-action
+;    (slot prev_action (type SYMBOL))
+;     (slot name (type STRING)))
+
+(deftemplate wrong-proc-cred-prev-action
+      (slot prev_action (type SYMBOL))
+      (slot name (type STRING)))
+
+(deftemplate unload-unknown-object-prev-action
+      (slot name (type STRING))
+      (slot pid (type INTEGER))
+      (slot prev_action (type SYMBOL)))
+
+;=================Templates for application level facts=======================
+
+(deftemplate known-objects
      (slot name (type STRING))
      (multislot object-list (type STRING)))
 
-    (deftemplate known-open-files
+(deftemplate known-object-regex
+     (slot name (type STRING))
+     (slot object-regex (type STRING)))
+
+(deftemplate known-open-files
      (slot name (type STRING))
      (multislot file-names (type STRING)))
     
-    (deftemplate known-process-cred
+(deftemplate known-process-cred
      (slot name (type STRING))
      (multislot uid (type INTEGER))
      (multislot euid (type INTEGER))
@@ -110,9 +240,294 @@
      (multislot fsgid (type INTEGER))
      (multislot parent_name (type STRING)))
 
-    (deftemplate mandatory-process
+(deftemplate mandatory-process
      (slot name (type STRING))
      (multislot command (type SYMBOL))) 
+
+
+
+;========== Application level rules that are used to detect anomalies =================
+
+    ;=========rule to detect any unkown process that is executing======
+    (defrule identify-unknown-process
+    (task-struct (comm ?name1)
+	(pid ?pid))
+    (known-processes $?name2)
+    (test (not( member$ ?name1 $?name2)))
+     =>
+    (assert (unknown-process
+		(name ?name1)
+		(pid ?pid)))
+    (printout t "ANOMALY: Unknown process " ?name1 " found" crlf))
+
+ 
+    ;======rule to detect a known process with wrong credentials========
+    (defrule identify-wrong-process-cred
+    (task-struct (comm ?name1)
+		 (pid ?pid1)
+		 (uid ?uid1)
+		 (gid ?gid1))
+    (known-process-cred
+		  (name ?name1)
+		  (uid $?uid2)
+		  (gid $?gid2))
+    (test (or (not ( member$ ?uid1 $?uid2)) (not ( member$ ?gid1 $?gid2))))
+     =>
+    (assert(wrong-process-cred
+		 (name ?name1)
+		 (pid ?pid1)
+		 (uid (nth$ 1 $?uid2))
+		 (gid (nth$ 1 $?gid2))))
+     (printout t "ANOMALY: Process " ?name1 " has wrong uid: "?uid1 ": gid " ?gid1 ".Expected uid " (nth$ 1 $?gid2) " gid " (nth$ 1 $?gid2) crlf))
+    
+
+    ;========rule to detect any unknown module that is loaded=============
+    (defrule identify-unknown-module
+    (loaded-module (name ?name1))
+    (known-modules $?name2)
+    (test (not (member$ ?name1 $?name2)))
+     =>
+    (assert (unknown-module (name ?name1)))
+    (printout t "ANOMALY: Unknown module " ?name1 "found" crlf)) 
+
+    ;=======rule to check for tampered syscall table entries=============
+    (defrule identify-tampered-syscall
+    (tampered_sys_call
+	(name ?name1)
+	(index ?index)
+	(original ?address)
+	(base_address ?base_address))
+     =>
+    (assert (tampered-syscall
+	    (name ?name1)
+	    (index ?index)
+	    (original ?address)
+	    (base_address ?base_address)))
+    (printout t "ANOMALY: Tampered system call " ?name1 " found at offset " ?index crlf))
+
+    ;==========rule to check for hooked syscall table entries===========
+    (defrule identify-hooked-syscall
+    (hooked_sys_call
+	(name ?name1)
+	(address ?address)
+	(original-0-8 ?bytes1)
+	(original-8-16 ?bytes2))
+    =>
+    (assert (hooked-syscall
+	    (name ?name1)
+	    (address ?address)
+	    (original-0-8 ?bytes1)
+	    (original-8-16 ?bytes2)))
+    (printout t "ANOMALY: Hooked system call " ?name1 " found at address " ?address crlf))
+
+
+    ;========rule to check fo unauthorised TCP/UDP sockets===========
+    (defrule identify-open-udp-sockets
+    (opened-files
+	(comm ?name1)
+	(pid ?pid)
+	(sock_files $?sockets))
+    (or (test(member$ "UDP" $?sockets)) (test (member$ "UDPv6" $?sockets)))
+    (process-with-udp $?proc_list)
+    (not (test (member$ ?name1 $?proc_list)))
+     =>
+    (assert (open-udp-socket
+	    (name ?name1)
+	    (pid ?pid)))
+    (printout t "ANOMALY: UDP sockets open for process " ?name1 crlf ))
+
+    (defrule identify-open-tcp-sockets
+    (opened-files
+	(comm ?name1)
+	(pid ?pid)
+	(sock_files $?sockets))
+    (or (test (member$ "TCP" $?sockets)) (test (member$ "TCPv6" $?sockets)))
+    (process-with-tcp $?proc_list)
+    (not (test (member$ ?name1 $?proc_list)))
+    =>
+    (assert (open-tcp-socket
+	    (name ?name1)
+	    (pid ?pid)))
+    (printout t "ANOMALY: TCP socket open for process " ?name1 crlf))
+
+    ;===========rule to identify high cpu utilization================
+    (defrule identify-high-cpu-utilization_1
+    (cpu_utilization
+	(comm ?name1)
+	(pid ?pid)
+	(utilization ?cpu))
+    (not (exists (per-process-cpu-utilization
+		    (name ?name1)
+		    (pid ?pid))))
+    (test (not ( = ?cpu 0.0)))
+     =>
+    (assert (per-process-cpu-utilization
+	      (name ?name1)
+	      (pid ?pid)))
+    (printout t "ANOMALY: Initializing per process cpu utilization numbers for " ?name1 crlf))
+
+    (defrule identify-high-cpu-utilization_2
+     ?of <- (cpu_utilization
+	 (comm ?name1)
+	 (pid ?pid)
+	 (utilization ?cpu))
+     ?f <- ( per-process-cpu-utilization
+	 (name ?name1)
+	 (pid ?pid)
+	 (cpu ?utilization)
+	 (count ?count))
+     =>
+     (bind ?utilization (+ ?utilization ?cpu))
+     (bind ?count (+ ?count 1))
+     (retract ?f)
+     (retract ?of)
+     (assert (per-process-cpu-utilization
+	      (name ?name1)
+	      (pid ?pid)
+	      (cpu ?utilization)
+	      (count ?count)))
+     (save-facts "state_information/cpu_state_info.fac" visible per-process-cpu-utilization)
+     (printout t "ANOMALY: Adding the current cpu utilization value to the previous value for " ?name1 crlf)
+     (printout t "ANOMALY: Sum of cpu utilization " ?utilization " for iteration " ?count crlf ))
+
+
+     ;=========rules to identify unknown objects loded for processes.=========
+    (defrule identify-unknown-loaded-objects
+    (loaded-objects
+	(comm ?name)
+	(pid ?pid)
+	(objects $?objects))
+    (known-objects
+	(name ?name)
+	(object-list $?known_objects))
+    (test (not (subsetp $?objects $?known_objects)))
+    (known-object-regex
+	(name ?name)
+	(object-regex ?regex))
+    (not (exists (unknown-object-list
+		   (name ?name)
+		   (pid ?pid))))
+     =>
+    (progn$ (?field  $?objects)
+    (if (and (not ( member$ ?field $?known_objects))
+	     (not (str-index ?regex ?field)))  
+    then
+	(assert ( unknown-object-list
+		    (name ?name)
+		    (pid ?pid))))))
+
+    (defrule identify-unknown-objects_1
+    ?of <- (loaded-objects
+		(comm ?name)
+		(pid ?pid)
+		(objects $?objects))
+    (known-objects
+	(name ?name)
+	(object-list $?known_objects))
+    (test (not (subsetp $?objects $?known_objects)))
+    ?f <- (unknown-object-list
+		(name ?name)
+		(pid ?pid)
+		(object-list $?list))
+    (known-object-regex
+	(name ?name)
+	(object-regex ?regex))
+     =>
+    (progn$ (?field  $?objects)
+    (if (and (not ( member$ ?field $?known_objects))
+	      (not (str-index ?regex ?field))) 
+    then
+	(printout t "ANOMALY: Unknown object " ?field " found for process " ?name crlf)
+	(bind $?list  (insert$ $?list 1 ?field))))
+    (modify ?f (object-list $?list))
+    (retract ?of))
+
+
+    ;========rules to identify unknown files opened by processes==========
+    (defrule identify-unknown-open-files
+    (opened-files
+	(comm ?name)
+	(pid ?pid)
+	(reg_files $?file_names))
+    (known-open-files
+	(name ?name)
+	(file-names $?known_files))
+    =>
+    (progn$ (?field  $?file_names)
+    (if (not ( member$ ?field $?known_files))
+    then 
+	(assert(unknown-open-files
+	       (name ?name)
+	       (pid ?pid)
+	       (file ?field)))
+    (printout t "ANOMALY: Unknown open file found for  process " ?name ?field crlf))))
+
+
+    ;=========rules to identify wrong process hierarchies============= 
+    (defrule identify-wrong-process-hierarchies
+    (task-struct (comm ?name1)
+		  (pid ?pid1)
+		  (parent_name ?parent_name))
+    (known-process-cred
+		  (name ?name1)
+		  (parent_name $?parent))
+    (test (not ( member$ ?parent_name $?parent)))
+    =>
+    (assert(unknown-process
+		 (name ?name1)
+		 (pid ?pid1)))
+    (printout t "ANOMALY: Process " ?name1 " has wrong parent:" ?parent_name  crlf))
+
+
+
+    ;============rule to make sure all the mandatory process are executing=========
+    (defrule identify-missing-process
+    (mandatory-process (name ?name)
+		       (command $?command))
+    (not (exists(task-struct (comm ?name))))
+     =>
+    (assert (missing-process
+		(name ?name)
+		(command $?command)))
+    (printout t "ANOMALY: Process " ?name " not found." crlf))
+
+     ;===========rule to check for root shells spawne from non root processes========
+     (defrule identify-root-shells
+     (task-struct (comm ?name1)
+		  (pid ?pid)
+		  (parent_pid ?ppid) 
+		  (uid ?uid))
+     (task-struct (pid ?ppid)
+                  (uid ?puid))
+     (and (test(= ?uid 0)) (test(!= ?puid 0)))
+     (test (member$ ?name1 (create$ "bash" "sh" "csh" "-bash" "-csh" "-sh")))
+     =>
+     (assert (root-shells
+	     (name ?name1)
+	     (pid ?pid)))
+     (printout t "ANOMALY: Root shell " ?name1 " found with pid" ?pid  crlf))
+
+     ;=============rule to check for invalid su command usage.================
+     (defrule validate-su-processes
+     (task-struct (comm ?name1)
+		  (pid ?pid)
+		  (parent_pid ?ppid))
+     (test (member$ ?name1 (create$ "su")))
+     (task-struct (pid ?ppid)
+                  (uid ?puid))
+     (users-with-su-priv $?su_users)
+     (test(not (member$ ?puid $?su_users)))
+     =>
+     (assert (unknown-process
+     (pid ?pid)))
+     (printout t "ANOMALY: Unauthorised su process found" ?pid  crlf))
+
+
+
+
+
+;===========Users application level knowledge captured facts====================
+
 
 (deffacts base-facts
      (known-processes "swapper/0" "init" "kthreadd" "ksoftirqd/0" "kworker/0:0" 
@@ -154,83 +569,137 @@
       "atd" "ntpd" "getty" "flush-202:1" "login" "bash" "apache2" "kworker/u:1" "repair_submodul" "python")
 
 
-    ( known-objects 
+     (known-objects 
     	( name "init")
       	( object-list  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libc-2.15.so"  "librt-2.15.so"  "libpthread-2.15.so"  "libdbus-1.so.3.5.8"  "libnih-dbus.so.1.0.0"  "libnih.so.1.0.0"  "ld-2.15.so"  "init"  ))
-    
-    ( known-objects 
+
+;; NOTE: NO smart pattern matching is going on here. We just match the constant
+;;       part of the string.
+    (known-object-regex
+	(name "init")
+	(object-regex "NULL"))
+ 
+     (known-objects 
     	( name "upstart-udev-br")
       	( object-list  "librt-2.15.so"  "libc-2.15.so"  "libudev.so.0.13.0"  "libpthread-2.15.so"  "libdbus-1.so.3.5.8"  "libnih-dbus.so.1.0.0"  "libnih.so.1.0.0"  "ld-2.15.so"  "upstart-udev-bridge"  ))
 
-    ( known-objects 
+    (known-object-regex
+	(name "spstart-udev-br")
+	(object-regex "NULL"))
+
+      (known-objects 
     	( name "udevd")
       	( object-list  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libpthread-2.15.so"  "libdl-2.15.so"  "libc-2.15.so"  "librt-2.15.so"  "libselinux.so.1"  "ld-2.15.so"  "udevd"  ))
 
-    ( known-objects 
-    	( name "udevd")
-      	( object-list  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libpthread-2.15.so"  "libdl-2.15.so"  "libc-2.15.so"  "librt-2.15.so"  "libselinux.so.1"  "ld-2.15.so"  "udevd"  ))
-    
-    ( known-objects 
-    	( name "udevd")
-      	( object-list  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libpthread-2.15.so"  "libdl-2.15.so"  "libc-2.15.so"  "librt-2.15.so"  "libselinux.so.1"  "ld-2.15.so"  "udevd"  ))
+    (known-object-regex
+	(name "udevd")
+	(object-regex "NULL"))
 
-    ( known-objects 
+     (known-objects 
 	( name "upstart-socket-")
       	( object-list  "librt-2.15.so"  "libc-2.15.so"  "libpthread-2.15.so"  "libdbus-1.so.3.5.8"  "libnih-dbus.so.1.0.0"  "libnih.so.1.0.0"  "ld-2.15.so"  "upstart-socket-bridge"  ))
 
-    ( known-objects 
+    (known-object-regex
+	(name "upstart-socket-")
+	(object-regex "NULL"))
+
+     (known-objects 
     	( name "dbus-daemon")
       	( object-list  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libdl-2.15.so"  "libc-2.15.so"  "librt-2.15.so"  "libpthread-2.15.so"  "libselinux.so.1"  "libexpat.so.1.5.2"  "ld-2.15.so"  "dbus-daemon"  ))
 
-    ( known-objects 
+    (known-object-regex
+	(name "dbus-daemon")
+	(object-regex "NULL"))
+
+     (known-objects 
     	( name "rpcbind")
       	( object-list  "rpcbind"  "libnss_files-2.15.so"  "libdl-2.15.so"  "libgssglue.so.1.0.0"  "libnsl-2.15.so"  "libc-2.15.so"  "libpthread-2.15.so"  "libtirpc.so.1.0.10"  "libwrap.so.0.7.6"  "ld-2.15.so"  ))
 
-    ( known-objects 
+    (known-object-regex
+	(name "rpcbind")
+	(object-regex "NULL"))
+
+     (known-objects 
     	( name "rsyslogd")
       	( object-list  "rsyslogd"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "imklog.so"  "imuxsock.so"  "libnss_files-2.15.so"  "lmnet.so"  "libc-2.15.so"  "librt-2.15.so"  "libdl-2.15.so"  "libpthread-2.15.so"  "libz.so.1.2.3.4"  "ld-2.15.so"  ))
 
-    ( known-objects 
+    (known-object-regex
+	(name "rsyslogd")
+	(object-regex "NULL"))
+
+     (known-objects 
     	( name "cron")
       	( object-list  "cron"  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libdl-2.15.so"  "libc-2.15.so"  "libselinux.so.1"  "libpam.so.0.83.0"  "ld-2.15.so"  ))
-    
-    ( known-objects 
+ 
+    (known-object-regex
+	(name "cron")
+	(object-regex "NULL"))
+
+     (known-objects 
     	( name "atd")
       	( object-list  "atd"  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libdl-2.15.so"  "libc-2.15.so"  "libpam.so.0.83.0"  "ld-2.15.so"  ))
 
-    ( known-objects 
+    (known-object-regex
+	(name "atd")
+	(object-regex "NULL"))
+
+     (known-objects 
     	( name "mysqld")
 	( object-list  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnss_compat-2.15.so"  "libgcc_s.so.1"  "libnsl-2.15.so"  "libc-2.15.so"  "libm-2.15.so"  "libstdc++.so.6.0.16"  "libpthread-2.15.so"  "libdl-2.15.so"  "libcrypt-2.15.so"  "libwrap.so.0.7.6"  "librt-2.15.so"  "libz.so.1.2.3.4"  "ld-2.15.so"  "mysqld"  ))
 
-    ( known-objects 
+    (known-object-regex
+	(name "mysqld")
+	(object-regex "NULL"))
+
+     (known-objects 
     	( name "login")
       	( object-list  "login"  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnss_compat-2.15.so"  "pam_umask.so"  "pam_mail.so"  "pam_motd.so"  "libutil-2.15.so"  "pam_lastlog.so"  "pam_limits.so"  "pam_group.so"  "pam_permit.so"  "pam_deny.so"  "libcrypt-2.15.so"  "libnsl-2.15.so"  "pam_unix.so"  "pam_env.so"  "libselinux.so.1"  "pam_selinux.so"  "pam_nologin.so"  "pam_securetty.so"  "pam_faildelay.so"  "libdl-2.15.so"  "libc-2.15.so"  "libpam_misc.so.0.82.0"  "libpam.so.0.83.0"  "ld-2.15.so"  "libpam.so.0.83.0"))
-    
-    
-    ( known-objects 
+ 
+    (known-object-regex
+	(name "login")
+	(object-regex "NULL"))
+   
+     (known-objects 
     	( name "bash")
 	( object-list  "bash"  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "locale-archive"  "libc-2.15.so"  "libdl-2.15.so"  "libtinfo.so.5.9"  "ld-2.15.so"  "gconv-modules.cache"  "ld-2.15.so" "libutil-2.15.so" ))
 
-    ( known-objects 
+    (known-object-regex
+	(name "bash")
+	(object-regex "NULL"))
+
+     (known-objects 
     	( name "httpd")
       	( object-list  "httpd"  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libm-2.15.so"  "mod_uni_mem.so"  "mod_rewrite.so"  "mod_alias.so"  "mod_userdir.so"  "mod_speling.so"  "mod_actions.so"  "mod_imagemap.so"  "mod_dir.so"  "mod_negotiation.so"  "mod_vhost_alias.so"  "mod_dav_fs.so"  "mod_cgi.so"  "mod_info.so"  "mod_asis.so"  "mod_autoindex.so"  "mod_status.so"  "mod_dav.so"  "mod_mime.so"  "mod_proxy_balancer.so"  "mod_proxy_ajp.so"  "mod_proxy_scgi.so"  "mod_proxy_http.so"  "mod_proxy_ftp.so"  "mod_proxy_connect.so"  "mod_proxy.so"  "mod_version.so"  "mod_setenvif.so"  "mod_unique_id.so"  "mod_usertrack.so"  "mod_ident.so"  "mod_headers.so"  "mod_expires.so"  "mod_cern_meta.so"  "mod_mime_magic.so"  "mod_env.so"  "mod_logio.so"  "mod_log_forensic.so"  "mod_log_config.so"  "libz.so.1.2.3.4"  "mod_deflate.so"  "mod_substitute.so"  "mod_filter.so"  "mod_include.so"  "mod_ext_filter.so"  "mod_reqtimeout.so"  "mod_dumpio.so"  "mod_dbd.so"  "mod_auth_digest.so"  "mod_auth_basic.so"  "mod_authz_default.so"  "mod_authz_owner.so"  "mod_authz_dbm.so"  "mod_authz_user.so"  "mod_authz_groupfile.so"  "mod_authz_host.so"  "mod_authn_default.so"  "mod_authn_dbd.so"  "mod_authn_anon.so"  "mod_authn_dbm.so"  "mod_authn_file.so"  "libdl-2.15.so"  "libcrypt-2.15.so"  "libexpat.so.0.5.0"  "libc-2.15.so"  "libpthread-2.15.so"  "libapr-1.so.0.4.5"  "libaprutil-1.so.0.4.1"  "ld-2.15.so"  "dev/zero"  "ld-2.15.so"  ))
-    
-    ( known-objects 
+
+    (known-object-regex
+	(name "httpd")
+	(object-regex "NULL"))
+   
+     (known-objects 
     	( name "sshd")
       	( object-list  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnss_compat-2.15.so"  "libresolv-2.15.so"  "libkeyutils.so.1.4"  "libkrb5support.so.0.1"  "libk5crypto.so.3.1"  "libdl-2.15.so"  "libnsl-2.15.so"  "libc-2.15.so"  "libcom_err.so.2.1"  "libkrb5.so.3.3"  "libgssapi_krb5.so.2.2"  "libcrypt-2.15.so"  "libz.so.1.2.3.4"  "libutil-2.15.so"  "libcrypto.so.1.0.0"  "libpthread-2.15.so"  "libselinux.so.1"  "libpam.so.0.83.0"  "libwrap.so.0.7.6"  "ld-2.15.so"  "sshd"  ))
 
-    ( known-objects 
+    (known-object-regex
+	(name "sshd")
+	(object-regex "NULL"))
+
+     (known-objects 
     	( name "ntpd")
       	( object-list  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libresolv-2.15.so"  "libnss_dns-2.15.so"  "libnss_files-2.15.so"  "libpthread-2.15.so"  "libc-2.15.so"  "libcap.so.2.22"  "librt-2.15.so"  "libm-2.15.so"  "libopts.so.25.10.0"  "ld-2.15.so"  "ntpd"  ))
 
+    (known-object-regex
+	(name "ntpd")
+	(object-regex "NULL"))
 
-    ( known-objects 
+     (known-objects 
     	( name "apache2")
-      	( object-list  "httpd"  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libm-2.15.so"  "mod_uni_mem.so"  "mod_rewrite.so"  "mod_alias.so"  "mod_userdir.so"  "mod_speling.so"  "mod_actions.so"  "mod_imagemap.so"  "mod_dir.so"  "mod_negotiation.so"  "mod_vhost_alias.so"  "mod_dav_fs.so"  "mod_cgi.so"  "mod_info.so"  "mod_asis.so"  "mod_autoindex.so"  "mod_status.so"  "mod_dav.so"  "mod_mime.so"  "mod_proxy_balancer.so"  "mod_proxy_ajp.so"  "mod_proxy_scgi.so"  "mod_proxy_http.so"  "mod_proxy_ftp.so"  "mod_proxy_connect.so"  "mod_proxy.so"  "mod_version.so"  "mod_setenvif.so"  "mod_unique_id.so"  "mod_usertrack.so"  "mod_ident.so"  "mod_headers.so"  "mod_expires.so"  "mod_cern_meta.so"  "mod_mime_magic.so"  "mod_env.so"  "mod_logio.so"  "mod_log_forensic.so"  "mod_log_config.so"  "libz.so.1.2.3.4"  "mod_deflate.so"  "mod_substitute.so"  "mod_filter.so"  "mod_include.so"  "mod_ext_filter.so"  "mod_reqtimeout.so"  "mod_dumpio.so"  "mod_dbd.so"  "mod_auth_digest.so"  "mod_auth_basic.so"  "mod_authz_default.so"  "mod_authz_owner.so"  "mod_authz_dbm.so"  "mod_authz_user.so"  "mod_authz_groupfile.so"  "mod_authz_host.so"  "mod_authn_default.so"  "mod_authn_dbd.so"  "mod_authn_anon.so"  "mod_authn_dbm.so"  "mod_authn_file.so"  "libdl-2.15.so"  "libcrypt-2.15.so"  "libexpat.so.0.5.0"  "libc-2.15.so"  "libpthread-2.15.so"  "libapr-1.so.0.4.5"  "libaprutil-1.so.0.4.1"  "ld-2.15.so"  "dev/zero"  "ld-2.15.so"  ))
+      	( object-list  "apache2"  "libnss_files-2.15.so"  "libnss_nis-2.15.so"  "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libm-2.15.so"  "mod_rewrite.so"  "mod_alias.so"  "mod_userdir.so"  "mod_speling.so"  "mod_actions.so"  "mod_imagemap.so"  "mod_dir.so"  "mod_negotiation.so"  "mod_vhost_alias.so"  "mod_dav_fs.so"  "mod_cgi.so"  "mod_info.so"  "mod_asis.so"  "mod_autoindex.so"  "mod_status.so"  "mod_dav.so"  "mod_mime.so"  "mod_proxy_balancer.so"  "mod_proxy_ajp.so"  "mod_proxy_scgi.so"  "mod_proxy_http.so"  "mod_proxy_ftp.so"  "mod_proxy_connect.so"  "mod_proxy.so"  "mod_version.so"  "mod_setenvif.so"  "mod_unique_id.so"  "mod_usertrack.so"  "mod_ident.so"  "mod_headers.so"  "mod_expires.so"  "mod_cern_meta.so"  "mod_mime_magic.so"  "mod_env.so"  "mod_logio.so"  "mod_log_forensic.so"  "mod_log_config.so"  "libz.so.1.2.3.4"  "mod_deflate.so"  "mod_substitute.so"  "mod_filter.so"  "mod_include.so"  "mod_ext_filter.so"  "mod_reqtimeout.so"  "mod_dumpio.so"  "mod_dbd.so"  "mod_auth_digest.so"  "mod_auth_basic.so"  "mod_authz_default.so"  "mod_authz_owner.so"  "mod_authz_dbm.so"  "mod_authz_user.so"  "mod_authz_groupfile.so"  "mod_authz_host.so"  "mod_authn_default.so"  "mod_authn_dbd.so"  "mod_authn_anon.so"  "mod_authn_dbm.so"  "mod_authn_file.so"  "libdl-2.15.so"  "libcrypt-2.15.so"  "libexpat.so.0.5.0"  "libc-2.15.so"  "libpthread-2.15.so"  "libapr-1.so.0.4.5"  "libaprutil-1.so.0.4.1"  "ld-2.15.so"  "dev/zero"  "ld-2.15.so" "libgcc_s.so.1" "mod_cgid.so" "libuuid.so.1.3.0" "libexpat.so.1.5.2" "libapr-1.so.0.4.6" "libaprutil-1.so.0.3.12" "libpcre.so.3.12.1" ))
+
+    (known-object-regex
+	(name "apache2")
+	(object-regex "SYSSV"))
 
 
-
-     ;	
      ;(known-open-files
      ;	    (name "mysqld")
      ;	    (file-names "ibdata1"  "ibrXE6sH"  "ibpAJ2Qg"
@@ -246,11 +715,6 @@
      ;	    "time_zone_transition.MYI"  "time_zone_transition.MYD"  "time_zone_transition_type.MYI"
      ;	    "time_zone_transition_type.MYD " "ibdXzyvI" "ibllKoER" "ibhfBa90" "ibdsC3Ha" "ibXM1Wgk" 
      ;	     "error.log"))
-
-    (known-open-files
-	(name "helper")
-	(file-names "NONE"))
-
 
     (known-process-cred
       (name "swapper/0")
@@ -900,7 +1364,7 @@
       (egid 0 33)
       (sgid 0 33)
       (fsgid 0 33)
-      (parent_name "init" "apache2"))
+      (parent_name "init" "apache2" "sudo"))
 
     (known-process-cred  
      (name "login")
@@ -936,7 +1400,7 @@
      (egid 0 1001)
      (sgid 0 1001)
      (fsgid 0 1001)
-     (parent_name "login" "sshd" "su"))
+     (parent_name "login" "sshd"))
 
     (known-process-cred  
      (name "repair_submodul")
@@ -961,430 +1425,4 @@
      (sgid 0)
      (fsgid 0)
      (parent_name "bash")))
-
-
-
-    ;============================== Template for anomaly facts =============================
-
-
-    (deftemplate unknown-process
-     (slot name (type STRING))
-     (slot pid (type INTEGER)))
-
-    (deftemplate unknown-module
-     (slot name (type STRING)))
-
-    (deftemplate tampered-syscall
-     (slot name (type STRING))
-     (slot index (type INTEGER))
-     (slot original (type INTEGER))
-     (slot base_address (type INTEGER)))
-
-    (deftemplate hooked-syscall
-     (slot name (type STRING))
-     (slot address (type STRING))
-     (slot original-0-8 (type STRING))
-     (slot original-8-16 (type STRING)))
-
-
-    (deftemplate open-udp-socket
-     (slot name (type STRING))
-     (slot pid (type INTEGER)))
-
-    (deftemplate open-tcp-socket
-     (slot name (type STRING))
-     (slot pid (type INTEGER)))
-
-    (deftemplate open-reg-file
-     (slot name  (type STRING))
-     (slot pid (type INTEGER))
-     (slot file_name (type STRING)))
-
-    (deftemplate per-process-cpu-utilization
-     (slot name (type STRING))
-     (slot pid (type INTEGER))
-     (slot cpu (type FLOAT) (default 0.0))
-     (slot count (type INTEGER)(default 0)))
-
-    (deftemplate priv-escalated-process
-     (slot name (type STRING))
-     (slot pid (type INTEGER))
-     (slot parent_pid (type INTEGER)))
-    ;(slot original_uid (type INTEGER)) how do we get the original values
-    ;(slot original_gid (type INTEGER))) or do we assign random non root values.
-
-    (deftemplate unknown-object-list
-     (slot name (type STRING))
-     (slot pid (type INTEGER))
-     (multislot object-list (type STRING) (default "NULL")))
-
-    (deftemplate unknown-open-files
-     (slot name (type STRING))
-     (slot pid (type INTEGER))
-     (slot file (type STRING)))
-    
-    (deftemplate wrong-process-cred
-     (slot name (type STRING))
-     (slot pid (type INTEGER))
-     (slot uid (type INTEGER))
-     (slot gid (type INTEGER)))
-
-    (deftemplate wrong-process-hierarchies
-     (slot name (type STRING))
-     (slot pid (type INTEGER)))
-
-    (deftemplate missing-process
-     (slot name (type STRING))
-     (multislot command (type SYMBOL)))
-
-    (deftemplate root-shells
-     (slot name (type STRING))
-     (slot pid (type INTEGER)))
-
-    (deftemplate root-shells
-     (slot name (type STRING))
-     (slot pid (type INTEGER)))
-
-
-    ;========== Application level rules that are used to detect anomalies =================
-
-    ;rule to detect any unkown process that is executing
-    (defrule identify-unknown-process
-     (task-struct (comm ?name1)
-      (pid ?pid))
-     (known-processes $?name2)
-     (test (not( member$ ?name1 $?name2)))
-     =>
-     (assert (unknown-process
-	      (name ?name1)
-	      (pid ?pid)))
-     (printout t "ANOMALY: Unknown process " ?name1 " found" crlf))
-
- 
-    ; rule to detect a known process with wrong credentials
-    (defrule identify-wrong-process-cred
-     (task-struct (comm ?name1)
-		  (pid ?pid1)
-		  (uid ?uid1)
-		  (gid ?gid1))
-     (known-process-cred
-		  (name ?name1)
-		  (uid $?uid2)
-		  (gid $?gid2))
-     (test (or (not ( member$ ?uid1 $?uid2)) (not ( member$ ?gid1 $?gid2))))
-     =>
-     (assert(wrong-process-cred
-		 (name ?name1)
-		 (pid ?pid1)
-		 (uid (nth$ 1 $?uid2))
-		 (gid (nth$ 1 $?gid2))))
-     (printout t "ANOMALY: Process " ?name1 " has wrong uid: "?uid1 ": gid " ?gid1 ".Expected uid " (nth$ 1 $?gid2) " gid " (nth$ 1 $?gid2) crlf))
-    
-
-    ;rule to detect any unknown module that is loaded
-    (defrule identify-unknown-module
-     (loaded-module (name ?name1))
-     (known-modules $?name2)
-     (test (not (member$ ?name1 $?name2)))
-     =>
-     (assert (unknown-module (name ?name1)))
-     (printout t "ANOMALY: Unknown module " ?name1 "found" crlf)) 
-
-    ;rule to check for tampered syscall table entries
-    (defrule identify-tampered-syscall
-     (tampered_sys_call
-      (name ?name1)
-      (index ?index)
-      (original ?address)
-      (base_address ?base_address))
-     =>
-     (assert (tampered-syscall
-	      (name ?name1)
-	      (index ?index)
-	      (original ?address)
-	      (base_address ?base_address)))
-     (printout t "ANOMALY: Tampered system call " ?name1 " found at offset " ?index crlf))
-
-    ;rule to check for hooked syscall table entries
-    (defrule identify-hooked-syscall
-     (hooked_sys_call
-      (name ?name1)
-      (address ?address)
-      (original-0-8 ?bytes1)
-      (original-8-16 ?bytes2))
-     =>
-     (assert (hooked-syscall
-	      (name ?name1)
-	      (address ?address)
-	      (original-0-8 ?bytes1)
-	      (original-8-16 ?bytes2)))
-     (printout t "ANOMALY: Hooked system call " ?name1 " found at address " ?address crlf))
-
-
-    ;rule to check fo unauthorised TCP/UDP sockets
-    (defrule identify-open-udp-sockets
-     (opened-files
-      (comm ?name1)
-      (pid ?pid)
-      (sock_files $?sockets))
-     (or (test(member$ "UDP" $?sockets)) (test (member$ "UDPv6" $?sockets)))
-     (process-with-udp $?proc_list)
-     (not (test (member$ ?name1 $?proc_list)))
-     =>
-     (assert (open-udp-socket
-	      (name ?name1)
-	      (pid ?pid)))
-     (printout t "ANOMALY: UDP sockets open for process " ?name1 crlf ))
-
-    (defrule identify-open-tcp-sockets
-     (opened-files
-      (comm ?name1)
-      (pid ?pid)
-      (sock_files $?sockets))
-     (or (test (member$ "TCP" $?sockets)) (test (member$ "TCPv6" $?sockets)))
-     (process-with-tcp $?proc_list)
-     (not (test (member$ ?name1 $?proc_list)))
-     =>
-     (assert (open-tcp-socket
-	      (name ?name1)
-	      (pid ?pid)))
-     (printout t "ANOMALY: TCP socket open for process " ?name1 crlf))
-
-    ;rule to identify high cpu utilization
-
-    (defrule identify-high-cpu-utilization_1
-     (cpu_utilization
-      (comm ?name1)
-      (pid ?pid)
-      (utilization ?cpu))
-     (not (exists ( per-process-cpu-utilization
-		    (name ?name1)
-		    (pid ?pid))))
-     (test (not ( = ?cpu 0.0)))
-     =>
-     (assert (per-process-cpu-utilization
-	      (name ?name1)
-	      (pid ?pid)))
-     (printout t "ANOMALY: Initializing per process cpu utilization numbers for " ?name1 crlf))
-
-    (defrule identify-high-cpu-utilization_2
-     ?of <- (cpu_utilization
-	 (comm ?name1)
-	 (pid ?pid)
-	 (utilization ?cpu))
-     ?f <- ( per-process-cpu-utilization
-	 (name ?name1)
-	 (pid ?pid)
-	 (cpu ?utilization)
-	 (count ?count))
-     =>
-     (bind ?utilization (+ ?utilization ?cpu))
-     (bind ?count (+ ?count 1))
-     (retract ?f)
-     (retract ?of)
-     (assert (per-process-cpu-utilization
-	      (name ?name1)
-	      (pid ?pid)
-	      (cpu ?utilization)
-	      (count ?count)))
-     (save-facts "state_information/cpu_state_info.fac" visible per-process-cpu-utilization)
-    (printout t "ANOMALY: Adding the current cpu utilization value to the previous value for " ?name1 crlf)
-    (printout t "ANOMALY: Sum of cpu utilization " ?utilization " for iteration " ?count crlf ))
-
-    ; rules to deal with priviledge escalation
-    ;(defrule identify-privledge-escalation
-    ; ( task-struct
-    ;   (comm ?name)
-    ;   (pid ?pid)
-    ;   (uid ?uid)
-    ;   (euid ?euid)
-    ;   (gid  ?gid)
-    ;   (egid ?egid)
-    ;   (parent_pid ?parent_pid))
-    ; (or (test (= ?uid 0)) (test (= ?euid 0)))
-    ; (process-run-as-root $?process-run-as-root)
-    ; (test (not (member$ ?name $?process-run-as-root)))
-    ; =>
-    ; (assert (priv-escalated-process
-    ;	      (name ?name)
-    ;	      (pid ?pid)
-    ;	      (parent_pid ?parent_pid)))
-    ; (printout t "ANOMALY: Process " ?name " with unauthorised root priv found" crlf))
-
-    ;rules to identify unknown objects loded for processes.
-    (defrule identify-unknown-loaded-objects
-     (loaded-objects
-      (comm ?name)
-      (pid ?pid)
-      (objects $?objects))
-     (known-objects
-      (name ?name)
-      (object-list $?known_objects))
-     (test (not (subsetp $?objects $?known_objects)))
-     (not (exists (unknown-object-list
-		   (name ?name)
-		   (pid ?pid))))
-     =>
-     (assert ( unknown-object-list
-	       (name ?name)
-	       (pid ?pid)))
-     (printout t "ANOMALY: Unknown objects found for process " ?name crlf))
-
-    (defrule identify-unknown-objects_1
-     ?of <- (loaded-objects
-	 (comm ?name)
-	 (pid ?pid)
-	 (objects $?objects))
-     (known-objects
-      (name ?name)
-      (object-list $?known_objects))
-     (test (not (subsetp $?objects $?known_objects)))
-     ?f <- (unknown-object-list
-	 (name ?name)
-	 (pid ?pid)
-	 (object-list $?list))
-     =>
-     (progn$ (?field  $?objects)
-      (if (not ( member$ ?field $?known_objects))
-       then 
-       (bind $?list  (insert$ $?list 1 ?field))))
-     (modify ?f (object-list $?list))
-     (retract ?of)
-     (printout t "ANOMALY: Inserted the unknown object name into the list " crlf ))
-
-
-    ;rules to identify unknown files opened by processes
-    (defrule identify-unknown-open-files
-     (opened-files
-      (comm ?name)
-      (pid ?pid)
-      (reg_files $?file_names))
-     (known-open-files
-      (name ?name)
-      (file-names $?known_files))
-     =>
-     (progn$ (?field  $?file_names)
-      (if (not ( member$ ?field $?known_files))
-       then 
-       (assert(unknown-open-files
-	       (name ?name)
-	       (pid ?pid)
-	       (file ?field)))
-       (printout t "ANOMALY: Unknown open file found for  process " ?name ?field crlf))))
-
-
-    ;rules to identify wrong process hierarchies 
-    (defrule identify-wrong-process-hierarchies
-     (task-struct (comm ?name1)
-		  (pid ?pid1)
-		  (parent_name ?parent_name))
-     (known-process-cred
-		  (name ?name1)
-		  (parent_name $?parent))
-     (test (not ( member$ ?parent_name $?parent)))
-     =>
-     (assert(unknown-process
-		 (name ?name1)
-		 (pid ?pid1)))
-     (printout t "ANOMALY: Process " ?name1 " has wrong parent:" ?parent_name  crlf))
-
-
-
-    ;rule to make sure all the mandatory process are executing
-    (defrule identify-missing-process
-     (mandatory-process (name ?name)
-			(command $?command))
-     (not (exists(task-struct (comm ?name))))
-     =>
-     (assert (missing-process
-	       (name ?name)
-	       (command $?command)))
-     (printout t "ANOMALY: Process " ?name " not found." crlf))
-
-     ;rule to check for root shells spawne from non root processes
-     (defrule identify-root-shells
-      (task-struct (comm ?name1)
-		   (pid ?pid)
-		   (parent_pid ?ppid) 
-		   (uid ?uid))
-      (task-struct (pid ?ppid)
-                   (uid ?puid))
-      (and (test(= ?uid 0)) (test(!= ?puid 0)))
-      (test (member$ ?name1 (create$ "bash" "sh" "csh" "-bash" "-csh" "-sh")))
-      =>
-      (assert (root-shells
-      (name ?name1)
-      (pid ?pid)))
-      (printout t "ANOMALY: Root shell " ?name1 " found with pid" ?pid  crlf))
-
-     ;rule to check for invalid su command usage.
-     (defrule validate-su-processes
-      (task-struct (comm ?name1)
-		   (pid ?pid)
-		   (parent_pid ?ppid))
-      (test (member$ ?name1 (create$ "su")))
-      (task-struct (pid ?ppid)
-                   (uid ?puid))
-      (users-with-su-priv $?su_users)
-      (test(not (member$ ?puid $?su_users)))
-      =>
-      (assert (unknown-process
-      (pid ?pid)))
-      (printout t "ANOMALY: Unauthorised su process found" ?pid  crlf))
-
-
-
-
-
-    ;=================template  for recovery facts ===================================
-
-    ;A common recovery fact template for all receovery actions
-    (deftemplate recovery-action
-     (slot function-name (type SYMBOL))
-     (multislot arg_list (type SYMBOL)))
-
-    (deftemplate handle-multiple-threads
-     (slot name (type STRING))
-     (slot stage (type SYMBOL)))
-
-    (deftemplate unknown-process-recovery-prev-action
-     (slot prev_action (type SYMBOL))
-     (slot name (type STRING)))
-
-
-    (deftemplate unknown-module-recovery-prev-action
-     (slot prev_action (type SYMBOL))
-     (slot name (type STRING)))
-
-
-    (deftemplate open-udp-socket-recovery-prev-action
-     (slot prev_action (type SYMBOL))
-     (slot name (type STRING))
-     (slot pid (type INTEGER)))
-
-
-    (deftemplate open-tcp-socket-recovery-prev-action
-     (slot prev_action (type SYMBOL))
-     (slot name (type STRING))
-     (slot pid (type INTEGER)))
-
-
-;    (deftemplate priv-escalation-recovery-prev-action
-;    (slot prev_action (type SYMBOL))
-;     (slot name (type STRING)))
-
-     (deftemplate wrong-proc-cred-prev-action
-      (slot prev_action (type SYMBOL))
-      (slot name (type STRING)))
-
-     (deftemplate unload-unknown-object-prev-action
-      (slot name (type STRING))
-      (slot pid (type INTEGER))
-      (slot prev_action (type SYMBOL)))
-
-
-
-
-
-
 

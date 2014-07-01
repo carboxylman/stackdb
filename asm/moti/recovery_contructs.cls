@@ -1,6 +1,5 @@
 
-;================== Recovery rule to to generate recoveryfacts =======================
-; Rules for dealing with unknown processes
+;==============Rules for dealing with unknown processes======================
 (defrule kill-unknown-process
 	(declare (salience 10))
 	?f <- (unknown-process 
@@ -58,7 +57,7 @@
         (printout t "RECOVERY: Tried killing the unknown process and its parent, but the process still exist. !!! Repeating the  recovery cycle now. " crlf))
 
 
-; Rules for dealing with unknown modules that are loaded.
+;==============Rules for dealing with unknown modules that are loaded.=========================
 (defrule unload-unknown-modules
 	(declare (salience 10))
 	?f <- (unknown-module
@@ -68,7 +67,7 @@
 			(name ?name1))))
 	=>
 	(assert (recovery-action
-		    (function-name unload_module)
+		    (function-name unload_kernel_module)
 		    (arg_list ?name1)))
 	(assert (unknown-module-recovery-prev-action
 		    (prev_action unload)
@@ -88,7 +87,7 @@
 	=>
 	(retract ?of)
 	(assert (recovery-action
-		    (function-name unload_module)
+		    (function-name unload_kernel_module)
 		    (arg_list  ?name2)))
 	(retract ?f)
 	(assert (unknown-module-recovery-prev-action
@@ -99,7 +98,7 @@
 	(printout t "RECOVERY: Module " ?name2 "was found loaded again!!!!, unloading it." crlf))
 
 
-;Rules for dealing with tampered system call table entries
+;===============Rules for dealing with tampered system call table entries=======================
 (defrule fix-syscall-entries
 	(declare (salience 10))
 	?f <- (tampered-syscall
@@ -130,7 +129,7 @@
 	(printout t "RECOVERY: Fixed hooked syatem call " ?name1 crlf))
 
 
-; Rules for dealing with unauthorized UDP connections
+;=================Rules for dealing with unauthorized UDP connections====================
 (defrule close-udp-sockets
 	(declare (salience 10))
 	?f <- (open-udp-socket
@@ -190,7 +189,7 @@
 	(printout t "RECOVERY: Process " ?name1" with unauthorised UPD socket was found again. !!! Repeating the recovery cycle now." crlf))
 
 
-; Rules for dealing with unauthorized TCP connections
+;====================Rules for dealing with unauthorized TCP connections===========================
 (defrule close-tcp-sockets
 	(declare (salience 10))
 	?f <- (open-tcp-socket
@@ -250,7 +249,7 @@
 	(printout t "RECOVERY: Proces " ?name1" with unauthorized TCP socket was found again!!! Repeating the recovery cycle now" crlf))
 
 
-;Rules for delaling with high per process cpu utilization
+;================Rules for delaling with high per process cpu utilization=============================
 
 (defrule correct-cpu-utilization 
 	(declare (salience 10))
@@ -267,7 +266,7 @@
 	(low-priority-process $?low-prio-processes)
 	(test (member$ ?name1 $?low-prio-processes))
 	(cpu-load (five-min ?load))
-	(test ( > ?load 0.5))
+	(test ( > ?load 0.3))
 	=>
 	(assert (recovery-action
 		    (function-name reduce_utilization)
@@ -278,7 +277,7 @@
         (modify ?f (cpu 0.0) (count 0))
 	(save-facts "state_information/cpu_state_info.fac" visible per-process-cpu-utilization))
 
-; Rules for dealing with priv escalation
+;================Rules for dealing with priv escalation===========================
 ;
 ;(defrule correct-priv-escalation
 ;	(declare (salience 10))
@@ -339,7 +338,10 @@
 ;	(printout t "RECOVERY: The privileges escalated  process " ?name1" was found again !!! Repating the recovery cycle" crlf))
 ;
 
-; rules for dealing with unknown objects loaded
+;======================rules for dealing with unknown objects loaded=======================
+; These rules show how to use handle-multiple-threds fact to deal with multiple
+; process with multiple threads. We have to make sure that the same repair action
+; is applied to all the threads in the same iteration.
 
 (defrule unload-unknown-objects
     (declare (salience 10))
@@ -381,6 +383,9 @@
     ?of <- (unload-unknown-object-prev-action
 		(prev_action  restart_process)
 		(name ?name))
+    (mandatory-process 
+		(name ?name)
+		(command $?command))
     (not (exists (handle-multiple-threads
 		    (name ?name)
 		    (stage zero))))
@@ -388,13 +393,20 @@
     (retract ?f)
     (retract ?of)
     (assert (recovery-action
-		(function-name kill_process)
-		(arg_list  ?name ?pid )))
+		(function-name trusted_restart)
+		(arg_list  ?pid $?list $?command )))
     (assert (handle-multiple-threads
 		(name ?name)
 		(stage one)))
+    (assert (unload-unknown-object-prev-action
+		(prev_action  trusted_restart)
+		(name ?name)
+		(pid ?pid)))
     (save-facts "state_information/recovery_action.fac" visible recovery-action)
-    (printout t "RECOVERY: The unknown objets "?list " were found to be loaded agian. Hence terminating the process "  ?name  crlf))
+    (save-facts "state_information/unload_unknown_object_state_info.fac" visible unload-unknown-object-prev-action)
+    (printout t "RECOVERY: The unknown objets "?list " were found to be loaded again. Trying to restart the process in a trust mode" crlf))
+
+
 
 (defrule unload-unknown-objects_02
     (declare (salience 30))
@@ -403,17 +415,17 @@
 		(pid ?pid)
 		(object-list $?list))
     ?of <- (unload-unknown-object-prev-action
-		(prev_action  restart_process)
+		(prev_action  trusted_restart)
 		(name ?name))
     (not (exists (handle-multiple-threads
 		    (name ?name)
-		    (stage zero))))
-    (test (= (str-compare ?name "apache2") 0))
+		    (stage one))))
+    ;(test (= (str-compare ?name "apache2") 0))
     =>
     (retract ?f)
     (retract ?of)
     (assert (recovery-action
-		(function-name unload_module)
+		(function-name sled_object)
 		(arg_list ?pid $?list )))
     (assert (unload-unknown-object-prev-action
 		(prev_action  sled_object)
@@ -421,10 +433,11 @@
 		(pid ?pid)))
      (assert (handle-multiple-threads
 		(name ?name)
-		(stage one)))
+		(stage two)))
     (save-facts "state_information/recovery_action.fac" visible recovery-action)
     (save-facts "state_information/unload_unknown_object_state_info.fac" visible unload-unknown-object-prev-action)
-    (printout t "RECOVERY: Sleding the unknown objects " $?list " loaded by the process " ?name crlf))
+    (printout t "RECOVERY: Sledding the unknown objects " $?list " loaded by the process " ?name crlf)
+    (printout t "RECOVERY: This repair may cause certain processes to crash or become unresponsive." crlf))
 
 
 (defrule unload-unknown-objects_03
@@ -439,16 +452,33 @@
 		(pid ?pid))
     (not (exists (handle-multiple-threads
 		    (name ?name)
-		    (stage one))))
-    (test (= (str-compare ?name "apache2") 0))
+		    (stage two))))
+    ;(test (= (str-compare ?name "apache2") 0))
     =>
     (retract ?f)
     (save-facts "state_information/recovery_action.fac" visible recovery-action)
     (save-facts "state_information/unload_unknown_object_state_info.fac" visible unload-unknown-object-prev-action)
-    (printout t "RECOVERY: The unknown object loaded by the process " ?name " has already been sled. "crlf))
+    (printout t "RECOVERY: The unknown object loaded by the process " ?name " has already been sledded. "crlf))
+
+(defrule unload-unknown-objects_04
+    (declare (salience 5))
+    ?f <- (unknown-object-list
+		(name ?name)
+		(pid ?pid)
+		(object-list $?list))
+    (not (exists (mandatory-process 
+		    (name ?name)
+		    (command $?command))))
+    =>
+    (assert (recovery-action
+		(function-name kill_process)
+		(arg_list  ?name ?pid  )))
+    (save-facts "state_information/recovery_action.fac" visible recovery-action)
+    (printout t "RECOVERY: Terminating the non mandatory process " ?name " as it has an unknown object loaded. "crlf))
 
 
-; rules for dealing with unknown files opened by a process
+
+;===============rules for dealing with unknown files opened by a process=======================
 (defrule close-unknown-open-files
     (declare (salience 10))
     ?f <- (unknown-open-files
@@ -464,7 +494,7 @@
     (printout t "RECOVERY: Closing the files:" ?file " open by the process " ?name crlf))
 
 
-; Rules for dealing with with wrong process credentials
+;===================Rules for dealing with with wrong process credentials=====================
 (defrule correct-proc-cred
 	(declare (salience 10))
 	?f <- (wrong-process-cred
@@ -525,7 +555,7 @@
 	(save-facts "state_information/process_priv_state_info.fac" visible wrong-proc-cred-prev-action)
 	(printout t "RECOVERY: The privileges escalated  process " ?name1" was found again !!! Repating the recovery cycle" crlf))
 
-; rule for starting processes
+;================== rules for starting mandatory processes ==================================
 (defrule start-mandatory-process
     (declare (salience 10))
     ?f <- (missing-process
