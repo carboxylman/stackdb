@@ -507,7 +507,7 @@ int disasm_get_prologue_stack_size(struct target *target,
 	    retval += target->wordsize * 8;
 	    break;
 	case I_ADD:
-	    if (di.ops[0].type == O_REG && di.ops[0].index & RM_SP) {
+	    if (di.ops[0].type == O_REG && di.usedRegistersMask & RM_SP) {
 		if (di.ops[1].type == O_IMM)
 		    retval += di.imm.sword;
 		else {
@@ -517,7 +517,7 @@ int disasm_get_prologue_stack_size(struct target *target,
 	    }
 	    break;
 	case I_SUB:
-	    if (di.ops[0].type == O_REG && di.ops[0].index & RM_SP) {
+	    if (di.ops[0].type == O_REG && di.usedRegistersMask & RM_SP) {
 		if (di.ops[1].type == O_IMM)
 		    retval -= di.imm.sword;
 		else {
@@ -622,6 +622,7 @@ int disasm_get_prologue_stack_size(struct target *target,
 
 	/* Setup next iteration. */
 	ci.codeOffset += di.size;
+	ci.code += di.size;
     }
 
     if (ci.codeOffset != buf_len) {

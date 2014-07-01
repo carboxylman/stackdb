@@ -182,6 +182,7 @@ int save_sys_call_table_entries() {
 target_status_t cleanup() {
 
     target_status_t retval;
+    target_pause(target);
     retval = target_close(target);
     target_free(target);
     return retval;
@@ -423,6 +424,18 @@ struct argp pe_argp = {
         pe_argp_opts,pe_argp_parse_opt,NULL,NULL,NULL,NULL,NULL,
 };
 
+void sigh(int signo) {
+
+    if (target) {
+	target_pause(target);
+	fprintf(stderr,"Ending monitoring on signal %d.\n",signo);
+	cleanup();
+	fprintf(stderr,"Ended monitoring.\n");
+    }
+
+    exit(0);
+}
+
 
 int main( int argc, char** argv) {
 
@@ -433,7 +446,7 @@ int main( int argc, char** argv) {
     target_status_t tstat;
     int iteration = 1;
     FILE *fp;
-    struct stat st = {0};
+    struct stat st;
 
     memset(&opts,0,sizeof(opts));
     opts.app_file_path = "application_knowledge.cls";
@@ -445,6 +458,17 @@ int main( int argc, char** argv) {
 	fprintf(stdout,"ERROR: Could not parse target arguments!\n");
 	exit(-1);
     }
+
+    signal(SIGHUP,sigh);
+    signal(SIGINT,sigh);
+    signal(SIGQUIT,sigh);
+    signal(SIGABRT,sigh);
+    signal(SIGSEGV,sigh);
+    signal(SIGPIPE,sigh);
+    signal(SIGALRM,sigh);
+    signal(SIGTERM,sigh);
+    signal(SIGUSR1,sigh);
+    signal(SIGUSR2,sigh);
 
     dwdebug_init();
     target_init();
@@ -649,5 +673,5 @@ exit:
 	printf("Monitoring failed with %d!\n",tstat);
 	return 1;
     }
-
+    return 0;
 }

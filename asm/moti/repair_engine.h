@@ -58,7 +58,7 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
     bs = target_lookup_sym(target, symbol_name, NULL, "repair_driver",
 	    SYMBOL_TYPE_FLAG_VAR);
     if (!bs) {
-	fprintf(stderr, "ERROR: Could not lookup symbol req_ring_channel.\n");
+	fprintf(stderr, "ERROR: Could not lookup symbol %s.\n", symbol_name);
 	ret = CI_LOOKUP_ERR;
 	goto fail;
     }
@@ -72,7 +72,7 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 
     value = target_load_symbol(target, tlctxt, bs, LOAD_FLAG_NONE);
     if (!value) {
-	fprintf(stderr, "ERROR: could not load value of symbol req_ring_channel\n");
+	fprintf(stderr, "ERROR: could not load value of symbol %s\n", symbol_name);
 	ret = CI_LOAD_ERR;
 	goto fail;
     }
@@ -105,6 +105,11 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 	goto fail;
     }
     size_in_recs = v_u32(v);
+    if(size_in_recs == 0){
+	fprintf(stderr,"Got bogus value (0) for size_in_recs\n");
+	ret = CI_LOAD_ERR;
+	goto fail;
+    }
     value_free(v);
 
     /* read the size of each record */
@@ -116,6 +121,11 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 	goto fail;
     }
     size_of_a_rec = v_u32(v);
+    if(size_of_a_rec == 0){
+	fprintf(stderr,"Got bogus value (0) for size_of_a_rec\n");
+	ret = CI_LOAD_ERR;
+	goto fail;
+    }
     value_free(v);
     value_free(value);
 
@@ -131,6 +141,9 @@ fail:
     }
     if(v) {
 	value_free(v);
+    }
+    if(value) {
+	value_free(value);
     }
     return 0;
 
@@ -359,12 +372,12 @@ failure:
 int result_ready() {
 
     target_status_t status;
-    struct bsymbol *bs;
+    struct bsymbol *bs=NULL;
     struct target_location_ctxt *tlctxt;
     int ready;
     int res;
     struct value *v=NULL;
-    ci_error_t ret;
+    ci_error_t ret = CI_SUCCESS;
     
     if (opts.dump_debug)
 	fprintf(stdout,"INFO: Check if the result is ready to be read.\n");

@@ -410,7 +410,8 @@ struct action {
 	struct {
 	    REGVAL retval;
 	    int8_t prologue:1,
-		   prologue_uses_bp:1;
+		   prologue_uses_bp:1,
+		   prologue_has_sp_offset:1;
 	    int prologue_sp_offset;
 	} ret;
 	struct {
