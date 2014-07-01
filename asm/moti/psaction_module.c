@@ -69,33 +69,11 @@ static int ps_kill_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 	    /* We have found the task_struct for the process*/
 	    printk(KERN_INFO "Found process %s with PID = %d\n",
 		    task->comm, task->pid);
-
-	    sigaddset(&task->signal->shared_pending.signal, SIGKILL);
-	    task->signal->flags = SIGNAL_GROUP_EXIT;
-	    task->signal->group_exit_code = SIGKILL;
-	    task->signal->group_stop_count = 0;
-	    /* Finally, set SIGPENDING in the task_struct's thread_info struct. */
-
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,21)
-	    task_info = task->thread_info ;
-#else
-	    task_info = task_thread_info(task);
-#endif
-	    task_info->flags =
-		task_info->flags | _TIF_SIGPENDING | _TIF_NEED_RESCHED;
-
-	    printk(KERN_INFO "Killed process\n");
+	    
+	    force_sig(SIGKILL, task);
 	    found_flag = 1;
-	    /* set the execution status in the ack record to success */
-	    //ack->exec_status = 1;
-	    /* since the execution of the command does not return anything
-	     * set acrg = 0;
-	     */
-	    ack->argc = 1;
-	    memcpy(ack->argv, &psaction_pid, sizeof(int));
 	}
     }
-    printk(KERN_INFO " pscation :%d %d %d\n",ack->cmd_id,ack->submodule_id,*(int *)ack->argv);
 
     if (!found_flag) {
 	printk(KERN_INFO "Process with PID = %d not found", psaction_pid);
