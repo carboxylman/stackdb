@@ -1611,3 +1611,324 @@ int syscall_hooking_info() {
     return ret_val;
 }
 
+
+
+int gather_socket_info(struct target *target, struct value * value, void * data) {
+
+    struct value *files_value;
+    struct value *fdt_value;
+    struct value *max_fds_value;
+    struct value *fd_value;
+    struct value *file_value;
+    struct value *path_value;
+    struct value *dentry_value;
+    struct value *name_value;
+    struct value *d_name_value;
+    struct value *len_name_value;
+    struct value *file_name_value;
+    struct value *pid_value;
+    struct value *d_inode_value;
+    struct value *i_mode_value;
+    struct value *sock_addr_value;
+    struct value *sock_value;
+    struct value *sock_common_value;
+    struct value *skc_dport_value;
+    struct bsymbol *file_struct_bsymbol = NULL;
+    int max_fds, i, pid;
+    char *file_name = NULL , *process_name = NULL;
+    ADDR file_addr, mem_addr, sock_addr;
+    struct symbol *file_struct_type;
+    unsigned short i_mode, port_number;
+    FILE *fp = NULL;
+    struct target_location_ctxt *tlctxt;
+    struct bsysmbol *bs = NULL;
+    struct symbol *sock_struct_type = NULL;
+
+
+
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: Gathering information in open sockets.\n");
+    pid_value = target_load_value_member(target, NULL, value, "pid", NULL, LOAD_FLAG_NONE);
+    if(!pid_value) {
+	fprintf(stdout," ERROR: failed to load the pid value.\n");
+	return 1;
+    }
+    pid = v_i32(pid_value);
+    name_value = target_load_value_member(target, NULL, value, "comm", NULL, LOAD_FLAG_NONE);
+    if(!name_value) {
+	fprintf(stdout," ERROR: failed to load the process name.\n");
+	exit(0);
+    }   
+    process_name = strdup(name_value->buf);
+
+    /* Load the files struct from the task_struct */
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: Loading files struct\n");
+    files_value = target_load_value_member(target, NULL, value, "files", NULL, 
+	    LOAD_FLAG_AUTO_DEREF);
+    if(!files_value) {
+	fprintf(stdout," ERROR: failed to load the files struct member.\n");
+	exit(0);
+    }   
+
+    /* Load the fdtable struct */
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: Loading fdt struct\n");
+    fdt_value =  target_load_value_member( target, NULL, files_value, "fdt", 
+	    NULL, LOAD_FLAG_AUTO_DEREF);
+    if(!fdt_value) {
+	fprintf(stdout," ERROR: failed to load the fdt struct member.\n");
+	exit(0);
+    }   
+
+    /* Load the  max_fds member of the ftable struct */
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: Loading max_fds member\n");
+    max_fds_value = target_load_value_member( target, NULL, fdt_value, 
+	    "max_fds", NULL, LOAD_FLAG_NONE);
+    if(!max_fds_value) {
+	fprintf(stdout," ERROR: failed to load the max_fds member.\n");
+	exit(0);
+    }   
+    max_fds = v_i32(max_fds_value);
+    if (opts.dump_debug)	
+	fprintf(stdout,"INFO: max_fds_value for process %s = %d\n", process_name, max_fds);
+    
+    /*Open the base fact file */
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
+    fp = fopen(base_fact_file, "a+");
+    if(fp == NULL) {
+	fprintf(stdout," ERROR: Failed to open the base fact file\n");
+	exit(0);
+    }
+
+
+    for( i = 0; i < max_fds; i++) {
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Loading fd struct\n");
+	fd_value =  target_load_value_member(target, NULL, fdt_value, "fd", NULL, 
+		LOAD_FLAG_NONE);
+	if(!fd_value) {
+	    fprintf(stdout," ERROR: failed to load the fd struct memeber.\n");
+	    exit(0);
+	}
+
+	/* Load the array of file descriptors */
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Loading fs struct\n");
+	mem_addr = v_addr(fd_value);
+	mem_addr = mem_addr + (target->arch->wordsize * i);
+	if(!target_read_addr(target, mem_addr, target->arch->wordsize, 
+			(unsigned char *)&file_addr)) {
+	    fprintf(stdout,"ERROR: target_read_addr failed.\n");
+	    exit(0);
+	}
+	if(!file_addr) {
+	    if (opts.dump_debug)
+		fprintf(stdout," INFO: File table entry is NULL\n");
+	    continue;
+	}
+	
+	/* Load the type of symbol */
+	file_struct_bsymbol = target_lookup_sym(target, "struct file", NULL,
+		    NULL, SYMBOL_TYPE_FLAG_TYPE);
+	if(!file_struct_bsymbol) {
+	    fprintf(stdout,"ERROR: Failed to lookup the struct file bsymbol.\n");
+	    exit(0);
+	}
+
+	file_struct_type = bsymbol_get_symbol(file_struct_bsymbol);
+	if(!file_struct_type) {
+	    fprintf(stdout,"INFO: Could not load the file struct type\n");
+	    exit(0);
+	}
+
+	/* Finally load the array memeber */
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Loading file struct\n");
+	file_value = target_load_type(target, file_struct_type, file_addr, 
+		    LOAD_FLAG_AUTO_DEREF);
+	if(!file_value) {
+	    fprintf(stdout," ERROR: failed to load the file struct member.\n");
+	    exit(0);
+	}
+	
+	/* Load the path the variable from the files struct*/
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Loading f_path struct\n");
+	path_value = target_load_value_member( target, NULL, file_value, "f_path",
+		    NULL, LOAD_FLAG_NONE);
+	if(!path_value) {
+	    fprintf(stdout," ERROR: failed to load the path struct member.\n");
+	    exit(0);
+	} 
+
+	/* Load the dentry struct  member from the path */
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Loading dentry struct\n");
+	dentry_value = target_load_value_member(target, NULL, path_value, "dentry",
+		    NULL, LOAD_FLAG_AUTO_DEREF);
+	if(!dentry_value){
+	    fprintf(stdout,"INFO: dentry member is NULL\n");
+	    continue;
+	}
+
+	/* Load the d_name struct */
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Loading d_name struct\n");
+	d_name_value = target_load_value_member(target, NULL, dentry_value, "d_name",
+		    NULL, LOAD_FLAG_NONE);
+	if(!d_name_value) {
+	    fprintf(stdout," ERROR: failed to load the d_name struct member.\n");
+	    exit(0);
+	} 
+	
+	/* Finally load the lenght of  name string */
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Loading the length of name string\n");
+	len_name_value = target_load_value_member( target, NULL, d_name_value, "len",
+		    NULL, LOAD_FLAG_NONE);
+	if(!len_name_value) {
+	    fprintf(stdout," ERROR: failed to load the name string.\n");
+	    exit(0);
+	}
+	unsigned int len = v_u32(len_name_value);
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Length of the name string is %u \n.",len);
+	if(len == 0) {
+	    if (opts.dump_debug)
+		fprintf(stdout,"INFO: File name length is 0 hence continuing with the loop\n");
+	    continue;
+	}
+	value_free(len_name_value);
+
+	file_name_value = target_load_value_member(target, NULL, d_name_value, "name",
+		    NULL, LOAD_FLAG_AUTO_STRING);
+	if(!file_name_value) {
+	    fprintf(stdout,"ERROR: Could not load name of the file\n");
+	    continue;
+	}
+
+	file_name = strdup(file_name_value->buf);
+	fprintf(stdout,"INFO: FIle name - %s\n",file_name);
+
+	/* Load the inode struct */
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Loading the d_inode struct.\n");
+	d_inode_value = target_load_value_member(target, NULL, dentry_value, "d_inode",
+						NULL, LOAD_FLAG_AUTO_DEREF);
+	if(!d_inode_value) {
+	    fprintf(stdout,"ERROR: failed to load the d_inode member.\n");
+	    exit(0);
+	}
+
+	/*Load the i_mode member */
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Load the i_mode member.\n");
+	i_mode_value = target_load_value_member(target, NULL, d_inode_value, "i_mode",
+						NULL, LOAD_FLAG_NONE);
+	i_mode = v_u16(i_mode_value);
+
+	if (S_ISSOCK(i_mode)) {
+	    fprintf(stdout,"INFO: The file is a SOCKET.\n");
+	    
+	    /* Load the path the variable from the files struct*/
+	    if (opts.dump_debug)
+		fprintf(stdout,"INFO: Loading private_data  struct\n");
+	    sock_addr_value = target_load_value_member( target, NULL, file_value, "private_data",
+								    NULL, LOAD_FLAG_NONE);
+	    if(!sock_addr_value) {
+		fprintf(stdout," ERROR: failed to load the sock struct member.\n");
+		exit(0);
+	    }
+
+	    sock_addr = v_addr(sock_addr_value);
+	    
+	    fprintf(stdout,"INFO: private_data addr = %p \n",sock_addr);
+
+	    /* Get the type for the socket structure  and load it*/
+	    bs = target_lookup_sym(target,"struct sock", NULL,
+			"sock", SYMBOL_TYPE_FLAG_TYPE);
+	    if(!bs) {
+		fprintf(stdout,"ERROR: Failed to lookup symbol sock.\n");
+		exit(0);
+	    }
+
+	    tlctxt = target_location_ctxt_create_from_bsymbol(target,TID_GLOBAL,bs);
+	    if(!tlctxt) {
+		fprintf(stdout,"ERROR: Could not create the target location context.\n");
+		exit(0);
+	    }
+
+	    sock_struct_type = bsymbol_get_symbol(bs);
+	    if(!sock_struct_type){
+		fprintf(stdout,"ERROR:Target_lookup_symbol failed for struct sock.\n");
+		exit(0);
+	    }
+    
+	    sock_value = target_load_type(target, sock_struct_type, sock_addr, LOAD_FLAG_NONE);
+	    if(!sock_value){
+		fprintf(stdout,"ERROR: Failed to load sock structure . \n");
+		exit(0);
+	    }
+	    
+	    sock_common_value = target_load_value_member( target, tlctxt, sock_value, "__sk_common",
+								    NULL, LOAD_FLAG_NONE);
+	    if(!sock_common_value) {
+		fprintf(stdout," ERROR: failed to load the sock_common struct member.\n");
+		exit(0);
+	    }
+
+	    skc_dport_value = target_load_value_member( target, NULL, sock_common_value, "skc_dport",
+								    NULL, LOAD_FLAG_NONE);
+	    if(!skc_dport_value) {
+		fprintf(stdout," ERROR: failed to load the skc_dport struct member.\n");
+		exit(0);
+	    }
+	    port_number = v_u16(skc_dport_value);
+	    fprintf(stdout,"INFO:Port number %u\n",port_number);
+
+	    /*Start encoding the fact */
+	    fprintf(fp,"\n(opened-sockets \n \
+			    \t(comm \"%s\")\n \
+			    \t(pid %d)\n \
+			    \t(port %u))\n", process_name, pid, port_number);
+	}
+
+	value_free(fd_value);
+	value_free(file_value);	
+	value_free(path_value);
+	value_free(dentry_value);
+	value_free(d_inode_value);
+	value_free(i_mode_value);
+	value_free(d_name_value);
+	value_free(file_name_value);
+
+    }
+
+    fclose(fp);
+    value_free(name_value);
+    value_free(pid_value);
+    value_free(files_value);
+    value_free(fdt_value);
+    value_free(max_fds_value);
+    return(0);
+}
+
+int socket_info() {
+    int ret_val;
+    struct bsymbol * init_task_bsymbol;
+
+    init_task_bsymbol = target_lookup_sym(target, "init_task", NULL, NULL,
+	    SYMBOL_TYPE_FLAG_VAR);
+    if(!init_task_bsymbol) {
+	fprintf(stdout,"ERROR: Could not lookup the init_task_symbol\n");
+	return 1;
+    }
+
+    ret_val = os_linux_list_for_each_struct(target, init_task_bsymbol, "tasks", 0,
+	    gather_socket_info, NULL);
+    return ret_val;
+}
+

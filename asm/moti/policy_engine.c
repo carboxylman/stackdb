@@ -271,8 +271,7 @@ int generate_snapshot() {
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
     if (opts.dump_timing)
-	fprintf(stdout,"INFO: Time taken to get cpu load info is %llu ms\n", t); 
-        
+	fprintf(stdout,"INFO: Time taken to get cpu load info is %llu ms\n", t);     
    /*
     result = process_cpu_utilization();
     if(result) {
@@ -281,7 +280,7 @@ int generate_snapshot() {
 	goto resume;
     }
     */
-    
+
     gettimeofday(&tm1, NULL);
     result = object_info();
     if(result) {
@@ -327,7 +326,19 @@ int generate_snapshot() {
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
     if (opts.dump_timing)
 	fprintf(stderr,"INFO: Time taken to check for hooked system calls is %llu ms\n", t); 
-   
+  
+    /*
+    gettimeofday(&tm1, NULL);
+    result = socket_info();
+    if( result) {
+	fprintf(stdout,"ERROR: socket_info failed.\n");
+	goto resume;
+    }
+    gettimeofday(&tm2, NULL);
+    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
+    if (opts.dump_timing)
+	fprintf(stderr,"INFO: Time taken to gather information about open sockets is %llu ms\n", t); 
+    */
 resume:
     gettimeofday(&tm1, NULL);
     if ((status = target_status(target)) == TSTATUS_PAUSED) {
