@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -564,6 +564,28 @@ int value_update_unum(struct value *value,unum_t v) {
     return 0;
 }
 
+static inline int __d2hs(char *buf,unsigned int len,char *str) {
+    unsigned int i;
+    uint8_t hi,lo;
+
+    i = 0;
+    while (i < len) {
+	lo = buf[i] & 0xf;
+	hi = (buf[i] >> 4) & 0xf;
+
+	if (lo <= 9) str[i*2+1] = '0' + lo;
+	else str[i*2+1] = 'a' + (lo - 10);
+
+	if (hi <= 9) str[i*2] = '0' + hi;
+	else str[i*2] = 'a' + (hi - 10);
+
+	++i;
+    }
+
+    return 0;
+}
+
+
 int value_snprintf(struct value *value,char *buf,int buflen) {
     int nrc;
     struct symbol *tmpsym;
@@ -579,10 +601,67 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
     GSList *gsltmp;
     loctype_t ltrc;
     struct location tloc;
+    int unprintable;
+
+    nrc = 0;
+
+#define VSBP(msg)							\
+    do {								\
+	int _trc = 0;							\
+	_trc = snprintf(buf,buflen - nrc,"<"msg"::");			\
+	if (_trc < 0)							\
+	    return -1;							\
+	nrc += _trc;							\
+	_trc = ((value->bufsiz * 2) > (buflen - nrc - 1))		\
+	    ? (buflen - nrc - 1) / 2 : value->bufsiz;			\
+	__d2hs(value->buf,_trc,buf + nrc);				\
+	nrc += _trc * 2;						\
+	if (nrc < (buflen - 1)) {					\
+	    buf[nrc++] = '>';						\
+	    buf[nrc++] = '\0';						\
+	}								\
+	else if (nrc < buflen)						\
+	    buf[nrc++] = '\0';						\
+	else								\
+	    buf[buflen - 1] = '\0';					\
+    }									\
+    while (0)
+#define VSBPA(msg,...)							\
+    do {								\
+	int _trc = 0;							\
+	_trc = snprintf(buf,buflen - nrc,"<"msg"::", ## __VA_ARGS__);	\
+	if (_trc < 0)							\
+	    return -1;							\
+	nrc += _trc;							\
+	_trc = ((value->bufsiz * 2) > (buflen - nrc - 1))		\
+	    ? (buflen - nrc - 1) / 2 : value->bufsiz;			\
+	__d2hs(value->buf,_trc,buf + nrc);				\
+	nrc += _trc * 2;						\
+	if (nrc < (buflen - 1)) {					\
+	    buf[nrc++] = '>';						\
+	    buf[nrc++] = '\0';						\
+	}								\
+	else if (nrc < buflen)						\
+	    buf[nrc++] = '\0';						\
+	else								\
+	    buf[buflen - 1] = '\0';					\
+    }									\
+    while (0)
 
     /* Handle AUTO_STRING specially. */
     if (value->isstring) {
-	nrc = snprintf(buf,buflen,"\"%s\"",value->buf);
+	unprintable = 0;
+	for (j = 0; j < value->bufsiz && value->buf[j] != '\0'; ++j) {
+	    if (!isgraph(value->buf[j]) && !isspace(value->buf[j])) {
+		unprintable = 1;
+		break;
+	    }
+	}
+	if (unprintable) {
+	    VSBP("BINARY_STRING");
+	}
+	else
+	    nrc = snprintf(buf,buflen,"\"%s\"",value->buf);
 	goto out;
     }
 
@@ -605,8 +684,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	    else if (tbytesize == 8) 
 		nrc = snprintf(buf,buflen,"%"PRIx64,v_u64(value));
 	    else
-		nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			       enc,tbytesize);
+		VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else if (enc == ENCODING_BOOLEAN
 	    || enc == ENCODING_UNSIGNED) {
@@ -619,8 +697,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	    else if (tbytesize == 8) 
 		nrc = snprintf(buf,buflen,"%"PRIu64,v_u64(value));
 	    else
-		nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			       enc,tbytesize);
+		VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else if (enc == ENCODING_SIGNED) {
 	    if (tbytesize == 1) 
@@ -632,8 +709,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	    else if (tbytesize == 8) 
 		nrc = snprintf(buf,buflen,"%"PRIi64,v_i64(value));
 	    else
-		nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			       enc,tbytesize);
+		VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else if (enc == ENCODING_FLOAT) {
 	    if (tbytesize == 4) 
@@ -643,8 +719,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	    else if (tbytesize == 16) 
 		nrc = snprintf(buf,buflen,"%Lf",v_dd(value));
 	    else
-		nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			       enc,tbytesize);
+		VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else if (enc == ENCODING_SIGNED_CHAR
 		 || enc == ENCODING_UNSIGNED_CHAR) {
@@ -653,40 +728,31 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	    else if (tbytesize == 2) 
 		nrc = snprintf(buf,buflen,"%lc",(wint_t)v_wc(value));
 	    else
-		nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			       enc,tbytesize);
+		VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else if (enc == ENCODING_COMPLEX_FLOAT) {
-	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			   enc,tbytesize);
+	    VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else if (enc == ENCODING_IMAGINARY_FLOAT) {
-	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			   enc,tbytesize);
+	    VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else if (enc == ENCODING_PACKED_DECIMAL) {
-	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			   enc,tbytesize);
+	    VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else if (enc == ENCODING_NUMERIC_STRING) {
-	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			   enc,tbytesize);
+	    VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else if (enc == ENCODING_EDITED) {
-	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			   enc,tbytesize);
+	    VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else if (enc == ENCODING_SIGNED_FIXED) {
-	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			   enc,tbytesize);
+	    VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else if (enc == ENCODING_UNSIGNED_FIXED) {
-	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			   enc,tbytesize);
+	    VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else {
-	    nrc = snprintf(buf,buflen,"<BAD_ENC_%d_%d>",
-			   enc,tbytesize);
+	    VSBPA("UNSUP_ENC_%d",enc);
 	}
 	break;
     case DATATYPE_PTR:
@@ -695,7 +761,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	else if (tbytesize == 8)
 	    nrc = snprintf(buf,buflen,"0x%"PRIx64,v_u64(value));
 	else 
-	    nrc = snprintf(buf,buflen,"<UNSUP_PTR_%d>",tbytesize);
+	    VSBP("UNSUP_PTR");
 	break;
     case DATATYPE_ARRAY:;
 	GSList *subranges = SYMBOLX_SUBRANGES(datatype);
@@ -816,19 +882,16 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 			    v_unum(value),v_unum(value));
 	break;
     case DATATYPE_CONST:
-	nrc = snprintf(buf,buflen,"<UNSUP_CONST_%s>",
-		       symbol_get_name(datatype));
+	VSBPA("UNSUP_CONST_%s",symbol_get_name(datatype));
 	break;
     case DATATYPE_VOL:
-	nrc = snprintf(buf,buflen,"<UNSUP_VOL_%s>",symbol_get_name(datatype));
+	VSBPA("UNSUP_VOL_%s",symbol_get_name(datatype));
 	break;
-    case DATATYPE_TYPEDEF:	
-	nrc = snprintf(buf,buflen,"<UNSUP_TYPEDEF_%s>",
-		       symbol_get_name(datatype));
+    case DATATYPE_TYPEDEF:
+	VSBPA("UNSUP_TYPEDEF_%s",symbol_get_name(datatype));
 	break;
     case DATATYPE_FUNC:
-	nrc = snprintf(buf,buflen,"<UNSUP_FUNCTION_%s>",
-		       symbol_get_name(datatype));
+	VSBPA("UNSUP_FUNCTION_%s",symbol_get_name(datatype));
 	break;
     case DATATYPE_VOID:
 	nrc = snprintf(buf,buflen,"NULL");
