@@ -7916,6 +7916,18 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		goto out_bp_again;
 	    }
 	    else if (xtstate->context.user_regs.eflags & EF_TF
+		     && tthread
+		     && tthread->tpc
+		     && tthread->tpc->probepoint) {
+		vdebug(2,LA_TARGET,LF_XV,
+		       "thread-inferred single step for dom %d (TF set, but not"
+		       " dreg status!) at 0x%"PRIxADDR" (stepped %lu bytes"
+		       " from probepoint)!\n",
+		       xstate->id,ipval,ipval - tthread->tpc->probepoint->addr);
+		sstep_thread = tthread;
+		goto handle_inferred_sstep;
+	    }
+	    else if (xtstate->context.user_regs.eflags & EF_TF
 		     && bogus_sstep_thread
 		     && bogus_sstep_thread->tpc
 		     && bogus_sstep_thread->tpc->probepoint) {
