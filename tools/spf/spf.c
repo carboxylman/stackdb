@@ -54,8 +54,6 @@ typedef enum {
     SPF_ACTION_DISABLE = 6,
     SPF_ACTION_REMOVE  = 7,
     SPF_ACTION_BT      = 8,
-    SPF_ACTION_BTUP    = 9,
-    SPF_ACTION_BTALL   = 10,
 } spf_action_type_t;
 
 struct spf_action {
@@ -71,6 +69,8 @@ struct spf_action {
 	    int ttctx;
 	    int ttdetail;
 	    int bt;
+	    int overlay_levels;
+	    char *overlay_debuginfo_prefix;
 	} report;
 	struct {
 	    int ttctx;
@@ -94,6 +94,8 @@ struct spf_action {
 	struct {
 	    int tid;
 	    char *thid;
+	    int overlay_levels;
+	    char *overlay_debuginfo_prefix;
 	} bt;
     };
 };
@@ -254,26 +256,68 @@ void sigh(int signo) {
 }
 
 void print_thread_context(FILE *stream,struct target *target,tid_t tid,
-			  int ttctx,int ttdetail,int bt,char *sep,char *kvsep,
+			  int ttctx,int ttdetail,int bt,int overlay_levels,
+			  char *overlay_debuginfo_prefix,char *sep,char *kvsep,
 			  char *tprefix,char *tsep) {
     struct target_thread *tthread;
-    char buf[1024];
+    char buf[4096];
     struct array_list *tids;
     int i;
     int rc;
-
-    tthread = target_lookup_thread(target,tid);
+    int didmaintid = 0;
+    tid_t ttid;
+    struct target *overlay;
+    struct array_list *otl;
+    struct target_spec *ospec;
 
     if (ttctx == 0) 
 	return;
     else if (ttctx == 1) {
-	if (target_thread_snprintf(target,tid,buf,sizeof(buf),
+	tids = array_list_create(1);
+	array_list_append(tids,(void *)(uintptr_t)tid);
+    }
+    else if (ttctx == 2) {
+	tids = array_list_create(8);
+	/* Just walk up the parent hierarchy. */
+	ttid = tid;
+	while (1) {
+	    tthread = target_lookup_thread(target,ttid);
+	    if (!tthread)
+		break;
+	    array_list_append(tids,(void *)(uintptr_t)ttid);
+	    ttid = tthread->ptid;
+	}
+    }
+    else if (ttctx == 3) {
+	tids = target_list_available_tids(target);
+	/* Make sure selected tid is first; skip it later. */
+	if (!tids)
+	    tids = array_list_create(1);
+	array_list_prepend(tids,(void *)(uintptr_t)tid);
+    }
+    else
+	return;
+
+    array_list_foreach_fakeptr_t(tids,i,ttid,uintptr_t) {
+	tthread = target_lookup_thread(target,ttid);
+	if (!tthread)
+	    continue;
+
+	if (tthread->tid == tid && didmaintid)
+	    continue;
+	else if (tthread->tid == tid)
+	    didmaintid = 1;
+
+	fprintf(stream,"%s",tsep);
+
+	if (target_thread_snprintf(target,tthread->tid,buf,sizeof(buf),
 				   ttdetail,sep,kvsep) < 0) 
-	    fprintf(stream,"%s[tid=%"PRIiTID"",tprefix,tid);
+	    fprintf(stream,"%s[tid=%"PRIiTID"",tprefix,tthread->tid);
 	else
 	    fprintf(stream,"%s[%s",tprefix,buf);
+
 	if (bt) {
-	    rc = target_unwind_snprintf(buf,sizeof(buf),t,tid,
+	    rc = target_unwind_snprintf(buf,sizeof(buf),t,tthread->tid,
 					TARGET_UNWIND_STYLE_PROG_KEYS,"|",",");
 	    if (rc < 0)
 		fprintf(stream,"%sbacktrace=[error!]",sep);
@@ -282,67 +326,43 @@ void print_thread_context(FILE *stream,struct target *target,tid_t tid,
 	    else
 		fprintf(stream,"%sbacktrace=[%s]",sep,buf);
 	}
+
 	fprintf(stream,"]");
-    }
-    else if (ttctx == 2) {
-	/* Just walk up the parent hierarchy. */
-	i = 0;
-	do {
-	    if (likely(i > 0)) 
-		fprintf(stream,"%s",tsep);
 
-	    if (target_thread_snprintf(target,tthread->tid,buf,sizeof(buf),
-				       ttdetail,sep,kvsep) < 0) 
-		fprintf(stream,"%s[tid=%"PRIiTID"",tprefix,tthread->tid);
-	    else
-		fprintf(stream,"%s[%s",tprefix,buf);
+	/*
+	 * Handle overlay levels!  Woot!
+	 */
+	otl = array_list_create(8);
+	overlay = target;
+	ttid = tthread->tid;
+	while (overlay_levels != 0) {
+	    ospec = target_build_default_overlay_spec(overlay,ttid);
+	    if (!ospec)
+		break;
 
-	    if (bt) {
-		rc = target_unwind_snprintf(buf,sizeof(buf),t,tthread->tid,
-					    TARGET_UNWIND_STYLE_PROG_KEYS,"|",",");
-		if (rc < 0)
-		    fprintf(stream,"%sbacktrace=[error!]",sep);
-		else if (rc == 0)
-		    fprintf(stream,"%sbacktrace=[empty]",sep);
-		else
-		    fprintf(stream,"%sbacktrace=[%s]",sep,buf);
-	    }
-	    fprintf(stream,"]");
+	    if (overlay_debuginfo_prefix)
+		ospec->debugfile_root_prefix = strdup(overlay_debuginfo_prefix);
 
-	    ++i;
-	    tthread = target_lookup_thread(target,tthread->ptid);
-	}
-	while (tthread);
-    }
-    else if (ttctx == 3) {
-	if (target_thread_snprintf(target,tid,buf,sizeof(buf),
-				   ttdetail,sep,kvsep) < 0) 
-	    fprintf(stream,"%s[tid=%"PRIiTID"",tprefix,tid);
-	else
-	    fprintf(stream,"%s[%s",tprefix,buf);
+	    overlay = target_instantiate_overlay(overlay,ttid,ospec);
+	    if (!overlay)
+		break;
 
-	tids = target_list_available_tids(target);
-
-	if (!tids) {
-	    fprintf(stream,"]");
-	    return;
-	}
-
-	array_list_foreach(tids,i,tthread) {
-	    if (tthread->tid == tid)
-		continue;
+	    target_open(overlay);
 
 	    fprintf(stream,"%s",tsep);
 
-	    if (target_thread_snprintf(target,tthread->tid,buf,sizeof(buf),
+	    if (target_thread_snprintf(overlay,ttid,buf,sizeof(buf),
 				       ttdetail,sep,kvsep) < 0) 
-		fprintf(stream,"%s[tid=%"PRIiTID"",tprefix,tthread->tid);
+		fprintf(stream,"%s[overlay=%s%stid=%"PRIiTID"",
+			tprefix,overlay->name,sep,ttid);
 	    else
-		fprintf(stream,"%s[%s",tprefix,buf);
+		fprintf(stream,"%s[overlay=%s%s%s",
+			tprefix,overlay->name,sep,buf);
 
 	    if (bt) {
-		rc = target_unwind_snprintf(buf,sizeof(buf),t,tthread->tid,
-					    TARGET_UNWIND_STYLE_PROG_KEYS,"|",",");
+		rc = target_unwind_snprintf(buf,sizeof(buf),overlay,ttid,
+					    TARGET_UNWIND_STYLE_PROG_KEYS,
+					    "|",",");
 		if (rc < 0)
 		    fprintf(stream,"%sbacktrace=[error!]",sep);
 		else if (rc == 0)
@@ -350,12 +370,28 @@ void print_thread_context(FILE *stream,struct target *target,tid_t tid,
 		else
 		    fprintf(stream,"%sbacktrace=[%s]",sep,buf);
 	    }
+
 	    fprintf(stream,"]");
+
+	    --overlay_levels;
+
+	    array_list_prepend(otl,overlay);
 	}
+
+	array_list_foreach(otl,i,overlay) {
+	    target_close(overlay);
+	    target_free(overlay);
+	}
+
+	array_list_free(otl);
+	otl = NULL;
     }
+
+    array_list_free(tids);
 }
 
-void spf_backtrace(struct target *t,tid_t ctid,char *tiddesc) {
+void spf_backtrace(struct target *t,tid_t ctid,char *tiddesc,
+		   int overlay_levels,char *overlay_debuginfo_prefix) {
     struct array_list *tids;
     tid_t tid;
     int i;
@@ -364,6 +400,9 @@ void spf_backtrace(struct target *t,tid_t ctid,char *tiddesc) {
     char *endptr = NULL;
     int rc;
     char buf[4096];
+    struct target *overlay;
+    struct array_list *otl;
+    struct target_spec *ospec;
 
     if (tiddesc) {
 	stid = (int)strtol(tiddesc,&endptr,10);
@@ -418,11 +457,61 @@ void spf_backtrace(struct target *t,tid_t ctid,char *tiddesc) {
 	rc = target_unwind_snprintf(buf,sizeof(buf),t,tid,
 				    TARGET_UNWIND_STYLE_GDB,"\n",",");
 	if (rc < 0)
-	    fprintf(stdout,"\nthread %"PRIiTID": (error!)\n",tid);
+	    fprintf(stdout,"\ntarget %s thread %"PRIiTID": (error!)\n",
+		    t->name,tid);
 	else if (rc == 0)
-	    fprintf(stdout,"\nthread %"PRIiTID": (nothing)\n",tid);
+	    fprintf(stdout,"\ntarget %s thread %"PRIiTID": (nothing)\n",
+		    t->name,tid);
 	else
-	    fprintf(stdout,"\nthread %"PRIiTID": \n%s\n",tid,buf);
+	    fprintf(stdout,"\ntarget %s thread %"PRIiTID": \n%s\n",
+		    t->name,tid,buf);
+
+	if (overlay_levels == 0)
+	    continue;
+
+	/*
+	 * Handle overlay levels!
+	 */
+	otl = array_list_create(8);
+	overlay = t;
+	while (overlay_levels != 0) {
+	    ospec = target_build_default_overlay_spec(overlay,tid);
+	    if (!ospec)
+		break;
+
+	    if (overlay_debuginfo_prefix)
+		ospec->debugfile_root_prefix = strdup(overlay_debuginfo_prefix);
+
+	    overlay = target_instantiate_overlay(overlay,tid,ospec);
+	    if (!overlay)
+		break;
+
+	    target_open(overlay);
+
+	    rc = target_unwind_snprintf(buf,sizeof(buf),overlay,tid,
+					TARGET_UNWIND_STYLE_GDB,"\n",",");
+	    if (rc < 0)
+		fprintf(stdout,"\ntarget %s thread %"PRIiTID": (error!)\n",
+			overlay->name,tid);
+	    else if (rc == 0)
+		fprintf(stdout,"\ntarget %s thread %"PRIiTID": (nothing)\n",
+			overlay->name,tid);
+	    else
+		fprintf(stdout,"\ntarget %s thread %"PRIiTID": \n%s\n",
+			overlay->name,tid,buf);
+
+	    --overlay_levels;
+
+	    array_list_prepend(otl,overlay);
+	}
+
+	array_list_foreach(otl,i,overlay) {
+	    target_close(overlay);
+	    target_free(overlay);
+	}
+
+	array_list_free(otl);
+	otl = NULL;
     }
 
     fputs("\n",stdout);
@@ -614,7 +703,9 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 	    fputs(",",stdout);
 	    print_thread_context(stdout,bsymbol->region->space->target,tid,
 				 spfa->report.ttctx,spfa->report.ttdetail,
-				 spfa->report.bt,";",":","thread=",",");
+				 spfa->report.bt,spfa->report.overlay_levels,
+				 spfa->report.overlay_debuginfo_prefix,
+				 ";",":","thread=",",");
 	    fprintf(stdout,") ::RESULT\n");
 	    fflush(stdout);
 	}
@@ -678,7 +769,7 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 	    fputs(" ",stdout);
 	    print_thread_context(stdout,bsymbol->region->space->target,tid,
 				 spfa->print.ttctx,spfa->print.ttdetail,
-				 spfa->report.bt,NULL,NULL,"",",");
+				 0,0,NULL,NULL,NULL,"",",");
 	    fputs("\n",stdout);
 	    fflush(stdout);
 	}
@@ -693,7 +784,8 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 	    else
 		btt = probe->target;
 
-	    spf_backtrace(btt,tid,spfa->bt.thid);
+	    spf_backtrace(btt,tid,spfa->bt.thid,spfa->bt.overlay_levels,
+			  spfa->bt.overlay_debuginfo_prefix);
 	}
 	else {
 	    verror("probe %s: bad action type %d -- BUG!\n",
@@ -1897,6 +1989,8 @@ struct spf_config *load_config_file(char *file) {
 
 		    /* Set some defaults. */
 		    spfa->report.rt = 'i';
+		    spfa->report.overlay_levels = 0;
+		    spfa->report.overlay_debuginfo_prefix = NULL;
 
 		    /*
 		     * XXX: use strtok here ignore the possibility that
@@ -1972,6 +2066,13 @@ struct spf_config *load_config_file(char *file) {
 			}
 			else if (strcmp(token,"bt") == 0) {
 			    spfa->report.bt = atoi(token2);
+			}
+			else if (strcmp(token,"overlay_levels") == 0) {
+			    spfa->report.overlay_levels = atoi(token2);
+			}
+			else if (strcmp(token,"overlay_debuginfo_root_prefix") == 0) {
+			    spfa->report.overlay_debuginfo_prefix =
+				strdup(token2);
 			}
 			else 
 			    goto err;
@@ -2049,6 +2150,8 @@ struct spf_config *load_config_file(char *file) {
 		    /* Set some defaults. */
 		    spfa->bt.tid = -1;
 		    spfa->bt.thid = NULL;
+		    spfa->bt.overlay_levels = 0;
+		    spfa->bt.overlay_debuginfo_prefix = NULL;
 
 		    char *nextbufptr = NULL;
 		    nextbufptr = _get_next_non_enc_esc(bufptr,')');
@@ -2067,6 +2170,10 @@ struct spf_config *load_config_file(char *file) {
 			    spfa->bt.tid = atoi(token);
 			else if (lpc == 1)
 			    spfa->bt.thid = strdup(token);
+			else if (lpc == 2)
+			    spfa->bt.overlay_levels = atoi(token);
+			else if (lpc == 3)
+			    spfa->bt.overlay_debuginfo_prefix = strdup(token);
 			else 
 			    goto err;
 
