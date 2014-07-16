@@ -1019,6 +1019,13 @@ int target_close(struct target *target) {
 	       "closed overlay target(%s) (%d)\n",overlay->name,rc);
     }
 
+    /*
+     * Remove ourself from our parent's table.
+     */
+    if (target->base)
+	g_hash_table_remove(target->base->overlays,
+			    (gpointer)(uintptr_t)target->base_tid);
+
     if (target->evloop)
 	target_detach_evloop(target);
 
