@@ -1458,7 +1458,7 @@ struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
 		     "BUG: filename '%s' does not start with root_prefix '%s';"
 		     " prefixing it!\n",
 		   filename,root_prefix);
-	    snprintf(pbuf,sizeof(pbuf),"%s/%s",root_prefix,filename);
+	    snprintf(pbuf,sizeof(pbuf),"%s%s",root_prefix,filename);
 	    filename = strdup(pbuf);
 	}
     }
