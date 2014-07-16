@@ -1368,6 +1368,11 @@ xen_vm_process_instantiate_overlay(struct target *target,
 				   struct target_thread **ntthread) {
     struct target *overlay;
 
+    if (!spec) {
+	errno = EINVAL;
+	return NULL;
+    }
+
     if (spec->target_type != TARGET_TYPE_PHP) {
 	errno = EINVAL;
 	return NULL;

@@ -409,6 +409,19 @@ tid_t target_lookup_overlay_thread_by_name(struct target *target,char *name) {
     
 }
 
+struct target_spec *target_build_default_overlay_spec(struct target *target,
+						      tid_t tid) {
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "target(%s) tid %"PRIiTID"\n",target->name,tid);
+
+    if (!target->ops->build_default_overlay_spec) {
+	errno = ENOTSUP;
+	return NULL;
+    }
+
+    return target->ops->build_default_overlay_spec(target,tid);
+}
+
 struct target *target_instantiate_overlay(struct target *target,tid_t tid,
 					  struct target_spec *spec) {
     struct target *overlay;

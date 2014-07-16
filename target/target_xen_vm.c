@@ -92,6 +92,8 @@ static int xen_vm_set_active_probing(struct target *target,
 static target_status_t xen_vm_handle_exception(struct target *target,
 					       int *again,void *priv);
 
+static struct target_spec *xen_vm_build_default_overlay_spec(struct target *target,
+							     tid_t tid);
 static struct target *
 xen_vm_instantiate_overlay(struct target *target,
 			   struct target_thread *tthread,
@@ -283,6 +285,7 @@ struct target_ops xen_vm_ops = {
     .handle_step = probepoint_ss_handler,
     .handle_interrupted_step = NULL,
 
+    .build_default_overlay_spec = xen_vm_build_default_overlay_spec,
     .instantiate_overlay = xen_vm_instantiate_overlay,
     .lookup_overlay_thread_by_id = xen_vm_lookup_overlay_thread_by_id,
     .lookup_overlay_thread_by_name = xen_vm_lookup_overlay_thread_by_name,
@@ -5140,6 +5143,11 @@ __xen_vm_get_group_leader(struct target *target,struct target_thread *tthread) {
     return leader;
 }
 
+static struct target_spec *
+xen_vm_build_default_overlay_spec(struct target *target,tid_t tid) {
+    return target_build_spec(TARGET_TYPE_XEN_PROCESS,0);
+}
+
 static struct target *
 xen_vm_instantiate_overlay(struct target *target,
 			   struct target_thread *tthread,
@@ -5151,6 +5159,9 @@ xen_vm_instantiate_overlay(struct target *target,
     struct target *overlay;
     REGVAL thip;
     struct target_thread *leader;
+
+    if (!spec)
+	spec = target_build_spec(TARGET_TYPE_XEN_PROCESS,0);
 
     if (spec->target_type != TARGET_TYPE_XEN_PROCESS) {
 	errno = EINVAL;
