@@ -119,7 +119,7 @@ void regcache_invalidate(struct regcache *regcache) {
 
 #define CHECKREG()							\
     if (!arch_has_reg(regcache->arch,reg)) {				\
-	verror("reg %d not supported\n",reg);				\
+	vwarnopt(LA_LIB,LF_REGCACHE,8,"reg %d not supported\n",reg);	\
 	errno = EINVAL;							\
 	return -1;							\
     }
@@ -154,6 +154,8 @@ int regcache_init_reg(struct regcache *regcache,REG reg,REGVAL regval) {
     if (!(regcache->flags[reg] & REGCACHE_VALID))
 	++regcache->valid;
     regcache->flags[reg] |= REGCACHE_VALID;
+
+    vdebug(9,LA_LIB,LF_REGCACHE,"%"PRIiREG" = 0x%"PRIxREGVAL"\n",reg,regval);
 
     return 0;
 }
@@ -231,6 +233,7 @@ int regcache_write_reg(struct regcache *regcache,REG reg,REGVAL regval) {
     }
 
     regcache->flags[reg] |= REGCACHE_DIRTY;
+    ++regcache->dirty;
 
     return 0;
 }
@@ -268,7 +271,7 @@ int regcache_read_reg_ifdirty(struct regcache *regcache,REG reg,REGVAL *regval) 
 
     if (!(regcache->flags[reg] & REGCACHE_VALID)
 	|| !(regcache->flags[reg] & REGCACHE_DIRTY))
-	return 0;
+	return 1;
 
     if (regcache->flags[reg] & REGCACHE_ALLOC) {
 	unsigned int sz = arch_regsize(regcache->arch,reg);
@@ -355,6 +358,7 @@ int regcache_write_reg_len(struct regcache *regcache,REG reg,
     }
 
     regcache->flags[reg] |= REGCACHE_DIRTY;
+    ++regcache->dirty;
 
     return 0;
 }
