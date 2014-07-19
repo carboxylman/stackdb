@@ -42,6 +42,7 @@
 #include "target_xen_vm_process.h"
 #endif
 #include "target_php.h"
+#include "target_gdb.h"
 
 /**
  ** Globals.
@@ -161,7 +162,7 @@ struct argp_option target_argp_opts[] = {
 #ifdef ENABLE_XENSUPPORT
       ",xen,xen-process"
 #endif
-      ").",-3 },
+      "gdb).",-3 },
     { "personality",TARGET_ARGP_PERSONALITY,"PERSONALITY",0,
       "Forcibly set the target personality (linux,process,php).",-3 },
     { "personality-lib",TARGET_ARGP_PERSONALITY_LIB,"PERSONALITY_LIB_FILENAME",0,
@@ -220,6 +221,12 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
 	*/
     }
 #endif
+    else if (spec->target_type == TARGET_TYPE_GDB) {
+	if ((rc = gdb_spec_to_argv(spec,&backend_argc,&backend_argv))) {
+	    verror("gdb_spec_to_argv failed!\n");
+	    return -1;
+	}
+    }
     else {
 	verror("unsupported backend type %d!\n",spec->target_type);
 	return -1;
@@ -295,6 +302,8 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
     else if (spec->target_type == TARGET_TYPE_XEN_PROCESS)
 	av[j++] = strdup("xen-process");
 #endif
+    else if (spec->target_type == TARGET_TYPE_GDB)
+	av[j++] = strdup("gdb");
     else
 	av[j++] = strdup("UNKNOWN");
 
@@ -486,6 +495,13 @@ struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
 	++tstate.num_children;
     }
 #endif
+    if (target_types & TARGET_TYPE_GDB) {
+	target_argp_children[tstate.num_children].argp = &gdb_argp;
+	target_argp_children[tstate.num_children].flags = 0;
+	target_argp_children[tstate.num_children].header = gdb_argp_header;
+	target_argp_children[tstate.num_children].group = 0;
+	++tstate.num_children;
+    }
 
     target_argp_children[tstate.num_children].argp = NULL;
     target_argp_children[tstate.num_children].flags = 0;
@@ -570,6 +586,8 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 #endif
 	else if (strcmp(arg,"php") == 0) 
 	    tmptype = TARGET_TYPE_PHP;
+	else if (strcmp(arg,"gdb") == 0)
+	    tmptype = TARGET_TYPE_GDB;
 	else {
 	    verror("bad target type %s!\n",arg);
 	    return EINVAL;
@@ -593,6 +611,8 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 #endif
 	    else if (strcmp(arg,"php") == 0) 
 		spec->backend_spec = php_build_spec();
+	    else if (tmptype == TARGET_TYPE_GDB)
+		spec->backend_spec = gdb_build_spec();
 	}
 
 	break;
@@ -1166,6 +1186,8 @@ struct target_ops *target_get_ops(target_type_t target_type) {
 #endif
     else if (target_type == TARGET_TYPE_PHP)
 	return &php_ops;
+    else if (target_type == TARGET_TYPE_GDB)
+	return &gdb_ops;
     else
 	return NULL;
 }
@@ -3963,7 +3985,7 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
 					   unsigned char *code,
 					   unsigned int code_len) {
     struct target_memmod *mmod;
-    unsigned char *ibuf;
+    unsigned char *ibuf = NULL;
     unsigned int ibuf_len;
     unsigned int rc;
     struct target_thread *tthread;
@@ -3984,54 +4006,56 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
     mmod->addr = addr;
     mmod->is_phys = is_phys;
 
-    /*
-     * Backup the original memory.  If debugging, read at least
-     * 8 bytes so we can see what was there and dump it for debug
-     * purposes.  It is a bit wasteful in that case, but no big
-     * deal.
-     */
-    if (code_len > 8)
-	ibuf_len = code_len;
-    else 
-	ibuf_len = 8;
-    ibuf = calloc(1,ibuf_len);
+    if (code) {
+	/*
+	 * Backup the original memory.  If debugging, read at least
+	 * 8 bytes so we can see what was there and dump it for debug
+	 * purposes.  It is a bit wasteful in that case, but no big
+	 * deal.
+	 */
+	if (code_len > 8)
+	    ibuf_len = code_len;
+	else 
+	    ibuf_len = 8;
+	ibuf = calloc(1,ibuf_len);
 
-    if (is_phys) 
-	rcc = target_read_physaddr(target,addr,ibuf_len,ibuf);
-    else
-	rcc = target_read_addr(target,addr,ibuf_len,ibuf);
+	if (is_phys) 
+	    rcc = target_read_physaddr(target,addr,ibuf_len,ibuf);
+	else
+	    rcc = target_read_addr(target,addr,ibuf_len,ibuf);
 
-    if (!rcc) {
-	array_list_free(mmod->threads);
-	free(ibuf);
-	free(mmod);
-	verror("could not read %u bytes at 0x%"PRIxADDR"!\n",
-	       ibuf_len,addr);
-	return NULL;
-    }
+	if (!rcc) {
+	    array_list_free(mmod->threads);
+	    free(ibuf);
+	    free(mmod);
+	    verror("could not read %u bytes at 0x%"PRIxADDR"!\n",
+		   ibuf_len,addr);
+	    return NULL;
+	}
 
-    mmod->orig_len = code_len;
-    mmod->orig = calloc(1,mmod->orig_len);
+	mmod->orig_len = code_len;
+	mmod->orig = calloc(1,mmod->orig_len);
 
-    memcpy(mmod->orig,ibuf,mmod->orig_len);
+	memcpy(mmod->orig,ibuf,mmod->orig_len);
 
-    mmod->mod = malloc(code_len);
-    mmod->mod_len = code_len;
-    memcpy(mmod->mod,code,mmod->mod_len);
+	mmod->mod = malloc(code_len);
+	mmod->mod_len = code_len;
+	memcpy(mmod->mod,code,mmod->mod_len);
 
-    if (is_phys)
-	rc = target_write_physaddr(target,addr,mmod->mod_len,mmod->mod);
-    else
-	rc = target_write_addr(target,addr,mmod->mod_len,mmod->mod);
+	if (is_phys)
+	    rc = target_write_physaddr(target,addr,mmod->mod_len,mmod->mod);
+	else
+	    rc = target_write_addr(target,addr,mmod->mod_len,mmod->mod);
 
-    if (rc != mmod->mod_len) {
-	array_list_free(mmod->threads);
-	free(mmod->mod);
-	free(mmod->orig);
-	free(mmod);
-	verror("could not write %lu subst bytes at 0x%"PRIxADDR"!\n",
-	       mmod->orig_len,addr);
-	return NULL;
+	if (rc != mmod->mod_len) {
+	    array_list_free(mmod->threads);
+	    free(mmod->mod);
+	    free(mmod->orig);
+	    free(mmod);
+	    verror("could not write %lu subst bytes at 0x%"PRIxADDR"!\n",
+		   mmod->orig_len,addr);
+	    return NULL;
+	}
     }
 
     if (is_phys)
@@ -4041,15 +4065,23 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
 
     array_list_append(mmod->threads,tthread);
 
-    vdebug(5,LA_TARGET,LF_TARGET,
-	   "created memmod at 0x%"PRIxADDR" (is_phys=%d) tid %"PRIiTID";"
-	   " inserted new bytes (orig mem: %02hhx %02hhx %02hhx %02hhx"
-	   " %02hhx %02hhx %02hhx %02hhx)\n",
-	   mmod->addr,is_phys,tid,
-	   (int)ibuf[0],(int)ibuf[1],(int)ibuf[2],(int)ibuf[3],
-	   (int)ibuf[4],(int)ibuf[5],(int)ibuf[6],(int)ibuf[7]);
+    if (code) {
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "created memmod at 0x%"PRIxADDR" (is_phys=%d) tid %"PRIiTID";"
+	       " inserted new bytes (orig mem: %02hhx %02hhx %02hhx %02hhx"
+	       " %02hhx %02hhx %02hhx %02hhx)\n",
+	       mmod->addr,is_phys,tid,
+	       (int)ibuf[0],(int)ibuf[1],(int)ibuf[2],(int)ibuf[3],
+	       (int)ibuf[4],(int)ibuf[5],(int)ibuf[6],(int)ibuf[7]);
+    }
+    else {
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "created (fake) memmod at 0x%"PRIxADDR" (is_phys=%d) tid %"PRIiTID"\n",
+	       mmod->addr,is_phys,tid);
+    }
 
-    free(ibuf);
+    if (ibuf)
+	free(ibuf);
 
     return mmod;
 }
@@ -4153,11 +4185,13 @@ int target_memmod_free(struct target *target,tid_t tid,
 	if (mmod->mod)
 	    free(mmod->mod);
 
-	rc = writer(target,addr,mmod->orig_len,mmod->orig);
-	if (rc != mmod->orig_len) {
-	    verror("could not restore orig memory at 0x%"PRIxADDR";"
-		   " but cannot do anything!\n",addr);
-	    retval = -1;
+	if (mmod->orig) {
+	    rc = writer(target,addr,mmod->orig_len,mmod->orig);
+	    if (rc != mmod->orig_len) {
+		verror("could not restore orig memory at 0x%"PRIxADDR";"
+		       " but cannot do anything!\n",addr);
+		retval = -1;
+	    }
 	}
 
 	vdebug(5,LA_TARGET,LF_TARGET,

@@ -41,6 +41,7 @@
 #include "target_xen_vm_process.h"
 #endif
 #include "target_php.h"
+#include "target_gdb.h"
 
 /**
  ** The generic target API!
@@ -72,6 +73,9 @@ struct target *target_instantiate(struct target_spec *spec,
 	       " call target_instantiate_overlay instead.\n");
 	errno = EINVAL;
 	return NULL;
+    }
+    else if (spec->target_type == TARGET_TYPE_GDB) {
+	target = gdb_instantiate(spec,evloop);
     }
 
     if (target) {
@@ -107,6 +111,10 @@ struct target_spec *target_build_spec(target_type_t type,target_mode_t mode) {
 	tspec = calloc(1,sizeof(*tspec));
 	tspec->backend_spec = php_build_spec();
     }
+    else if (type == TARGET_TYPE_GDB) {
+	tspec = calloc(1,sizeof(*tspec));
+	tspec->backend_spec = gdb_build_spec();
+    }
     else {
 	errno = EINVAL;
 	return NULL;
@@ -138,6 +146,9 @@ void target_free_spec(struct target_spec *spec) {
 #endif
 	else if (spec->target_type == TARGET_TYPE_PHP) {
 	    php_free_spec((struct php_spec *)spec->backend_spec);
+	}
+	else if (spec->target_type == TARGET_TYPE_GDB) {
+	    gdb_free_spec((struct gdb_spec *)spec->backend_spec);
 	}
     }
 
@@ -336,14 +347,18 @@ int target_open(struct target *target) {
 	}
     }
 
-    vdebug(5,LA_TARGET,LF_TARGET,"postloadinit target(%s)\n",target->name);
-    if ((rc = target->ops->postloadinit(target))) {
-	return rc;
+    if (target->ops->postloadinit) {
+	vdebug(5,LA_TARGET,LF_TARGET,"postloadinit target(%s)\n",target->name);
+	if ((rc = target->ops->postloadinit(target))) {
+	    return rc;
+	}
     }
 
-    vdebug(5,LA_TARGET,LF_TARGET,"attach target(%s)\n",target->name);
-    if ((rc = target->ops->attach(target))) {
-	return rc;
+    if (target->ops->attach) {
+	vdebug(5,LA_TARGET,LF_TARGET,"attach target(%s)\n",target->name);
+	if ((rc = target->ops->attach(target))) {
+	    return rc;
+	}
     }
 
     target->opened = 1;
@@ -1134,17 +1149,24 @@ int target_close(struct target *target) {
 	if (mmod->mod && mmod->mod != target->arch->breakpoint_instrs)
 	    free(mmod->mod);
 
-	rlen = target_write_addr(target,mmod->addr,mmod->orig_len,mmod->orig);
-	if (rlen != mmod->orig_len) {
-	    verror("could not restore orig memory at 0x%"PRIxADDR";"
-		   " but cannot do anything!\n",mmod->addr);
+	if (mmod->orig) {
+	    rlen = target_write_addr(target,mmod->addr,mmod->orig_len,mmod->orig);
+	    if (rlen != mmod->orig_len) {
+		verror("could not restore orig memory at 0x%"PRIxADDR";"
+		       " but cannot do anything!\n",mmod->addr);
+	    }
 	}
 
-	array_list_free(mmod->threads);
-	free(mmod->orig);
+	if (mmod->threads) {
+	    array_list_free(mmod->threads);
+	}
+	if (mmod->orig)
+	    free(mmod->orig);
 
-	if (target_notify_sw_breakpoint(target,mmod->addr,0)) 
-	    vwarn("sw bp removal notification failed; ignoring\n");
+	if (target_notify_sw_breakpoint(target,mmod->addr,0)) {
+	    vwarnopt(9,LA_TARGET,LF_TARGET,
+		     "sw bp removal notification failed; ignoring\n");
+	}
 
 	free(mmod);
     }
@@ -1298,6 +1320,10 @@ int target_change_sw_breakpoint(struct target *target,tid_t tid,
 
 REG target_get_unused_debug_reg(struct target *target,tid_t tid) {
     REG retval;
+    if (!target->ops->get_unused_debug_reg) {
+	errno = ENOTSUP;
+	return -1;
+    }
     vdebug(5,LA_TARGET,LF_TARGET,"getting unused debug reg for target(%s):%"PRIiTID"\n",
 	   target->name,tid);
     retval = target->ops->get_unused_debug_reg(target,tid);
@@ -1363,10 +1389,14 @@ int target_enable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
 
 int target_notify_sw_breakpoint(struct target *target,ADDR addr,
 				int notification) {
-    vdebug(16,LA_TARGET,LF_TARGET,
-	   "notify sw breakpoint (%d) on target(%s)\n",
-	   notification,target->name);
-    return target->ops->notify_sw_breakpoint(target,addr,notification);
+    if (target->ops->notify_sw_breakpoint) {
+	vdebug(16,LA_TARGET,LF_TARGET,
+	       "notify sw breakpoint (%d) on target(%s)\n",
+	       notification,target->name);
+	return target->ops->notify_sw_breakpoint(target,addr,notification);
+    }
+    else
+	return 0;
 }
 
 int target_singlestep(struct target *target,tid_t tid,int isbp) {

@@ -423,10 +423,11 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 	 */
 	if (probepoint->state != PROBE_DISABLED) {
 	    /* Reset EIP to the right thing. */
-	    if ((probepoint->state == PROBE_BP_PREHANDLING 
-		 || probepoint->state == PROBE_BP_ACTIONHANDLING 
-		 || probepoint->state == PROBE_ACTION_RUNNING
-		 || probepoint->state == PROBE_ACTION_DONE)
+	    if (!target->no_adjust_bp_ip
+		&& (probepoint->state == PROBE_BP_PREHANDLING 
+		    || probepoint->state == PROBE_BP_ACTIONHANDLING 
+		    || probepoint->state == PROBE_ACTION_RUNNING
+		    || probepoint->state == PROBE_ACTION_DONE)
 		&& !action_did_obviate
 		&& probepoint->type != PROBEPOINT_WATCH) {
 		/* We still must execute the original instruction. */
@@ -500,8 +501,12 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 
 	probepoint->debugregnum = -1;
     }
-    /* Otherwise do software. */
-    else {
+    /*
+     * Otherwise do software.  NB: we might get here twice; so make sure
+     * the probepoint is still associated with a thread.  If not, don't
+     * try again to remove it from the target.
+     */
+    else if (probepoint->thread) {
 	if (!fake) {
 	    /* restore the original instruction */
 	    if (target_remove_sw_breakpoint(target,probepoint->thread->tid,
@@ -1111,6 +1116,7 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
 	probepoint_free(probepoint);
     else if (force) {
 	verror("probepoint_remove failed, but force freeing!\n");
+	target_remove_probepoint(target,probepoint->thread,probepoint);
 	probepoint_free(probepoint);
 	return -1;
     }
@@ -2403,10 +2409,12 @@ static int setup_post_single_step(struct target *target,
      * If we're software, replace the original.
      */
     else if (probepoint->style == PROBEPOINT_SW) {
-	/* Restore the original instruction. */
-	vdebug(4,LA_PROBE,LF_PROBEPOINT,"restoring orig instr for SW ");
-	LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
-	vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
+	if (!target->no_adjust_bp_ip) {
+	    /* Restore the original instruction. */
+	    vdebug(4,LA_PROBE,LF_PROBEPOINT,"restoring orig instr for SW ");
+	    LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	    vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
+	}
 
 	doit = 1;
 
@@ -2516,7 +2524,7 @@ static int setup_post_single_step(struct target *target,
 	if (probepoint->style != PROBEPOINT_HW) {
 	    if (target_enable_sw_breakpoint(target,probepoint->thread->tid,
 					    probepoint->mmod)) {
-		verror("could enable sw breakpoint after failed singlestep;"
+		verror("could not enable sw breakpoint after failed singlestep;"
 		       " assuming breakpoint is left in place and"
 		       " skipping single step, but badness will ensue!");
 	    }
@@ -2768,7 +2776,7 @@ result_t probepoint_bp_handler(struct target *target,
     /* If SW bp, reset EIP and write it back *now*, because it's easy
      * here, and then if the user tries to read it, it's "correct".
      */
-    if (probepoint->style == PROBEPOINT_SW) {
+    if (!target->no_adjust_bp_ip && probepoint->style == PROBEPOINT_SW) {
 	ipval -= target->arch->breakpoint_instrs_len;
 	errno = 0;
 	target_write_reg(target,tid,target->ipregno,ipval);
@@ -2830,7 +2838,7 @@ result_t probepoint_bp_handler(struct target *target,
     }
 
     /* Restore ip register if we ran a handler. */
-    if (doit) {
+    if (!target->no_adjust_bp_ip && doit) {
 	errno = 0;
 	target_write_reg(target,tid,target->ipregno,ipval);
 	if (errno) {

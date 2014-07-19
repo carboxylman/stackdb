@@ -149,9 +149,13 @@ typedef enum {
     TARGET_TYPE_XEN    = 1 << 1,
     TARGET_TYPE_XEN_PROCESS = 1 << 2,
     TARGET_TYPE_PHP    = 1 << 3,
+    TARGET_TYPE_GDB    = 1 << 4,
 } target_type_t;
-#define TARGET_TYPE_BITS 4
+#define TARGET_TYPE_BITS 5
 
+/*
+ * Order of these is important!
+ */
 typedef enum {
     TARGET_PERSONALITY_NONE    = 0,
     TARGET_PERSONALITY_OS      = 1,
@@ -1952,7 +1956,8 @@ struct target {
 	     kill_on_close:1,
 	     monitorhandling:1,
 	     needmonitorinterrupt:1,
-	     global_tlctxt_is_dynamic:1;
+	     global_tlctxt_is_dynamic:1,
+	     no_adjust_bp_ip:1;
     active_probe_flags_t active_probe_flags:ACTIVE_PROBE_BITS;
 
     /*

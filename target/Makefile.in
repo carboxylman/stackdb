@@ -77,7 +77,9 @@ OBJECTS := target.lo target_api.lo target_generic.lo memory.lo location.lo \
 	target_nv_filter.lo \
 	target_os.lo target_process.lo target_os_linux_generic.lo \
 	target_arch_x86.lo memcache.lo
-OBJECTS += target_linux_userproc.lo target_php.lo
+OBJECTS += target_linux_userproc.lo target_php.lo \
+	target_gdb_rsp.lo target_gdb.lo target_gdb_helper_builtin.lo \
+	 target_gdb_helper_qemu.lo
 ifeq ($(ENABLE_XENSUPPORT),"1")
 	OBJECTS += target_xen_vm.lo target_xen_vm_mem_builtin.lo \
 		target_xen_vm_process.lo
@@ -92,7 +94,7 @@ ifeq ($(ENABLE_DISTORM),"1")
 	OBJECTS += disasm.lo
 endif
 
-LIBRARIES := libtarget.la
+LIBRARIES := libtarget.la libqemuhacks.la
 
 PROGRAMS := dumptarget
 ifeq ($(ENABLE_XENSUPPORT),"1")
@@ -134,6 +136,10 @@ libtarget.la:	$(OBJECTS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS) \
 		-rpath $(INSTALL_LIBDIR) ${LDFLAGS}
 
+libqemuhacks.la: qemuhacks.lo
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ qemuhacks.lo \
+		-rpath $(INSTALL_LIBDIR) -ldl
+
 dumptarget: $(HEADERS) dumptarget.lo $(LIBRARIES) $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
@@ -160,7 +166,7 @@ install: def-install install-subdirs
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(LIBRARIES)
 	@$(LIBTOOL) --mode=clean rm -f $(PROGRAMS)
-	rm -f dumptarget* target_xen_vm_vmp*
+	rm -f dumptarget* target_xen_vm_vmp* qemuhacks*
 	$(RM) -rf .libs
 
 distclean: distclean-subdirs

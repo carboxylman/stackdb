@@ -64,6 +64,10 @@ int os_linux_attach(struct target *target) {
 
     lstate->kernel_filename = (char *) \
 	g_hash_table_lookup(target->config,"OS_KERNEL_FILENAME");
+    if (!lstate->kernel_filename) {
+	lstate->kernel_filename = (char *) \
+	    g_hash_table_lookup(target->config,"MAIN_FILENAME");
+    }
 
     /*
      * First, parse out its version.  We look for the first number
@@ -2348,27 +2352,43 @@ ADDR os_linux_current_thread_ptr(struct target *target,REGVAL kernel_esp) {
 #else
 	ipval = target_read_reg(target,TID_GLOBAL,target->ipregno);
 	sp = target_read_reg(target,TID_GLOBAL,target->spregno);
+
+	/*
+	 * Try to read Xen's special kernel gs base.
+	 */
 	gs_base = target_read_reg(target,TID_GLOBAL,REG_X86_64_GS_BASE_KERNEL);
 
 	if (!gs_base) {
-	    gs_base = target_read_reg(target,TID_GLOBAL,REG_X86_64_GS_BASE_USER);
-	    if (gs_base) {
-		if (!(ipval < lstate->kernel_start_addr
-		      || sp < lstate->kernel_start_addr))
-		    gs_base = 0;
+	    /*
+	     * If that doesn't work, read the vanilla one.
+	     */
+	    gs_base = target_read_reg(target,TID_GLOBAL,REG_X86_64_GS_BASE);
+
+	    /*
+	     * Finally, if that doesn't work, try Xen's special user gs base;
+	     * if that *does* work, check ipval and sanitize -- we need
+	     * a kernel gs base.
+	     */
+	    if (!gs_base) {
+		gs_base = target_read_reg(target,TID_GLOBAL,
+					  REG_X86_64_GS_BASE_USER);
+		if (gs_base) {
+		    if (!(ipval < lstate->kernel_start_addr
+			  || sp < lstate->kernel_start_addr))
+			gs_base = 0;
+		}
 	    }
 	}
 
 	if (!gs_base) {
 	    vwarn("invalid gs_base_kernel=0x%"PRIxADDR"/gs_base_user=0x%"PRIxADDR
-		  " for rip=0x%"PRIxADDR"/rsp=0x%"PRIxADDR"; will not be able"
-		  " to load current thread info!\n",
+		  "/gs_base=0x%"PRIxADDR" for rip=0x%"PRIxADDR"/rsp=0x%"PRIxADDR
+		  "; will not be able to load current thread info!\n",
 		  target_read_reg(target,TID_GLOBAL,REG_X86_64_GS_BASE_KERNEL),
 		  target_read_reg(target,TID_GLOBAL,REG_X86_64_GS_BASE_USER),
+		  target_read_reg(target,TID_GLOBAL,REG_X86_64_GS_BASE),
 		  ipval,sp);
-	}
 
-	if (gs_base == 0) {
 	    if (ipval >= lstate->kernel_start_addr) {
 		kernel_stack_addr = sp & ~(THREAD_SIZE - 1);
 
@@ -3977,6 +3997,11 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 
 	gs_base_kernel = target_read_reg(target,TID_GLOBAL,
 					 REG_X86_64_GS_BASE_KERNEL);
+	if (!gs_base_kernel) {
+	    gs_base_kernel = target_read_reg(target,TID_GLOBAL,
+					     REG_X86_64_GS_BASE);
+	}
+
 	if (!target_read_addr(target,gs_base_kernel + 0xbf00,
 			      target->arch->wordsize,
 			      (unsigned char *)&old_rsp)) {
@@ -5810,20 +5835,19 @@ int os_linux_invalidate_thread(struct target *target,
 
     ltstate = (struct os_linux_thread_state *)tthread->personality_state;
 
-    //if (!tthread->valid) 
-    //    continue;
-
-    if (ltstate->thread_struct) {
-	value_free(ltstate->thread_struct);
-	ltstate->thread_struct = NULL;
-    }
-    if (ltstate->thread_info) {
-	value_free(ltstate->thread_info);
-	ltstate->thread_info = NULL;
-    }
-    if (ltstate->task_struct) {
-	value_free(ltstate->task_struct);
-	ltstate->task_struct = NULL;
+    if (ltstate) {
+	if (ltstate->thread_struct) {
+	    value_free(ltstate->thread_struct);
+	    ltstate->thread_struct = NULL;
+	}
+	if (ltstate->thread_info) {
+	    value_free(ltstate->thread_info);
+	    ltstate->thread_info = NULL;
+	}
+	if (ltstate->task_struct) {
+	    value_free(ltstate->task_struct);
+	    ltstate->task_struct = NULL;
+	}
     }
 
     tthread->valid = 0;

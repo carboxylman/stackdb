@@ -124,6 +124,7 @@ void cleanup_probes() {
 				      (gpointer)&probe)) {
 	    probe_unregister(probe,1);
 	    probe_free(probe,1);
+	    g_hash_table_iter_remove(&iter);
 	}
 	g_hash_table_destroy(probes);
 	probes = NULL;
@@ -981,7 +982,9 @@ int main(int argc,char **argv) {
     memset(&opts,0,sizeof(opts));
 
     tspec = target_argp_driver_parse(&dt_argp,&opts,argc,argv,
-				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN,1);
+				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN
+				         | TARGET_TYPE_GDB,
+				     1);
 
     if (!tspec) {
 	verror("could not parse target arguments!\n");
