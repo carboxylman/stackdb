@@ -5360,15 +5360,17 @@ REGVAL target_regcache_readreg(struct target *target,tid_t tid,REG reg) {
 	   target->id,target_regname(target,reg),tid,tthread->tidctxt);
 
     if (!tthread->regcaches[tthread->tidctxt]) {
-	verror("target %d could not load thread %d!\n",target->id,tid);
+	vwarnopt(9,LA_TARGET,LF_TARGET,
+		 "target %d could not load thread %d!\n",target->id,tid);
 	errno = EADDRNOTAVAIL;
 	return 0;
     }
     regcache = tthread->regcaches[tthread->tidctxt];
 
     if (regcache_read_reg(regcache,reg,&regval)) {
-	verror("target %d thread %d reg %d: could not read!\n",
-	       target->id,tid,reg);
+	vwarnopt(9,LA_TARGET,LF_TARGET,
+		 "target %d thread %d reg %d: could not read!\n",
+		 target->id,tid,reg);
 	return 0;
     }
 
@@ -5524,6 +5526,42 @@ int target_regcache_zero(struct target *target,struct target_thread *tthread,
     }
 }
 
+int target_regcache_mark_flushed(struct target *target,
+				 struct target_thread *tthread,
+				 thread_ctxt_t tctxt) {
+    if (tctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,tctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    if (!tthread->regcaches[tctxt])
+	return 0;
+
+    regcache_mark_flushed(tthread->regcaches[tctxt]);
+
+    return 0;
+}
+
+int target_regcache_invalidate(struct target *target,
+			       struct target_thread *tthread,
+			       thread_ctxt_t tctxt) {
+    if (tctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,tctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    if (!tthread->regcaches[tctxt])
+	return 0;
+
+    regcache_invalidate(tthread->regcaches[tctxt]);
+
+    return 0;
+}
+
 int target_regcache_copy_all(struct target_thread *sthread,
 			     thread_ctxt_t stidctxt,
 			     struct target_thread *dthread,
@@ -5570,6 +5608,50 @@ int target_regcache_copy_all_zero(struct target_thread *sthread,
 	regcache_zero(dthread->regcaches[dtidctxt]);
 
     return target_regcache_copy_all(sthread,stidctxt,dthread,dtidctxt);
+}
+
+int target_regcache_copy_from(struct target_thread *dthread,
+			      thread_ctxt_t dtidctxt,
+			      struct regcache *sregcache) {
+    struct target *target = dthread->target;
+
+    if (dtidctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,dtidctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "copying regcache to thid %d ctxt %d\n",
+	   dthread->tid,dtidctxt);
+
+    if (!dthread->regcaches[dtidctxt])
+	dthread->regcaches[dtidctxt] = regcache_create(dthread->target->arch);
+
+    return regcache_copy_all(sregcache,dthread->regcaches[dtidctxt]);
+}
+
+int target_regcache_copy_dirty_to(struct target_thread *sthread,
+				  thread_ctxt_t stidctxt,
+				  struct regcache *dregcache) {
+    struct target *target = sthread->target;
+
+    if (stidctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,stidctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "copying regcache to thid %d ctxt %d\n",
+	   sthread->tid,stidctxt);
+
+    if (!sthread->regcaches[stidctxt])
+	sthread->regcaches[stidctxt] = regcache_create(sthread->target->arch);
+
+    return regcache_copy_dirty(sthread->regcaches[stidctxt],dregcache);
 }
 
 GHashTable *target_regcache_copy_registers(struct target *target,tid_t tid) {

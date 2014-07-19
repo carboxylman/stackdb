@@ -72,6 +72,32 @@ int regcache_copy_all(struct regcache *sregcache,struct regcache *dregcache) {
     return 0;
 }
 
+int regcache_copy_dirty(struct regcache *sregcache,struct regcache *dregcache) {
+    int i;
+    int olddone;
+
+    olddone = dregcache->done_loading;
+    dregcache->done_loading = 0;
+
+    /* copy any set values. */
+    for (i = 0; i < sregcache->values_len; ++i) {
+	if (!(sregcache->flags[i] & REGCACHE_VALID))
+	    continue;
+	else if (!(sregcache->flags[i] & REGCACHE_DIRTY))
+	    continue;
+	else if (sregcache->flags[i] & REGCACHE_ALLOC)
+	    regcache_write_reg_len(dregcache,i,(void *)sregcache->values[i],
+				  arch_regsize(sregcache->arch,i));
+	else
+	    regcache_write_reg(dregcache,i,sregcache->values[i]);
+	vdebug(9,LA_LIB,LF_REGCACHE,"copied reg %i\n",i);
+    }
+
+    dregcache->done_loading = olddone;
+
+    return 0;
+}
+
 void regcache_zero(struct regcache *regcache) {
     int i;
 
@@ -205,6 +231,10 @@ int regcache_isdirty_reg_range(struct regcache *regcache,REG start,REG end) {
     }
 
     return retval;
+}
+
+int regcache_isdirty(struct regcache *regcache) {
+    return regcache->dirty;
 }
 
 int regcache_write_reg(struct regcache *regcache,REG reg,REGVAL regval) {

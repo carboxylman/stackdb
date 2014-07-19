@@ -74,6 +74,7 @@ struct regcache *regcache_create(struct arch *arch);
 void regcache_destroy(struct regcache *regcache);
 
 int regcache_copy_all(struct regcache *sregcache,struct regcache *dregcache);
+int regcache_copy_dirty(struct regcache *sregcache,struct regcache *dregcache);
 void regcache_zero(struct regcache *regcache);
 void regcache_mark_flushed(struct regcache *regcache);
 void regcache_invalidate(struct regcache *regcache);
@@ -82,6 +83,7 @@ int regcache_init_reg(struct regcache *regcache,REG reg,REGVAL regval);
 int regcache_init_done(struct regcache *regcache);
 int regcache_isdirty_reg_range(struct regcache *regcache,REG start,REG end);
 int regcache_isdirty_reg(struct regcache *regcache,REG reg);
+int regcache_isdirty(struct regcache *regcache);
 int regcache_write_reg(struct regcache *regcache,REG reg,REGVAL regval);
 int regcache_read_reg(struct regcache *regcache,REG reg,REGVAL *regval);
 int regcache_read_reg_ifdirty(struct regcache *regcache,REG reg,REGVAL *regval);

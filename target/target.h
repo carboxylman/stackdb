@@ -183,6 +183,12 @@ int target_regcache_snprintf(struct target *target,struct target_thread *tthread
 			     int detail,char *sep,char *kvsep,int flags);
 int target_regcache_zero(struct target *target,struct target_thread *tthread,
 			 thread_ctxt_t tctxt);
+int target_regcache_mark_flushed(struct target *target,
+				 struct target_thread *tthread,
+				 thread_ctxt_t tctxt);
+int target_regcache_invalidate(struct target *target,
+				 struct target_thread *tthread,
+				 thread_ctxt_t tctxt);
 int target_regcache_copy_all(struct target_thread *sthread,
 			     thread_ctxt_t stidctxt,
 			     struct target_thread *dthread,
@@ -191,6 +197,12 @@ int target_regcache_copy_all_zero(struct target_thread *sthread,
 				  thread_ctxt_t stidctxt,
 				  struct target_thread *dthread,
 				  thread_ctxt_t dtidctxt);
+int target_regcache_copy_from(struct target_thread *dthread,
+			      thread_ctxt_t dtidctxt,
+			      struct regcache *sregcache);
+int target_regcache_copy_dirty_to(struct target_thread *sthread,
+				  thread_ctxt_t stidctxt,
+				  struct regcache *dregcache);
 /*
  * These are the drop-ins for the backend register functions.
  */
