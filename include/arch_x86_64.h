@@ -30,7 +30,7 @@ extern struct arch arch_x86_64;
  * http://www.x86-64.org/documentation/abi-0.99.pdf :
  */
 
-#define ARCH_X86_64_REG_COUNT 88
+#define ARCH_X86_64_REG_COUNT 89
 
 /* 64-bit GP regs. */
 #define REG_X86_64_RAX  0
@@ -150,5 +150,7 @@ extern struct arch arch_x86_64;
 
 #define REG_X86_64_DR6 86
 #define REG_X86_64_DR7 87
+
+#define REG_X86_64_MSR_EFER 88
 
 #endif /* __ARCH_X86_64_H__ */

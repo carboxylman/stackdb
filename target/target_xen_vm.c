@@ -4778,6 +4778,7 @@ static int dreg_to_offset64[ARCH_X86_64_REG_COUNT] = {
     -1,-1,
     offsetof(struct vcpu_guest_context,debugreg[6]),
     offsetof(struct vcpu_guest_context,debugreg[7]),
+    -1,
 };
 #endif
 static int dreg_to_offset32[ARCH_X86_REG_COUNT] = { 
@@ -4815,6 +4816,7 @@ static int dreg_to_offset32[ARCH_X86_REG_COUNT] = {
     -1,-1,
     offsetof(struct vcpu_guest_context,debugreg[6]),
     offsetof(struct vcpu_guest_context,debugreg[7]),
+    -1,
 };
 
 /*

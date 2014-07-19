@@ -27,7 +27,7 @@ extern struct arch arch_x86;
  * This is the SVR4 DWARF map from gdb/gdb/i386-tdep.c .
  */
 
-#define ARCH_X86_REG_COUNT 59
+#define ARCH_X86_REG_COUNT 60
 
 /* 32-bit GP regs. */
 #define REG_X86_EAX  0
@@ -106,5 +106,7 @@ extern struct arch arch_x86;
 
 #define REG_X86_DR6 57
 #define REG_X86_DR7 58
+
+#define REG_X86_MSR_EFER 59
 
 #endif /* __ARCH_X86_H__ */

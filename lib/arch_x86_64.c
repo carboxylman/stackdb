@@ -38,6 +38,7 @@ static char *x86_64_reg_names[ARCH_X86_64_REG_COUNT] = {
     "cr0","cr1","cr2","cr3","cr4",NULL,NULL,NULL,"cr8",
     NULL,
     "dr0","dr1","dr2","dr3",NULL,NULL,"dr6","dr7",
+    "efer",
 };
 
 static REG x86_64_common_to_arch[COMMON_REG_COUNT] = {
@@ -64,6 +65,7 @@ static uint8_t x86_64_reg_sizes[ARCH_X86_64_REG_COUNT] = {
     8,8,8,8,8,0,0,0,8,
     0,
     8,8,8,8,0,0,8,8,
+    8,
 };
 
 static int x86_64_so_d0[] = { -1, };
@@ -76,7 +78,7 @@ static int x86_64_so_d1[] = {
     REG_X86_64_CS,REG_X86_64_SS,REG_X86_64_DS,REG_X86_64_ES,
     REG_X86_64_FS,REG_X86_64_GS,
     REG_X86_64_FS_BASE,REG_X86_64_GS_BASE,REG_X86_64_GS_BASE_KERNEL,
-    REG_X86_64_GS_BASE_USER,-1,
+    REG_X86_64_GS_BASE_USER,REG_X86_64_MSR_EFER,-1,
 };
 static int x86_64_so_d2[] = {
     REG_X86_64_CR0,REG_X86_64_CR1,REG_X86_64_CR2,REG_X86_64_CR3,

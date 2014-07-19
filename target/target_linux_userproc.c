@@ -4187,6 +4187,7 @@ static int dreg_to_ptrace_idx64[ARCH_X86_64_REG_COUNT] = {
     -1,
     -1, -1, -1, -1,-1, -1, -1, -1,-1, -1,
     -1, -1,-1, -1, -1, -1,-1, -1, -1, -1,
+    -1,
 };
 #endif
 static int dreg_to_ptrace_idx32[ARCH_X86_REG_COUNT] = {
@@ -4201,6 +4202,7 @@ static int dreg_to_ptrace_idx32[ARCH_X86_REG_COUNT] = {
     /* These are "fake" DWARF regs. */
     8, 13, 16, 7, 9, 10,
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1,
 };
 
 /*
