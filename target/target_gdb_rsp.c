@@ -33,6 +33,7 @@
 #endif
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 #include <argp.h>
 
 #include "common.h"
@@ -184,6 +185,11 @@ int gdb_rsp_connect(struct target *target) {
 	if (connect(gstate->fd,(struct sockaddr *)dst,dlen) < 0) {
 	    verror("connect(%s): %s\n",he->h_addr,strerror(errno));
 	    goto in_err;
+	}
+
+	if (!spec->do_udp) {
+	    const int one = 1;
+	    setsockopt(gstate->fd,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(&one));
 	}
 
 	vdebug(5,LA_TARGET,LF_GDB,
