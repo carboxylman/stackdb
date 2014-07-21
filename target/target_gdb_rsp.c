@@ -93,8 +93,8 @@ int gdb_rsp_connect(struct target *target) {
     void *dst;
     int addrtype;
     int dlen;
-    struct sockaddr_in sin;
-    struct sockaddr_in6 sin6;
+    struct sockaddr_in sin,sinc;
+    struct sockaddr_in6 sin6,sin6c;
     gdb_rsp_handler_ret_t hret = GDB_RSP_HANDLER_ERR;
     int sret = 0;
 
@@ -155,10 +155,30 @@ int gdb_rsp_connect(struct target *target) {
 	if (addrtype == AF_INET) {
 	    dst = &sin;
 	    dlen = sizeof(sin);
+	    if (spec->do_udp) {
+		sinc.sin_family = addrtype;
+		sinc.sin_addr.s_addr = INADDR_ANY;
+		sinc.sin_port = 0;
+		if (bind(gstate->fd,&sinc,sizeof(sinc))) {
+		    verror("could not bind udp socket: %s (%d)!\n",
+			   strerror(errno),errno);
+		    goto in_err;
+		}
+	    }
 	}
 	else {
 	    dst = &sin6;
 	    dlen = sizeof(sin6);
+	    if (spec->do_udp) {
+		sin6c.sin6_family = addrtype;
+		sin6c.sin6_addr = in6addr_any;
+		sin6c.sin6_port = 0;
+		if (bind(gstate->fd,&sin6c,sizeof(sin6c))) {
+		    verror("could not bind udp socket: %s (%d)!\n",
+			   strerror(errno),errno);
+		    goto in_err;
+		}
+	    }
 	}
 
 	if (connect(gstate->fd,(struct sockaddr *)dst,dlen) < 0) {
@@ -453,8 +473,8 @@ static int gdb_rsp_send_raw(struct target *target,
 		goto errout;
 	    }
 	    else {
-		verror("write to fd %d failed after %d of %d bytes!\n",
-		       fd,(len - remaining),len);
+		verror("write to fd %d failed after %d of %d bytes: %s (%d)!\n",
+		       fd,(len - remaining),len,strerror(errno),errno);
 		goto errout;
 	    }
 	}
