@@ -47,7 +47,6 @@ static int ps_setuid_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     int *int_ptr = NULL;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,21)
     struct cred * nonconst_cred;
-    const struct cred *const_cred;
 #endif
 
 
@@ -93,7 +92,7 @@ static int ps_setuid_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 	    found_flag = 1;
 #else
 	    /* for objective and real subjective task credentials */
-	    nonconst_cred = get_cred(task->real_cred);
+	    nonconst_cred = (struct cred *)get_cred(task->real_cred);
 	    printk(KERN_INFO "Current real UID of the process = %d\n", nonconst_cred->uid);
 	    printk(KERN_INFO "Current real GID of the process = %d\n", nonconst_cred->gid);
 	    printk(KERN_INFO "Current effective UID of the process = %d\n", nonconst_cred->euid);
@@ -112,7 +111,7 @@ static int ps_setuid_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 	    put_cred(task->real_cred);
 
 	    /* for effective subjective task credentials */
-	    nonconst_cred = get_cred(task->cred);
+	    nonconst_cred = (struct cred *)get_cred(task->cred);
 	    printk(KERN_INFO "Current real UID of the process = %d\n", nonconst_cred->uid);
 	    printk(KERN_INFO "Current real GID of the process = %d\n", nonconst_cred->gid);
 	    printk(KERN_INFO "Current effective UID of the process = %d\n", nonconst_cred->euid);

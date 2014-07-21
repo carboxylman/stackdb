@@ -45,7 +45,7 @@ static int file_close( const void *v, struct file *file, unsigned int n) {
     char *name = (char *) v;
 
     /* get the file name from the file struct */
-    file_name = file->f_path.dentry->d_name.name;
+    file_name = (char *)file->f_path.dentry->d_name.name;
    
     if( !strcmp(file_name, name)) {
 	printk(KERN_INFO "INFO: Found open file %s.\n",name);
@@ -64,7 +64,7 @@ static int close_file_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     char *char_ptr = NULL;
     int pid;
     char * file_name;
-    int ret, res = 0;
+    int ret = 0, res = 0;
     struct fdtable *fdt;
 
 

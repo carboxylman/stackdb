@@ -90,7 +90,7 @@ static int load_submodules(void *__unused) {
 		/*TODO: Zero out the record on the ring channel before use */
 		/* Increment the prod index for the res_ring_channel */
 		res_prod = cmd_ring_channel_get_prod(&res_ring_channel);
-		printk(KERN_INFO " producer index = %d\n",res_prod);
+		printk(KERN_INFO " producer index = %d\n",(int)res_prod);
 		res_prod += 1;
 		cmd_ring_channel_set_prod(&res_ring_channel, res_prod);
 		
@@ -510,8 +510,8 @@ static int __init initialize_driver(void) {
 	return -ENOMEM;
     }
     /* create the ring buffers */
-    printk(KERN_INFO " size of cmd rec  %d\n",sizeof(struct cmd_rec));
-    printk(KERN_INFO " size of ack rec  %d\n",sizeof(struct ack_rec));
+    printk(KERN_INFO " size of cmd rec  %d\n",(int)sizeof(struct cmd_rec));
+    printk(KERN_INFO " size of ack rec  %d\n",(int)sizeof(struct ack_rec));
 
     result = initialize_buffer(NULL);
     if (result) {
