@@ -48,7 +48,7 @@ static int load_submodules(void *__unused) {
 
     /* Wait till the buffer is populate with some command*/
     while (!kthread_should_stop()) {
-
+	ack_ready = 0;
 	if (cmd_ring_channel_get_cons(&req_ring_channel) >=
 		cmd_ring_channel_get_prod(&req_ring_channel)) {
 	    yield();
@@ -75,6 +75,7 @@ static int load_submodules(void *__unused) {
 		    printk(KERN_INFO "Loading the the psaction sub module\n");
 		if((result = request_module("psaction_module")) < 0) {
 		    printk(KERN_INFO "psaction_module not available\n");
+		    ack_ready++;
 		    return -ENODEV;
 		}
 
@@ -129,6 +130,7 @@ static int load_submodules(void *__unused) {
 		}
 		if((result = request_module("ps_deescalate_module")) < 0) {
 		    printk(KERN_INFO "ps_deescalate_module not available\n");
+		    ack_ready++;
 		    return -ENODEV;
 		}
 
@@ -169,6 +171,7 @@ static int load_submodules(void *__unused) {
 		}
 		if((result = request_module("system_map_reset")) < 0) {
 		    printk(KERN_INFO "system_map_reset module not available\n");
+		    ack_ready++;
 		    return -ENODEV;
 		}
 
@@ -204,6 +207,7 @@ static int load_submodules(void *__unused) {
 		}
 		if((result = request_module("killsocket_module")) < 0) {
 		    printk(KERN_INFO "system_map_reset module not available\n");
+		    ack_ready++;
 		    return -ENODEV;
 		}
 
@@ -241,6 +245,7 @@ static int load_submodules(void *__unused) {
 		}
 		if((result = request_module("sled_object_module")) < 0) {
 		    printk(KERN_INFO "unload_object_module not available\n");
+		    ack_ready++;
 		    return -ENODEV;
 		}
 
@@ -275,6 +280,7 @@ static int load_submodules(void *__unused) {
 		}
 		if((result = request_module("close_file_module")) < 0) {
 		    printk(KERN_INFO "close_file_module not available\n");
+		    ack_ready++;
 		    return -ENODEV;
 		}
 
@@ -311,6 +317,7 @@ static int load_submodules(void *__unused) {
 		}
 		if((result = request_module("start_process_module")) < 0) {
 		    printk(KERN_INFO "start_process module not available\n");
+		    ack_ready++;
 		    return -ENODEV;
 		}
 
@@ -348,6 +355,7 @@ static int load_submodules(void *__unused) {
 		}
 		if((result = request_module("trusted_load_module")) < 0) {
 		    printk(KERN_INFO "trusted_load module not available\n");
+		    ack_ready++;
 		    return -ENODEV;
 		}
 

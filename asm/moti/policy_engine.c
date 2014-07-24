@@ -461,7 +461,7 @@ int main( int argc, char** argv) {
 
     memset(&opts,0,sizeof(opts));
     opts.app_file_path = "application_knowledge.cls";
-    opts.recovery_rules_file = "recovery_contructs.cls";
+    opts.recovery_rules_file = "recovery_constructs.cls";
     opts.wait_time = 120;
     
     tspec = target_argp_driver_parse(&pe_argp,&opts,argc,argv,TARGET_TYPE_XEN,1);
@@ -486,7 +486,6 @@ int main( int argc, char** argv) {
     atexit(target_fini);
     atexit(dwdebug_fini);
 
-     printf("recovery = %d ,debug = %d\n",opts.disable_recovery,opts.dump_debug);
      target = target_instantiate(tspec,NULL);
      if (!target) {
 	fprintf(stdout,"ERROR: Could not instantiate target!\n");

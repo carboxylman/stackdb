@@ -58,7 +58,7 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
     bs = target_lookup_sym(target, symbol_name, NULL, "repair_driver",
 	    SYMBOL_TYPE_FLAG_VAR);
     if (!bs) {
-	fprintf(stderr, "ERROR: Could not lookup symbol %s.\n", symbol_name);
+	fprintf(stderr, "ERROR: Could not lookup symbol req_ring_channel.\n");
 	ret = CI_LOOKUP_ERR;
 	goto fail;
     }
@@ -72,7 +72,7 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 
     value = target_load_symbol(target, tlctxt, bs, LOAD_FLAG_NONE);
     if (!value) {
-	fprintf(stderr, "ERROR: could not load value of symbol %s\n", symbol_name);
+	fprintf(stderr, "ERROR: could not load value of symbol req_ring_channel\n");
 	ret = CI_LOAD_ERR;
 	goto fail;
     }
@@ -105,11 +105,6 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 	goto fail;
     }
     size_in_recs = v_u32(v);
-    if(size_in_recs == 0){
-	fprintf(stderr,"Got bogus value (0) for size_in_recs\n");
-	ret = CI_LOAD_ERR;
-	goto fail;
-    }
     value_free(v);
 
     /* read the size of each record */
@@ -121,11 +116,6 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 	goto fail;
     }
     size_of_a_rec = v_u32(v);
-    if(size_of_a_rec == 0){
-	fprintf(stderr,"Got bogus value (0) for size_of_a_rec\n");
-	ret = CI_LOAD_ERR;
-	goto fail;
-    }
     value_free(v);
     value_free(value);
 
@@ -141,9 +131,6 @@ fail:
     }
     if(v) {
 	value_free(v);
-    }
-    if(value) {
-	value_free(value);
     }
     return 0;
 
@@ -372,12 +359,12 @@ failure:
 int result_ready() {
 
     target_status_t status;
-    struct bsymbol *bs=NULL;
+    struct bsymbol *bs;
     struct target_location_ctxt *tlctxt;
     int ready;
     int res;
     struct value *v=NULL;
-    ci_error_t ret = CI_SUCCESS;
+    ci_error_t ret;
     
     if (opts.dump_debug)
 	fprintf(stdout,"INFO: Check if the result is ready to be read.\n");
@@ -699,12 +686,12 @@ int function_name_to_id(char * function_name, int* function_id, int* submodule_i
 	*submodule_id = 3;
 	return 0;
     }
-    else if(!strncmp(function_name,"unload_module", 13)) {
+    else if(!strncmp(function_name,"unload_kernel_module", 13)) {
 	*function_id = 0;
 	*submodule_id = 4;
 	return 0;
     } 
-    else if(!strncmp(function_name,"unload_objects", 12)) {
+    else if(!strncmp(function_name,"sled_object", 12)) {
 	*function_id = 0;
 	*submodule_id = 4;
 	return 0;
@@ -1035,26 +1022,41 @@ int parse_recovery_action() {
 		break;
 	    
 	    case 7: /* Trusted load of abjects */
+		int_ptr = (int *) arguments;
+		pid = atoi(args[0]);
+		memcpy((void *)int_ptr, (void *) &pid, sizeof(int));
+		int_ptr++;
+		fprintf(stdout,"INFO: Invoking function to restart  process : %d  in a trusted boot mode\n", pid);
+		/* Only passing the pid to the recovery component */
+		ret = load_command_func(0,0,arguments,1);
+		if(ret) {
+		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
+		    return 1;
+		}
+	    	
+		/* Get result of command execution */
+		result_ready();
+		bzero(arguments, 500);
 		argc--;
-		fprintf(stdout, "INFO: argc = %d\n",argc);
+		//fprintf(stdout, "INFO: argc = %d\n",argc);
 		char_ptr = (char *) arguments;
 		memcpy((void *)char_ptr, (void*)&syscall_table_vm, sizeof(unsigned long));
 		char_ptr = char_ptr + sizeof(unsigned long);
 
 		/* load the object names */
-		for( i = 0; i< argc ; i++) {
-		    if(!strcmp(args[i], "null")) break;
+		for( i = 1; i< argc ; i++) {
+		    if(!strcmp(args[i], "NULL")) break;
 		    length = strlen(args[i]);
 		    length++;
 		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
 		    char_ptr = char_ptr + sizeof(int);
-		    fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
+		    //fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
 		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char)));
 		    char_ptr =  char_ptr + (length * sizeof(char));
 		}
 
 		/* Invoke the sumodule to set up the hook */
-	    	ret = load_command_func(0,submodule_id,arguments, i );
+	    	ret = load_command_func(0,submodule_id,arguments, i - 1 );
 		if(ret) {
 		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
 		    return 1;
@@ -1070,7 +1072,7 @@ int parse_recovery_action() {
 		    length = strlen(args[i]);
 		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
 		    char_ptr = char_ptr + sizeof(int);
-		    fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
+		    //fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
 		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char))+ 1);
 		    char_ptr =  char_ptr + (length * sizeof(char)) + 1 ;
 		}
@@ -1083,7 +1085,7 @@ int parse_recovery_action() {
 		    length = strlen(args[i]);
 		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
 		    char_ptr = char_ptr + sizeof(int);
-		    fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
+		    //fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
 		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char))+1);
 		    char_ptr =  char_ptr + ((length * sizeof(char)) + 1);
 
@@ -1100,7 +1102,8 @@ int parse_recovery_action() {
 		}
 		
 		/* Sleep for sometime to make sure the boot is complete */
-		sleep(4); 
+		fprintf(stdout,"INFO: Waiting for the process to restart.\n");
+		sleep(5);
 		result_ready();
 			    
 		/* unhook the syscall table */

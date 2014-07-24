@@ -164,10 +164,6 @@
      (slot name (type STRING))
      (slot pid (type INTEGER)))
 
-(deftemplate root-shells
-     (slot name (type STRING))
-     (slot pid (type INTEGER)))
-
 ;=================templates  for recovery facts ===================================
 
     ;A common recovery fact template for all receovery actions
@@ -258,6 +254,10 @@
     (assert (unknown-process
 		(name ?name1)
 		(pid ?pid)))
+    (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
+	unknown-module tampered-syscall hooked-syscall open-udp-socket 
+	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
+	wrong-process-hierarchies missing-process root-shells)
     (printout t "ANOMALY: Unknown process " ?name1 " found" crlf))
 
  
@@ -278,7 +278,11 @@
 		 (pid ?pid1)
 		 (uid (nth$ 1 $?uid2))
 		 (gid (nth$ 1 $?gid2))))
-     (printout t "ANOMALY: Process " ?name1 " has wrong uid: "?uid1 ": gid " ?gid1 ".Expected uid " (nth$ 1 $?gid2) " gid " (nth$ 1 $?gid2) crlf))
+    (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
+	unknown-module tampered-syscall hooked-syscall open-udp-socket 
+	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
+	wrong-process-hierarchies missing-process root-shells)
+    (printout t "ANOMALY: Process " ?name1 " has wrong uid: "?uid1 ": gid " ?gid1 ".Expected uid " (nth$ 1 $?gid2) " gid " (nth$ 1 $?gid2) crlf))
     
 
     ;========rule to detect any unknown module that is loaded=============
@@ -288,6 +292,10 @@
     (test (not (member$ ?name1 $?name2)))
      =>
     (assert (unknown-module (name ?name1)))
+    (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
+	unknown-module tampered-syscall hooked-syscall open-udp-socket 
+	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
+	wrong-process-hierarchies missing-process root-shells)
     (printout t "ANOMALY: Unknown module " ?name1 "found" crlf)) 
 
     ;=======rule to check for tampered syscall table entries=============
@@ -303,6 +311,10 @@
 	    (index ?index)
 	    (original ?address)
 	    (base_address ?base_address)))
+    (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
+	unknown-module tampered-syscall hooked-syscall open-udp-socket 
+	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
+	wrong-process-hierarchies missing-process root-shells) 
     (printout t "ANOMALY: Tampered system call " ?name1 " found at offset " ?index crlf))
 
     ;==========rule to check for hooked syscall table entries===========
@@ -318,6 +330,10 @@
 	    (address ?address)
 	    (original-0-8 ?bytes1)
 	    (original-8-16 ?bytes2)))
+    (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
+	unknown-module tampered-syscall hooked-syscall open-udp-socket 
+	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
+	wrong-process-hierarchies missing-process root-shells)
     (printout t "ANOMALY: Hooked system call " ?name1 " found at address " ?address crlf))
 
 
@@ -348,6 +364,10 @@
     (assert (open-tcp-socket
 	    (name ?name1)
 	    (pid ?pid)))
+    (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
+	unknown-module tampered-syscall hooked-syscall open-udp-socket 
+	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
+	wrong-process-hierarchies missing-process root-shells)
     (printout t "ANOMALY: TCP socket open for process " ?name1 crlf))
 
     ;===========rule to identify high cpu utilization================
@@ -440,6 +460,10 @@
 	(printout t "ANOMALY: Unknown object " ?field " found for process " ?name crlf)
 	(bind $?list  (insert$ $?list 1 ?field))))
     (modify ?f (object-list $?list))
+    (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
+	unknown-module tampered-syscall hooked-syscall open-udp-socket 
+	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
+	wrong-process-hierarchies missing-process root-shells)
     (retract ?of))
 
 
@@ -460,6 +484,10 @@
 	       (name ?name)
 	       (pid ?pid)
 	       (file ?field)))
+    (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
+	unknown-module tampered-syscall hooked-syscall open-udp-socket 
+	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
+	wrong-process-hierarchies missing-process root-shells)
     (printout t "ANOMALY: Unknown open file found for  process " ?name ?field crlf))))
 
 
@@ -476,20 +504,28 @@
     (assert(unknown-process
 		 (name ?name1)
 		 (pid ?pid1)))
+    (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
+	unknown-module tampered-syscall hooked-syscall open-udp-socket 
+	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
+	wrong-process-hierarchies missing-process root-shells)
     (printout t "ANOMALY: Process " ?name1 " has wrong parent:" ?parent_name  crlf))
 
 
 
     ;============rule to make sure all the mandatory process are executing=========
-    (defrule identify-missing-process
-    (mandatory-process (name ?name)
+     (defrule identify-missing-process
+     (mandatory-process (name ?name)
 		       (command $?command))
-    (not (exists(task-struct (comm ?name))))
-     =>
-    (assert (missing-process
+     (not (exists(task-struct (comm ?name))))
+      =>
+     (assert (missing-process
 		(name ?name)
 		(command $?command)))
-    (printout t "ANOMALY: Process " ?name " not found." crlf))
+     (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
+	unknown-module tampered-syscall hooked-syscall open-udp-socket 
+	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
+	wrong-process-hierarchies missing-process root-shells)
+     (printout t "ANOMALY: Process " ?name " not found." crlf))
 
      ;===========rule to check for root shells spawne from non root processes========
      (defrule identify-root-shells
@@ -505,6 +541,10 @@
      (assert (root-shells
 	     (name ?name1)
 	     (pid ?pid)))
+     (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
+	unknown-module tampered-syscall hooked-syscall open-udp-socket 
+	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
+	wrong-process-hierarchies missing-process root-shells)
      (printout t "ANOMALY: Root shell " ?name1 " found with pid" ?pid  crlf))
 
      ;=============rule to check for invalid su command usage.================
@@ -520,6 +560,10 @@
      =>
      (assert (unknown-process
      (pid ?pid)))
+     (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
+	unknown-module tampered-syscall hooked-syscall open-udp-socket 
+	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
+	wrong-process-hierarchies missing-process root-shells)
      (printout t "ANOMALY: Unauthorised su process found" ?pid  crlf))
 
 
