@@ -67,8 +67,9 @@ int set_page_rw(unsigned long addr) {
     return change_page_attr(pg, 1, prot);
 #else
     unsigned int level;
+    pte_t *pte;
     printk(KERN_INFO " Now doing lookup \n");
-    pte_t *pte = lookup_address(addr, &level);
+    pte = lookup_address(addr, &level);
     if(pte == NULL) {
 	printk(KERN_INFO "lookup_address failed\n");
 	return -EINVAL;
@@ -130,16 +131,16 @@ static int map_reset_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 
     /* Get the correct address */
     func_addr = (void*) *long_ptr;
-    printk(KERN_INFO " Function address %lx \n",func_addr);
+    printk(KERN_INFO " Function address %p \n",func_addr);
 
     /*set the command and submodule id in the ack structure */
     ack->cmd_id = cmd->cmd_id;
     ack->submodule_id = cmd->submodule_id;
 
-    printk(KERN_INFO " Address passed %lx %d %p\n",
+    printk(KERN_INFO " Address passed %p %ld %p\n",
 	    system_call_table, offset, func_addr);
 
-    printk(KERN_INFO " Setting the write permissions at %lx \n",
+    printk(KERN_INFO " Setting the write permissions at %p\n",
 	    system_call_table);
 
     /* Set write permissions on the system call table */
@@ -147,11 +148,11 @@ static int map_reset_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     printk(KERN_INFO " Write permission set\n");
     /* Now reset the sys call address in the table */
 
-    curr_func_addr = (unsigned long) system_call_table[offset];
-    printk(KERN_INFO " Current entry in the system call table : %lx.\n",
+    curr_func_addr = system_call_table[offset];
+    printk(KERN_INFO " Current entry in the system call table : %p.\n",
 	    curr_func_addr);
     system_call_table[offset] = func_addr;
-    printk(KERN_INFO " System call table entry changed to %lx.\n",
+    printk(KERN_INFO " System call table entry changed to %p.\n",
 	    func_addr);
 
     printk(KERN_INFO " Reset the orignal permissions on the system call table. \n");
@@ -195,7 +196,7 @@ static int unhook_system_call(struct cmd_rec *cmd, struct ack_rec *ack) {
     long_ptr++;
     bytes2 = *long_ptr;
 
-    printk(KERN_INFO " Function address %lx \n",address);
+    printk(KERN_INFO " Function address %p\n",address);
 
     /*set the command and submodule id in the ack structure */
     ack->cmd_id = cmd->cmd_id;
@@ -204,7 +205,7 @@ static int unhook_system_call(struct cmd_rec *cmd, struct ack_rec *ack) {
     printk(KERN_INFO " Bytes passed %lx %lx\n",bytes1, bytes2) ;
     printk(KERN_INFO " Original bytes at the page %lx \n", *(unsigned long *)address); 
 
-    printk(KERN_INFO " Setting the write permissions at %lx \n", address);
+    printk(KERN_INFO " Setting the write permissions at %p\n", address);
 
     /* Set write permissions on the system call table */
     set_page_rw((unsigned long) address);

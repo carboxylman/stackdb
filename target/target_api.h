@@ -588,6 +588,8 @@ struct array_list *target_list_available_overlay_tids(struct target *target,
 struct array_list *target_list_overlays(struct target *target);
 tid_t target_lookup_overlay_thread_by_id(struct target *target,int id);
 tid_t target_lookup_overlay_thread_by_name(struct target *target,char *name);
+struct target_spec *target_build_default_overlay_spec(struct target *target,
+						      tid_t tid);
 struct target *target_instantiate_overlay(struct target *target,tid_t tid,
 					  struct target_spec *spec);
 target_status_t target_notify_overlay(struct target *overlay,tid_t tid,ADDR ipval,
@@ -2253,6 +2255,8 @@ struct target_ops {
      * "Underlay" targets (that support overlays) must define these
      * functions.
      */
+    struct target_spec *(*build_default_overlay_spec)(struct target *target,
+						      tid_t tid);
     struct target *(*instantiate_overlay)(struct target *target,
 					  struct target_thread *tthread,
 					  struct target_spec *spec,

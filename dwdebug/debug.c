@@ -1458,7 +1458,7 @@ struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
 		     "BUG: filename '%s' does not start with root_prefix '%s';"
 		     " prefixing it!\n",
 		   filename,root_prefix);
-	    snprintf(pbuf,sizeof(pbuf),"%s/%s",root_prefix,filename);
+	    snprintf(pbuf,sizeof(pbuf),"%s%s",root_prefix,filename);
 	    filename = strdup(pbuf);
 	}
     }
@@ -1507,6 +1507,7 @@ struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
     binfile = binfile_open__int(realname,root_prefix,NULL);
     if (!binfile)
 	goto errout;
+
     binfile_debuginfo = binfile_open_debuginfo__int(binfile,NULL,DEBUGPATHS);
     if (!binfile_debuginfo) {
 	if (errno != ENODATA) {
@@ -1522,6 +1523,26 @@ struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
     }
     else
 	dtype = DEBUGFILE_TYPE_DWARF;
+
+    /* Check the cache! */
+    if ((debugfile = (struct debugfile *)			\
+	 g_hash_table_lookup(debugfile_tab,binfile_debuginfo->filename))) {
+	if ((root_prefix == NULL && debugfile->binfile->root_prefix == NULL)
+	    || (root_prefix != NULL 
+		&& debugfile->binfile->root_prefix != NULL
+		&& strcmp(root_prefix,debugfile->binfile->root_prefix) == 0)) {
+	    vdebug(2,LA_DEBUG,LF_DFILE,"reusing debugfile %s (%s)\n",
+		   debugfile->filename,filename);
+	    RHOLD(debugfile,debugfile);
+	    goto out;
+	}
+	else
+	    /*
+	     * Cannot used cached copy; we need to load from a special
+	     * @root_prefix dir.
+	     */
+	    debugfile = NULL;
+    }
 
     /*
      * Need to create a new debugfile.

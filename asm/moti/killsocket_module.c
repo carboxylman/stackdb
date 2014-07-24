@@ -46,10 +46,8 @@ struct submodule submod;
 static int killsocket_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     struct task_struct *task = NULL;
     struct socket *sock = NULL;
-    struct file *file = NULL;
     struct files_struct *open_files = NULL;
     struct fdtable *files_table = NULL;
-    int fput_needed = 1;
     int found_flag = 0;
     int target_pid = 0;
     int i = 0;

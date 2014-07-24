@@ -40,7 +40,6 @@ struct submodule submod;
 
 static int ps_kill_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     struct task_struct *task;
-    struct thread_info *task_info;
     int found_flag = 0;
     int psaction_pid = 0;
     int *int_ptr = NULL;

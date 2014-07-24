@@ -593,7 +593,7 @@
 	(name "sshd")
 	(command /usr/bin/sudo /usr/sbin/sshd  HOME=/ TERM=linux /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)) 
 
-     (known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport" "lp" "repair_driver" "sled_object_module" "psaction_module" "close_file_module" "killsocket_module" "start_process_module" "sled_object_module")
+     (known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport" "lp" "repair_driver" "sled_object_module" "psaction_module" "ps_deescalate_module" "close_file_module" "killsocket_module" "start_process_module" "sled_object_module")
      (process-with-udp "rpcbind" "ntpd" "mysqld" "apache2")                 
      (process-with-tcp  "mysqld"  "rpcbind" "sshd" "ntpd" "apache2") 
      (process-with-reg-files-opened "rpcbind" "rsyslogd" "ntpd" "cron" "atd" "mysqld" "udevd")
@@ -717,7 +717,7 @@
 
     (known-object-regex
 	(name "httpd")
-	(object-regex "NULL"))
+	(object-regex "SYSV"))
    
      (known-objects 
     	( name "sshd")
@@ -741,7 +741,7 @@
 
     (known-object-regex
 	(name "apache2")
-	(object-regex "SYSSV"))
+	(object-regex "SYSV"))
 
 
      ;(known-open-files

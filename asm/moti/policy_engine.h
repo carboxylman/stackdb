@@ -357,8 +357,8 @@ int process_info() {
 int gather_file_info(struct target *target, struct value * value, void * data) {
 
     struct value *files_value;
-    struct value *fdt_value;
-    struct value *max_fds_value;
+    struct value *fdt_value = NULL;
+    struct value *max_fds_value = NULL;
     struct value *fd_value;
     struct value *file_value;
     struct value *path_value;
@@ -403,41 +403,50 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
     pid = v_i32(pid_value);
     name_value = target_load_value_member(target, NULL, value, "comm", NULL, LOAD_FLAG_NONE);
     if(!name_value) {
-	fprintf(stdout," ERROR: failed to load the process name.\n");
+	fprintf(stdout," ERROR: failed to load the process name for pid %d.\n", pid);
 	exit(0);
     }   
     process_name = strdup(name_value->buf);
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: Loading open file info for pid %d (%s).\n", pid, process_name);
 
     /* Load the files struct from the task_struct */
     if (opts.dump_debug)
 	fprintf(stdout,"INFO: Loading files struct\n");
     files_value = target_load_value_member(target, NULL, value, "files", NULL, 
-	    LOAD_FLAG_AUTO_DEREF);
-    if(!files_value) {
-	fprintf(stdout," ERROR: failed to load the files struct member.\n");
-	exit(0);
-    }   
+					   LOAD_FLAG_NONE);
+    if (!v_addr(files_value)) {
+	/* NULL address indicates a zombie/dead process */
+	max_fds = 0;
+    } else {
+	files_value = target_load_value_member(target, NULL, value, "files", NULL, 
+					       LOAD_FLAG_AUTO_DEREF);
+	if(!files_value) {
+	    fprintf(stdout," ERROR: failed to load the files struct member.\n");
+	    exit(0);
+	}   
 
-    /* Load the fdtable struct */
-    if (opts.dump_debug)
-	fprintf(stdout,"INFO: Loading fdt struct\n");
-    fdt_value =  target_load_value_member( target, NULL, files_value, "fdt", 
-	    NULL, LOAD_FLAG_AUTO_DEREF);
-    if(!fdt_value) {
-	fprintf(stdout," ERROR: failed to load the fdt struct member.\n");
-	exit(0);
-    }   
+	/* Load the fdtable struct */
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Loading fdt struct\n");
+	fdt_value =  target_load_value_member( target, NULL, files_value, "fdt", 
+					       NULL, LOAD_FLAG_AUTO_DEREF);
+	if(!fdt_value) {
+	    fprintf(stdout," ERROR: failed to load the fdt struct member.\n");
+	    exit(0);
+	}   
 
-    /* Load the  max_fds member of the ftable struct */
-    if (opts.dump_debug)
-	fprintf(stdout,"INFO: Loading max_fds member\n");
-    max_fds_value = target_load_value_member( target, NULL, fdt_value, 
-	    "max_fds", NULL, LOAD_FLAG_NONE);
-    if(!max_fds_value) {
-	fprintf(stdout," ERROR: failed to load the max_fds member.\n");
-	exit(0);
-    }   
-    max_fds = v_i32(max_fds_value);
+	/* Load the  max_fds member of the ftable struct */
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Loading max_fds member\n");
+	max_fds_value = target_load_value_member( target, NULL, fdt_value, 
+						  "max_fds", NULL, LOAD_FLAG_NONE);
+	if(!max_fds_value) {
+	    fprintf(stdout," ERROR: failed to load the max_fds member.\n");
+	    exit(0);
+	}   
+	max_fds = v_i32(max_fds_value);
+    }
     if (opts.dump_debug)	
 	fprintf(stdout,"INFO: max_fds_value for process %s = %d\n", process_name, max_fds);
     
@@ -508,12 +517,13 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	/*    
 	fprintf(stdout,"INFO: Calling linux_file_get_path.\n");
 	file_name = malloc(100);
-	file_name = linux_file_get_path(target, value, file_value, file_name, 100);
-	if(!file_name) {
+	if (!linux_file_get_path(target, value, file_value, file_name, 100)) {
 	    fprintf(stdout,"ERROR: failed to load the file name.\n");
+	    free(file_name);
 	    continue;
 	}
 	fprintf(stdout,"--------------INFO: File name  = %s\n-------------", file_name);
+	free(file_name);
 	*/
 	
 	/* Load the path the variable from the files struct*/
@@ -706,8 +716,10 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
     value_free(name_value);
     value_free(pid_value);
     value_free(files_value);
-    value_free(fdt_value);
-    value_free(max_fds_value);
+    if (fdt_value)
+	value_free(fdt_value);
+    if (max_fds_value)
+	value_free(max_fds_value);
     return(0);
 }
 
@@ -1464,7 +1476,7 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
     								arg_start,paddr);
     
     /* Now read the buffer contents from the physical address*/
-    command_line = malloc(100 *sizeof (char));
+    command_line = calloc(100+1, sizeof (char));
 
     ret = target_read_physaddr(target, paddr, 100, command_line);
     if(!ret) {
@@ -1493,10 +1505,12 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
     value_free(mm_value);
     value_free(env_end_value);
 
-    length = env_end - env_start;
-    if(!length) {
+    if (env_end <= env_start) {
 	fprintf(stdout," INFO: No command line for the process with pid %d\n",pid);
+	length = 0;
     }
+    length = env_end - env_start;
+
     /* Now convert the virtual address into physical address */
     if(target_addr_v2p(target,pid, env_start, &paddr)) {
 	fprintf(stdout,"ERROR: could not translate virtual address 0x%"PRIxADDR"\n");
@@ -1504,9 +1518,11 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
     }
   
     /* Now read the buffer contents from the physical address*/
-    environment = malloc(100 *sizeof (char));
+    environment = calloc(100+1, sizeof (char));
+    if (length > 100)
+	    length = 100;
 
-    ret = target_read_physaddr(target, paddr, 100, environment);
+    ret = target_read_physaddr(target, paddr, length, environment);
     if(!ret) {
 	fprintf(stdout,"ERROR: Failed to load the environment buffer.\n");
 	exit(0);
@@ -1523,6 +1539,8 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
 		\t( environment \"%s\"))\n", command_line, environment);
     
     fclose(fp);
+    free(command_line);
+    free(environment);
     return 0;
 }
 
@@ -1616,8 +1634,8 @@ int syscall_hooking_info() {
 int gather_socket_info(struct target *target, struct value * value, void * data) {
 
     struct value *files_value;
-    struct value *fdt_value;
-    struct value *max_fds_value;
+    struct value *fdt_value = NULL;
+    struct value *max_fds_value = NULL;
     struct value *fd_value;
     struct value *file_value;
     struct value *path_value;
@@ -1656,41 +1674,51 @@ int gather_socket_info(struct target *target, struct value * value, void * data)
     pid = v_i32(pid_value);
     name_value = target_load_value_member(target, NULL, value, "comm", NULL, LOAD_FLAG_NONE);
     if(!name_value) {
-	fprintf(stdout," ERROR: failed to load the process name.\n");
+	fprintf(stdout," ERROR: failed to load the process name for pid %d.\n", pid);
 	exit(0);
     }   
     process_name = strdup(name_value->buf);
+    if (opts.dump_debug)
+	fprintf(stdout,"INFO: Loading open file info for pid %d (%s).\n", pid, process_name);
 
     /* Load the files struct from the task_struct */
     if (opts.dump_debug)
 	fprintf(stdout,"INFO: Loading files struct\n");
     files_value = target_load_value_member(target, NULL, value, "files", NULL, 
-	    LOAD_FLAG_AUTO_DEREF);
-    if(!files_value) {
-	fprintf(stdout," ERROR: failed to load the files struct member.\n");
-	exit(0);
-    }   
+					   LOAD_FLAG_NONE);
+    if (!v_addr(files_value)) {
+	/* NULL address indicates a zombie/dead process */
+	max_fds_value = NULL;
+	max_fds = 0;
+    } else {
+	files_value = target_load_value_member(target, NULL, value, "files", NULL, 
+					       LOAD_FLAG_AUTO_DEREF);
+	if(!files_value) {
+	    fprintf(stdout," ERROR: failed to load the files struct member.\n");
+	    exit(0);
+	}   
 
-    /* Load the fdtable struct */
-    if (opts.dump_debug)
-	fprintf(stdout,"INFO: Loading fdt struct\n");
-    fdt_value =  target_load_value_member( target, NULL, files_value, "fdt", 
-	    NULL, LOAD_FLAG_AUTO_DEREF);
-    if(!fdt_value) {
-	fprintf(stdout," ERROR: failed to load the fdt struct member.\n");
-	exit(0);
-    }   
+	/* Load the fdtable struct */
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Loading fdt struct\n");
+	fdt_value =  target_load_value_member( target, NULL, files_value, "fdt", 
+					       NULL, LOAD_FLAG_AUTO_DEREF);
+	if(!fdt_value) {
+	    fprintf(stdout," ERROR: failed to load the fdt struct member.\n");
+	    exit(0);
+	}   
 
-    /* Load the  max_fds member of the ftable struct */
-    if (opts.dump_debug)
-	fprintf(stdout,"INFO: Loading max_fds member\n");
-    max_fds_value = target_load_value_member( target, NULL, fdt_value, 
-	    "max_fds", NULL, LOAD_FLAG_NONE);
-    if(!max_fds_value) {
-	fprintf(stdout," ERROR: failed to load the max_fds member.\n");
-	exit(0);
-    }   
-    max_fds = v_i32(max_fds_value);
+	/* Load the  max_fds member of the ftable struct */
+	if (opts.dump_debug)
+	    fprintf(stdout,"INFO: Loading max_fds member\n");
+	max_fds_value = target_load_value_member( target, NULL, fdt_value, 
+						  "max_fds", NULL, LOAD_FLAG_NONE);
+	if(!max_fds_value) {
+	    fprintf(stdout," ERROR: failed to load the max_fds member.\n");
+	    exit(0);
+	}   
+	max_fds = v_i32(max_fds_value);
+    }
     if (opts.dump_debug)	
 	fprintf(stdout,"INFO: max_fds_value for process %s = %d\n", process_name, max_fds);
     
@@ -1753,7 +1781,7 @@ int gather_socket_info(struct target *target, struct value * value, void * data)
 	    fprintf(stdout," ERROR: failed to load the file struct member.\n");
 	    exit(0);
 	}
-	
+
 	/* Load the path the variable from the files struct*/
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO: Loading f_path struct\n");
@@ -1911,8 +1939,10 @@ int gather_socket_info(struct target *target, struct value * value, void * data)
     value_free(name_value);
     value_free(pid_value);
     value_free(files_value);
-    value_free(fdt_value);
-    value_free(max_fds_value);
+    if (fdt_value)
+	value_free(fdt_value);
+    if (max_fds_value)
+	value_free(max_fds_value);
     return(0);
 }
 

@@ -55,9 +55,11 @@ At this point, only one directive is supported.
 
 ProbeFilter <symbol_name> [id(<probeFilterId>)] [when(pre|post)] [disable()]  \
     [vfilter(value1=/regex/,value2=/regex/,...)]                              \
-    [print()] [bt([<target_id>[,<thread_name_or_id>]])]                       \
+    [print()] [bt([<target_id>[,<thread_name_or_id>[,levels,                  \
+                  [debuginfo_root_prefix]]]])]                                \
     [report(rt=i|f,tn=<typename>,tid=<typeid>,rv=<resultvalue>,msg="<msg>",   \
-            ttctx=all|hier|self|none),bt=0|1)]                                \
+            ttctx=all|hier|self|none),bt=0|1,overlay_levels=-1|0|n,           \
+            overlay_debuginfo_root_prefix=/path/to/debuginfo/for/overlays)]   \
     [enable(<probeFilterId>)] [disable(<probeFilterId>)] [remove(<probeFilterId>)] \
     [abort(<returncode>)] [exit(<exitcode)]
 
@@ -145,7 +147,7 @@ the syntax.
     triggered the probe, to its root parent, will be displayed.  If
     ttctx==none, no threads will be displayed.  The default is none.
 
-  bt([<target_id>[,<thread_name_or_id>]])
+  bt([<target_id>[,<thread_name_or_id>,[levels[,debuginfo_root_prefix]]]])
 
     This command prints one or more backtraces of target threads to
     stdout.  If you don't specify <target_id> (or specify '-1'), it will
@@ -157,9 +159,23 @@ the syntax.
     it will print out all threads for which
     strcmp(<thread_name_or_id>,thread->name) matches.  If you specify a
     thread number, it will print out that thread -- if it exists.
+    Finally, if you specify <levels>, it will try to print out at least
+    that many levels up of overlay target backtraces for the specified
+    threads.  So specifying levels=2 would mean, print the back trace
+    for the current target, plus its default overlay targets for the
+    first default higher-level overlay target, plus the second default
+    higher-level target atop the first higher-level target.  Not all
+    targets specify a default overlay target.  If you specify levels = -1,
+    SPF will try to backtrace up as many overlay targets as it can.  If
+    you specify a debuginfo_root_prefix (just a pathname to a directory
+    containing binfiles and debuginfo for your overlay targets), that
+    will be used to find debuginfo files for the files running in your
+    overlay targets, at all the levels you have requested for
+    backtracing.  A single directory appears to be enough for now.
 
   report(rt=i|f,tn=<typename>,tid=<typeid>,rv=<resultvalue>,msg="<msg>",   \
-         ttctx=all|hier|self|none),ttdetail=<-2|-1|0|1|2>,bt=0|1) {1}
+         ttctx=all|hier|self|none,ttdetail=<-2|-1|0|1|2>,bt=0|1,
+	 btlevels=-1|0|n,debuginfo_root_prefix=/path/to/debuginfo) {1}
 
     This is designed to allow spf to be used as an Analysis run by one
     our XML server, and to allow you to customize the events you
@@ -212,6 +228,18 @@ the syntax.
     bt is not set, it defaults to 0 (no backtrace).  Otherwise, a
     backtrace is printed for each thread printed as a result of ttctx's
     value (so to get a backtrace, you must set *both* ttctx and bt!).
+    If you set overlay_levels to -1, we will try to print thread context
+    info all the way up the overlay target stack.  If you set it to 0,
+    we will not load any overlays.  If you set it to n, we'll try to
+    print context info for n overlay targets.  If you set
+    overlay_debuginfo_root_prefix, we'll use that directory as a prefix
+    for loading debuginfo files.  Suppose you have a process /bin/ls
+    running inside a VM, and that you've placed its debuginfo and binary
+    files in /tmp/debuginfo/myguest, in a manner that mirrors the guest
+    filesystem (i.e., debuginfo probably in
+    /tmp/debuginfo/myguest/usr/lib/debug/... like on a normal Linux
+    distro) -- then you should set
+    overlay_debuginfo_root_prefix=/tmp/debuginfo/myguest .
 
   enable(<probeFilterId>)  {n}
   disable(<probeFilterId>) {n}

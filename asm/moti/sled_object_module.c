@@ -58,7 +58,7 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
     char *object =  NULL;
     unsigned long vm_start_addr, start_addr;
     void *start_addr_new;
-    unsigned long end_addr, prev_addr;
+    unsigned long end_addr;
     char ret_opcode = '\xc3';
     char noop = '\x90';
     struct page *user_page;
@@ -78,7 +78,7 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
     while(vma) {
 	next = vma->vm_next;
 	if(vma->vm_file) {
-	    object =  vma->vm_file->f_path.dentry->d_name.name;
+	    object =  (char *)vma->vm_file->f_path.dentry->d_name.name;
 	    if( !strcmp(object, name)) {	
 		//printk(KERN_INFO "INFO: Found a linked vm_area for  object %s.\n",name);
 		//printk(KERN_INFO " Check if the vm_area is executable \n");
