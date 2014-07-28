@@ -66,6 +66,9 @@
 #include "probe.h"
 #include "alist.h"
 #include "list.h"
+#ifdef ENABLE_A3
+#include "a3lib.h"
+#endif
 #include "policy_engine.h"
 #include "repair_engine.h"
 #include "clips.h"
@@ -75,7 +78,7 @@ char base_fact_file[100];
 unsigned long *sys_call_table = NULL;
 char **sys_call_names = NULL;
 unsigned long **function_prologue = NULL;
-char *res = NULL;
+unsigned char *res = NULL;
 ADDR syscall_table_vm;
 
 
@@ -136,13 +139,13 @@ int save_sys_call_table_entries() {
 	fprintf(stdout,"ERROR: Failed to allocate memory for sys_call_table.\n");
 	exit(0);
     }
-    sys_call_names = (char *) malloc(max_num * sizeof(char *));
+    sys_call_names = (char **) malloc(max_num * sizeof(char *));
     if(sys_call_names == NULL) {
 	fprintf(stdout,"ERROR: Failed to allocate memmory for sys_call_names.\n");
 	exit(0);
     }
     
-    function_prologue = (long *) malloc(max_num * sizeof(unsigned long *));
+    function_prologue = (unsigned long **) malloc(max_num * sizeof(unsigned long *));
     if(function_prologue == NULL) {
 	fprintf(stdout,"ERROR: Failed to allocate memory for function prologue.\n");
 	exit(0);
@@ -361,14 +364,18 @@ resume:
 #define PE_ARGP_DUMP_TIMING 0x47474a
 #define PE_ARGP_DUMP_DEBUG  0x47474b
 #define PE_ARGP_DISABLE_RECOVERY 0x47474c
+#define PE_ARGP_A3_SERVER   0x47474d
 
 struct argp_option pe_argp_opts[] = {
     { "pe-app-knowledge-file",PE_ARGP_APP_FILE,"FILE",0,"The application knowledge CLIPS file; defaults to ./application_knowledge.cls.",0 },
-    { "pe-recovery-rules-file",PE_ARGP_REC_FILE,"FILE",0,"The recovery rules CLIPS file; defaults to ./recovery_contructs.cls",0 },
+    { "pe-recovery-rules-file",PE_ARGP_REC_FILE,"FILE",0,"The recovery rules CLIPS file; defaults to ./recovery_constructs.cls",0 },
     { "pe-interval",PE_ARGP_WAIT_TIME,"SECONDS",0,"The wait time in between policy engine checks of the domain; defaults to 120 seconds",0 },
     { "pe-dump-timing",PE_ARGP_DUMP_TIMING,NULL,0,"Dump timing info to stderr.",0 },
     { "pe-dump-debug",PE_ARGP_DUMP_DEBUG,NULL,0,"Dump debug info to stdout.",0},
     { "pe-disable-recovery",PE_ARGP_DISABLE_RECOVERY,NULL,0,"Disable the recovery component.",0},
+#ifdef ENABLE_A3
+    { "pe-a3-server",PE_ARGP_A3_SERVER,"IP:PORT",0,"Report A3 events to the indicated server",0},
+#endif
         { 0,0,0,0,0,0 },
 };
 
@@ -423,6 +430,11 @@ error_t pe_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case PE_ARGP_DISABLE_RECOVERY:
 	opts->disable_recovery = 1;
 	break;
+#ifdef ENABLE_A3
+    case PE_ARGP_A3_SERVER:
+	opts->a3_server = arg;
+	break;
+#endif
 
     default:
 	return ARGP_ERR_UNKNOWN;
@@ -447,16 +459,13 @@ void sigh(int signo) {
     exit(0);
 }
 
-
 int main( int argc, char** argv) {
 
-    char recovery_fact_file[100];
     int result = 0;
     char targetstr[80];
     struct target_spec *tspec = NULL;
     target_status_t tstat;
     int iteration = 1;
-    FILE *fp;
     struct stat st;
 
     memset(&opts,0,sizeof(opts));
@@ -500,28 +509,36 @@ int main( int argc, char** argv) {
 	fprintf(stdout,"INFO: Initializing the CLIPS environment.\n");
     InitializeEnvironment();
 
+#ifdef ENABLE_A3
+    if (opts.a3_server != NULL) {
+	fprintf(stdout,"INFO: Initializing the A3 environment.\n");
+
+	/* XXX how do we extract the command line -m argument? */
+	if (a3_hc_init("a3-ncz", opts.a3_server, 0)) {
+	    fprintf(stdout,"ERROR: Could not initialize A3\n");
+	    exit(0);
+	}
+    }
+#endif
+
     /* Create a directory  with files required to keep track of state information. */
     if(stat("state_information", &st) == 1) {
 	mkdir("state_information",0700);
     }
     
-    fp = fopen("state_information/cpu_state_info.fac", "w");
-    fclose(fp);
-    fp = fopen("state_information/module_state_info.fac", "w");
-    fclose(fp);
-    fp = fopen("state_information/process_priv_state_info.fac", "w");
-    fclose(fp);
-    fp = fopen("state_information/process_state_info.fac", "w");
-    fclose(fp);
-    fp = fopen("state_information/tcp_state_info.fac", "w");
-    fclose(fp);
-    fp = fopen("state_information/udp_state_info.fac", "w");
-    fclose(fp); 
-    fp = fopen("state_information/unload_unknown_object_state_info.fac", "w");
-    fclose(fp);     
-    fp = fopen("state_information/recovery_action.fac", "w");
-    fclose(fp);
-
+    result = truncate("state_information/cpu_state_info.fac", 0);
+    result |= truncate("state_information/module_state_info.fac", 0);
+    result |= truncate("state_information/process_priv_state_info.fac", 0);
+    result |= truncate("state_information/process_state_info.fac", 0);
+    result |= truncate("state_information/tcp_state_info.fac", 0);
+    result |= truncate("state_information/udp_state_info.fac", 0);
+    result |= truncate("state_information/unload_unknown_object_state_info.fac", 0);
+    result |= truncate("state_information/recovery_action.fac", 0);
+#ifdef ENABLE_A3
+    result |= truncate("state_information/anomalies_detected.fac", 0);
+#endif
+    if (result)
+	fprintf(stdout, "WARNING: Could not truncate all files in state_information.\n");
 
     /* Copy the initil system_call_table contents */
     result = save_sys_call_table_entries();
@@ -599,6 +616,11 @@ int main( int argc, char** argv) {
 	/* At this time the anomaly facts are generated. Now load the
 	 * state information from the previos iteration.
 	 */
+	
+#ifdef ENABLE_A3
+	if(opts.a3_server)
+	    report_anomalies();
+#endif
 
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO: Loading the state information of recovery facts from the previous execution \n");
@@ -649,7 +671,7 @@ int main( int argc, char** argv) {
 	result = Run(-1L);
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO : %d recovery rules were fired\n",result);
-	
+
 	if(!opts.disable_recovery) {
 	    if (opts.dump_debug)
 		fprintf(stdout,"INFO: Parsing the recovery action file.\n");
@@ -667,7 +689,6 @@ int main( int argc, char** argv) {
 	sleep(opts.wait_time);
     }
 
-exit:
     fflush(stderr);
     fflush(stdout);
     tstat = cleanup();

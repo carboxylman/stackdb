@@ -28,6 +28,7 @@ SUBDIRS =
 include $(OBJDIR)/Makeconf
 
 CLIPSSRC := "@CLIPSSRC@"
+ENABLE_A3 := "@ENABLE_ASM_A3@"
 
 CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
 	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug \
@@ -82,6 +83,12 @@ ifeq ($(ENABLE_LIBVMI),"1")
 	STATICLIBS += $(LIBVMI)/lib/libvmi.a
 endif
 
+ifeq ($(ENABLE_A3),"1")
+	CFLAGS += -D ENABLE_A3
+	HEADERS += $(SRCDIR)/a3lib.h
+	OBJECTS += a3lib.lo
+endif
+
 INST_INC = 
 INST_LIB = $(LIBRARIES)
 INST_BIN = $(PROGRAMS)
@@ -96,16 +103,15 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-policy_engine: $(HEADERS) $(LIBRARIES) policy_engine.lo $(STATICLIBS)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+policy_engine: $(HEADERS) $(LIBRARIES) $(OBJECTS) $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $(OBJECTS) \
 	    $(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
 install: def-install install-subdirs
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS)
-	$(RM) -f $(LIBRARIES) 
-	$(RM) -f $(PROGRAMS)
+	$(RM) $(LIBRARIES) $(PROGRAMS)
 
 distclean: distclean-subdirs
 

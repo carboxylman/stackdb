@@ -27,6 +27,7 @@
 #define LOAD_INT(x) ((x) >> FSHIFT)
 #define LOAD_FRAC(x) LOAD_INT(((x) & (FIXED_1-1)) * 100)
 
+#ifndef S_IFMT
 /* Macros for distuinguishing between different kinds of files */
 #define S_IFMT  00170000
 #define S_IFSOCK 0140000
@@ -44,6 +45,7 @@
 #define S_ISBLK(m)      (((m) & S_IFMT) == S_IFBLK)
 #define S_ISFIFO(m)     (((m) & S_IFMT) == S_IFIFO)
 #define S_ISSOCK(m)     (((m) & S_IFMT) == S_IFSOCK)
+#endif
 
 /* Macros to covert between priority and nice values*/
 #define LINUX_MAX_RT_PRIO 100
@@ -65,6 +67,9 @@ struct pe_argp_state {
     int dump_timing;
     int dump_debug;
     int disable_recovery;
+#ifdef ENABLE_A3
+    char *a3_server;
+#endif
 			    
     int argc;
     char **argv;
@@ -786,7 +791,7 @@ int module_info() {
     int ret_val;
 
     struct bsymbol *module_bsymbol;
-    struct bsymbl *listhead_bsymbol;
+    struct bsymbol *listhead_bsymbol;
 
     module_bsymbol = target_lookup_sym(target,"struct module", NULL, NULL,
 						SYMBOL_TYPE_FLAG_TYPE);
@@ -878,8 +883,10 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
     struct value *sum_exec_runtime_value;
     struct value *vruntime_value;
     struct value *prev_cputime_value;
+#if 0
     struct value *prev_utime_value;
     struct value *prev_stime_value;
+#endif
     struct value *jiffies_value;
 
     struct target_location_ctxt *tlctxt;
@@ -889,8 +896,10 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
     int pid, i = 0;
     float cpu_utilization;
     char *process_name;
-    unsigned long utime, stime, sum_exec_runtime, rtime, total;
-    unsigned long prev_utime, prev_stime, jiffies;
+    unsigned long utime, stime, sum_exec_runtime, jiffies;
+#if 0
+    unsigned long prev_utime, prev_stime;
+#endif
     unsigned long vruntime, utimescaled, stimescaled;
     struct timeval;
     unsigned long load[2], jiffy[2];
@@ -948,6 +957,7 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 	    exit(0);
 	}
 
+#if 0
 	/* Load the prev_utime and prev_stime members */
 	prev_utime_value = target_load_value_member(target, NULL, prev_cputime_value,
 	    					"utime",NULL, LOAD_FLAG_NONE);
@@ -956,6 +966,7 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 	prev_stime_value = target_load_value_member(target, NULL, prev_cputime_value,
 						    "stime",NULL, LOAD_FLAG_NONE);
 	prev_stime = v_u64(prev_stime_value);
+#endif
 
 	/* load the sched_entity struct */
 	sched_entity_value = target_load_value_member(target, NULL, value, "se", NULL, LOAD_FLAG_NONE);
@@ -982,8 +993,6 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 	}
 	vruntime  = v_u64(vruntime_value);
 	/* total of utime and stime */
-	total = utime + stime;
-	
 	load[i] = utime + stime;
 
 	jiffies_bsymbol = target_lookup_sym(target, "jiffies", NULL, NULL,
@@ -1068,8 +1077,10 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
     value_free(sum_exec_runtime_value);
     value_free(vruntime_value);
     value_free(prev_cputime_value);
+#if 0
     value_free(prev_utime_value);
     value_free(prev_stime_value);
+#endif
     value_free(sched_entity_value);
     value_free(jiffies_value);
     return 0;
@@ -1098,7 +1109,6 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
     struct value *pid_value;
     struct value *comm_value;
     struct value *mm_value;
-    struct value *vm_area_start_value;
     struct value *vm_area_value;
     struct value *file_value;
     struct value *path_value;
@@ -1108,7 +1118,7 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
     struct value *file_name_value;
     struct value *next_vm_area_value; 
     FILE * fp;
-    ADDR start_addr, next_vm_area_addr, file_value_addr, mm_value_addr;
+    ADDR next_vm_area_addr, file_value_addr, mm_value_addr;
     char *file_name, *process_name;
     int pid;
     char prev_name[50];
@@ -1303,8 +1313,9 @@ int syscalltable_info() {
     
     FILE *fp;
     struct target_os_syscall *sc;
+#if 0
     struct dump_info ud = { .stream = stdout,.prefix = "",.detail = 0,.meta = 0 };
-    GSList *gsltmp;
+#endif
     struct bsymbol *bs;
     struct value *v;
     ADDR syscall_table;
@@ -1373,7 +1384,7 @@ int syscalltable_info() {
 			\t( name  \"%s\")\n \
 			\t( original %lu )\n \
 			\t( current %lu )\n \
-			\t( index %d )\n \ 
+			\t( index %d )\n \
  			\t( base_address %lu))\n",
 			bsymbol_get_name(sc->bsymbol),
 			sys_call_table[sc->num],
@@ -1394,7 +1405,9 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
     struct value *pid_value;
     int pid;
     struct value *comm_value;
+#if 0
     char *process_name;
+#endif
     struct value *mm_value;
     struct value *arg_start_value;
     unsigned long arg_start;
@@ -1423,7 +1436,9 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
 	fprintf(stdout,"ERROR: Failed to load the process name.\n");
 	exit(0);
     }
+#if 0
     process_name = strdup(comm_value->buf);
+#endif
     value_free(comm_value);
 
     /* Check if the mm strcuture is NULL */
@@ -1468,7 +1483,7 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
 
     /* Now convert the virtual address into physical address */
     if(target_addr_v2p(target,pid, arg_start, &paddr)) {
-	fprintf(stdout,"ERROR: could not translate virtual address 0x%"PRIxADDR"\n");
+	fprintf(stdout,"ERROR: could not translate virtual address 0x%"PRIxADDR"\n", arg_start);
 	exit(0);
     }
     if (opts.dump_debug)
@@ -1513,7 +1528,7 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
 
     /* Now convert the virtual address into physical address */
     if(target_addr_v2p(target,pid, env_start, &paddr)) {
-	fprintf(stdout,"ERROR: could not translate virtual address 0x%"PRIxADDR"\n");
+	fprintf(stdout,"ERROR: could not translate virtual address 0x%"PRIxADDR"\n", env_start);
 	exit(0);
     }
   
@@ -1570,10 +1585,11 @@ int syscall_hooking_info() {
     
     FILE *fp;
     struct target_os_syscall *sc;
+#if 0
     struct dump_info ud = { .stream = stdout,.prefix = "",.detail = 0,.meta = 0 };
-    GSList *gsltmp;
+#endif
     unsigned char prologue[16];
-    char *res = NULL;
+    unsigned char *res = NULL;
 
 
     /* Load the syscall table */
@@ -1659,7 +1675,7 @@ int gather_socket_info(struct target *target, struct value * value, void * data)
     unsigned short i_mode, port_number;
     FILE *fp = NULL;
     struct target_location_ctxt *tlctxt;
-    struct bsysmbol *bs = NULL;
+    struct bsymbol *bs = NULL;
     struct symbol *sock_struct_type = NULL;
 
 
@@ -1873,7 +1889,7 @@ int gather_socket_info(struct target *target, struct value * value, void * data)
 
 	    sock_addr = v_addr(sock_addr_value);
 	    
-	    fprintf(stdout,"INFO: private_data addr = %p \n",sock_addr);
+	    fprintf(stdout,"INFO: private_data addr = %lu\n",sock_addr);
 
 	    /* Get the type for the socket structure  and load it*/
 	    bs = target_lookup_sym(target,"struct sock", NULL,
