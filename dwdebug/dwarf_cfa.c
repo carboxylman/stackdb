@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2013 The University of Utah
+ * Copyright (c) 2011-2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -291,11 +291,8 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 	    */
 	    vdebug(8,LA_DEBUG,LF_DCFA,"DW_CFA_set_loc 0x%"PRIxADDR"\n",pc);
 	    break;
-	/*
-	 * NB: some DWARF emitters (gcc) do this; I have no idea why.
-	 * But they mean DW_CFA_offset.
-	 */
-	case DW_CFA_advance_loc ... (DW_CFA_offset - 1):
+
+	case DW_CFA_advance_loc ... (DW_CFA_advance_loc + 0x3f):
 	    op1 = opcode & 0x3f;
 	    pc += op1 * cie->code_alignment_factor;
 	    vdebug(8,LA_DEBUG,LF_DCFA,
@@ -515,7 +512,7 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 	    __insert_regrule(pc,op1,rr);
 
 	    break;
-	case (DW_CFA_offset + 1) ... (DW_CFA_restore - 1):
+	case (DW_CFA_offset + 1) ... (DW_CFA_offset + 0x3f):
 	    // XXX overflow check
 	    op1 = opcode & 0x3f;
 	    get_uleb128(op2,readp);
@@ -662,7 +659,7 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 
 	    readp += op2;
 	    break;
-	case DW_CFA_restore:
+	case DW_CFA_restore ... (DW_CFA_restore + 0x3f):
 	    op1 = opcode & 0x3f;
 	    vdebug(8,LA_DEBUG,LF_DCFA,"DW_CFA_restore r%"PRIu64"\n",op1);
 
