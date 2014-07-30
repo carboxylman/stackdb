@@ -3770,6 +3770,7 @@ struct symbol *__symbol_get_one_member__int(struct symbol *symbol,char *member,
 		vdebug(5,LA_DEBUG,LF_SYMBOL,"checking symbol: ");
 		if (vdebug_is_on(4,LA_DEBUG,LF_SYMBOL))
 		    symbol_dump(retval,&udn);
+		vdebug(5,LA_DEBUG,LF_SYMBOL,"\n");
 
 		if (!retval->name && SYMBOL_IST_STUNC(retval->datatype)) {
 		    /* push this one for later examination. */
