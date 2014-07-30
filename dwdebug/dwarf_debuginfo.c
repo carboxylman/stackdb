@@ -3837,11 +3837,7 @@ void finalize_die_symbol(struct debugfile *debugfile,int level,
 	if (SYMBOL_IS_FUNC(symbol)) {
 	    SYMBOL_RX_INLINE(symbol,sii);
 
-	    if (symbol->isinlineinstance
-		&& sii && !sii->origin && sii->origin_ref
-		&& !(sii->origin = (struct symbol *)	\
-		         g_hash_table_lookup(reftab,
-					     (gpointer)(uintptr_t)sii->origin_ref))) {
+	    if (symbol->isinlineinstance && sii && sii->origin_ref) {
 		array_list_append(die_offsets,
 				  (void *)(uintptr_t)sii->origin_ref);
 	    }
