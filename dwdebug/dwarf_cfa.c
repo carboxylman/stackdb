@@ -668,7 +668,8 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 		g_hash_table_lookup(cie->default_regrules,
 				    (gpointer)(uintptr_t)op1);
 	    if (!def_rr) {
-		vwarn("no default regrule for r%"PRIu64"; undefining!\n",op1);
+		vdebug(9,LA_DEBUG,LF_DCFA,
+		       "no default regrule for r%"PRIu64"; undefining!\n",op1);
 		rr->rrt = RRT_UNDEF;
 	    }
 	    else {
@@ -688,7 +689,8 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 		g_hash_table_lookup(cie->default_regrules,
 				    (gpointer)(uintptr_t)op1);
 	    if (!def_rr) {
-		vwarn("no default regrule for r%"PRIu64"; undefining!\n",op1);
+		vdebug(9,LA_DEBUG,LF_DCFA,
+		       "no default regrule for r%"PRIu64"; undefining!\n",op1);
 		rr->rrt = RRT_UNDEF;
 	    }
 	    else {
@@ -815,7 +817,7 @@ int dwarf_load_cfa(struct debugfile *debugfile,
 	return 0;
     }
 
-    ddi->cfa_fde = g_hash_table_new(g_direct_hash,g_direct_equal);
+    ddi->cfa_fde = clrangesimple_create();
     ddi->cfa_cie = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     /*
@@ -1129,8 +1131,9 @@ int dwarf_load_cfa(struct debugfile *debugfile,
 	                                fde->len,fde->regrules);
 	    */
 
-	    g_hash_table_insert(ddi->cfa_fde,
-				(gpointer)(uintptr_t)fde->initial_location,fde);
+	    clrangesimple_add(&ddi->cfa_fde,(Word_t)fde->initial_location,
+			      (Word_t)(fde->initial_location + fde->address_range),
+			      fde);
 	}
 
 	readp = unit_end;
@@ -1453,11 +1456,17 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
     }
 
     /*
-     * Assume symbol->addr has the address that we recorded for this
-     * FDE.  It must.
+     * Just look it up based on the frame's IP address.
      */
-    fde = (struct dwarf_cfa_fde *) \
-	g_hash_table_lookup(ddi->cfa_fde,(gpointer)(uintptr_t)symbol->addr);
+    fde = NULL;
+    rc = clrangesimple_find(&ddi->cfa_fde,(Word_t)ip,NULL,NULL,(void **)&fde);
+    if (rc < 0) {
+	verror("error looking up DWARF CFA FDE for IP 0x%"PRIxADDR","
+	       " symbol '%s' at addr 0x%"PRIxADDR"!\n",
+	       ip,symbol_get_name(symbol),symbol->addr);
+	return -1;
+    }
+
     if (!fde) {
 	/*
 	 * Try to handle the case where the symbol is an inlined
@@ -1470,9 +1479,8 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
 	    if (!scope->range) 
 		continue;
 
-	    fde = (struct dwarf_cfa_fde *)		\
-		g_hash_table_lookup(ddi->cfa_fde,
-				    (gpointer)(uintptr_t)scope->range->start);
+	    rc = clrangesimple_find(&ddi->cfa_fde,(Word_t)scope->range->start,
+				    NULL,NULL,(void **)&fde);
 	    if (fde) {
 		if (scope->symbol) {
 		    vdebug(5,LA_DEBUG,LF_DCFA,
@@ -1498,18 +1506,13 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
     }
 
     if (!fde) {
-	verror("no DWARF CFA FDE for symbol '%s' at addr 0x%"PRIxADDR"!\n",
-	       symbol_get_name(symbol),symbol->addr);
+	verror("no DWARF CFA FDE for IP 0x%"PRIxADDR","
+	       " symbol '%s' at addr 0x%"PRIxADDR"!\n",
+	       ip,symbol_get_name(symbol),symbol->addr);
 	errno = ESRCH;
 	return -1;
     }
-    else if (!(fde->initial_location <= symbol->addr 
-	       && symbol->addr < (fde->initial_location + fde->address_range))) {
-	verror("no DWARF CFA FDE for symbol '%s' containing addr 0x%"PRIxADDR"!\n",
-	       symbol_get_name(symbol),symbol->addr);
-	errno = ESRCH;
-	return -1;
-    }
+
     cie = fde->cie;
 
     /*
@@ -1655,11 +1658,17 @@ int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
     }
 
     /*
-     * Assume symbol->addr has the address that we recorded for this
-     * FDE.  It must.
+     * Just look it up based on the frame's IP address.
      */
-    fde = (struct dwarf_cfa_fde *) \
-	g_hash_table_lookup(ddi->cfa_fde,(gpointer)(uintptr_t)symbol->addr);
+    fde = NULL;
+    rc = clrangesimple_find(&ddi->cfa_fde,(Word_t)ip,NULL,NULL,(void **)&fde);
+    if (rc < 0) {
+	verror("error looking up DWARF CFA FDE for IP 0x%"PRIxADDR","
+	       " symbol '%s' at addr 0x%"PRIxADDR"!\n",
+	       ip,symbol_get_name(symbol),symbol->addr);
+	return -1;
+    }
+
     if (!fde) {
 	/*
 	 * Try to handle the case where the symbol is an inlined
@@ -1672,9 +1681,8 @@ int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
 	    if (!scope->range) 
 		continue;
 
-	    fde = (struct dwarf_cfa_fde *)		\
-		g_hash_table_lookup(ddi->cfa_fde,
-				    (gpointer)(uintptr_t)scope->range->start);
+	    rc = clrangesimple_find(&ddi->cfa_fde,(Word_t)scope->range->start,
+				    NULL,NULL,(void **)&fde);
 	    if (fde) {
 		if (scope->symbol) {
 		    vdebug(5,LA_DEBUG,LF_DCFA,
@@ -1700,15 +1708,9 @@ int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
     }
 
     if (!fde) {
-	verror("no DWARF CFA FDE for symbol '%s' at addr 0x%"PRIxADDR"!\n",
-	       symbol_get_name(symbol),symbol->addr);
-	errno = ESRCH;
-	return -1;
-    }
-    else if (!(fde->initial_location <= symbol->addr 
-	       && symbol->addr < (fde->initial_location + fde->address_range))) {
-	verror("no DWARF CFA FDE for symbol '%s' containing addr 0x%"PRIxADDR"!\n",
-	       symbol_get_name(symbol),symbol->addr);
+	verror("no DWARF CFA FDE for IP 0x%"PRIxADDR","
+	       " symbol '%s' at addr 0x%"PRIxADDR"!\n",
+	       ip,symbol_get_name(symbol),symbol->addr);
 	errno = ESRCH;
 	return -1;
     }
@@ -1755,11 +1757,17 @@ int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
     return 0;
 }
 
+static void __dwarf_cfa_dtor(Word_t start,Word_t end,void *data) {
+    struct dwarf_cfa_fde *fde;
+
+    fde = (struct dwarf_cfa_fde *)data;
+    dwarf_cfa_fde_free(fde);
+}
+
 int dwarf_unload_cfa(struct debugfile *debugfile) {
     struct dwarf_debugfile_info *ddi;
     GHashTableIter iter;
     gpointer kp, vp;
-    struct dwarf_cfa_fde *fde;
     struct dwarf_cfa_cie *cie;
 
     if (!debugfile->priv)
@@ -1768,13 +1776,7 @@ int dwarf_unload_cfa(struct debugfile *debugfile) {
     ddi = (struct dwarf_debugfile_info *)debugfile->priv;
     
     if (ddi->cfa_fde) {
-	g_hash_table_iter_init(&iter,ddi->cfa_fde);
-	while (g_hash_table_iter_next(&iter,&kp,&vp)) {
-	    fde = (struct dwarf_cfa_fde *)vp;
-	    dwarf_cfa_fde_free(fde);
-	    g_hash_table_iter_replace(&iter,NULL);
-	}
-        g_hash_table_destroy(ddi->cfa_fde);
+	clrangesimple_free(ddi->cfa_fde,__dwarf_cfa_dtor);
 	ddi->cfa_fde = NULL;
     }
 
