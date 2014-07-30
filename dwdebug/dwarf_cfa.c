@@ -1542,7 +1542,7 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
      */
     rc = dwarf_cfa_fde_run_regrule(debugfile,fde,rr,lctxt,reg,&retval);
     if (rc) {
-	verror("could not load register %d in FDE 0x%lx CIE 0x%lx\n!",
+	verror("could not load register %d in FDE 0x%lx CIE 0x%lx!\n",
 	       reg,(unsigned long)fde->offset,(unsigned long)cie->offset);
 	return -1;
     }
@@ -1746,7 +1746,7 @@ int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
 				   cie->return_address_register,&retval);
     if (rc) {
 	verror("could not load return address register %d"
-	       " in FDE 0x%lx CIE 0x%lx\n!",
+	       " in FDE 0x%lx CIE 0x%lx!\n",
 	       cie->return_address_register,(unsigned long)fde->offset,
 	       (unsigned long)cie->offset);
 	return -1;
