@@ -1494,6 +1494,46 @@ int target_lookup_line_addr(struct target *target,char *srcfile,ADDR addr) {
     return -1;
 }
 
+int target_lookup_filename_line_addr(struct target *target,
+				     ADDR addr,char **filename,int *line) {
+    struct addrspace *space;
+    struct memregion *region;
+    GHashTableIter iter;
+    gpointer key;
+    struct debugfile *debugfile;
+    struct memrange *range;
+    int rline = -1;
+
+    if (list_empty(&target->spaces))
+	return -1;
+
+    vdebug(9,LA_TARGET,LF_SYMBOL,
+	   "trying to find line for address 0x%"PRIxADDR"\n",
+	   addr);
+
+    list_for_each_entry(space,&target->spaces,space) {
+	list_for_each_entry(region,&space->regions,region) {
+	    if ((range = memregion_find_range_real(region,addr)))
+		goto found;
+	}
+    }
+
+    return -1;
+
+ found:
+    g_hash_table_iter_init(&iter,region->debugfiles);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer)&key,(gpointer)&debugfile)) {
+	rline = debugfile_lookup_filename_line_addr(debugfile,
+						    memrange_unrelocate(range,addr),
+						    filename,line);
+	if (rline > 0)
+	    return rline;
+    }
+
+    return -1;
+}
+
 /*
  * Thin wrappers around [l]symbol_resolve_bounds[_alt].
  */
@@ -4569,15 +4609,18 @@ int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
 	ipval = 0;
 	target_location_ctxt_read_reg(tlctxt,ipreg,&ipval);
 
-	if (tlctxtf->bsymbol)
+	srcline = 0;
+	srcfile = NULL;
+	if (target_lookup_filename_line_addr(target,ipval,&srcfile,&srcline) > 0)
+	    ;
+	else if (tlctxtf->bsymbol) {
 	    srcfile = symbol_get_srcfile(bsymbol_get_symbol(tlctxtf->bsymbol));
-	else
+	    srcline = symbol_get_srcline(bsymbol_get_symbol(tlctxtf->bsymbol));
+	}
+	else {
 	    srcfile = NULL;
-
-	if (tlctxtf->bsymbol)
-	    srcline = target_lookup_line_addr(target,srcfile,ipval);
-	else
 	    srcline = 0;
+	}
 
 	if (j > 0) {
 	    retval = snprintf(buf + rc,buflen - rc,"%s",frame_sep);

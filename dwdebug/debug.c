@@ -391,6 +391,32 @@ int debugfile_lookup_line_addr(struct debugfile *debugfile,
     return -1;
 }
 
+int debugfile_lookup_filename_line_addr(struct debugfile *debugfile,
+					ADDR addr,char **filename,int *line) {
+    GHashTableIter iter;
+    gpointer key;
+    gpointer value;
+    clmatch_t clf;
+    int retval;
+
+    g_hash_table_iter_init(&iter,debugfile->srcaddrlines);
+    while (g_hash_table_iter_next(&iter,&key,&value)) {
+	clf = (clmatch_t)value;
+
+	vdebug(9,LA_DEBUG,LF_DLOOKUP,"checking srcfile %s\n",(char *)key);
+	retval = (int)(uintptr_t)clmatch_find(&clf,addr);
+	if (retval > 0) {
+	    if (filename)
+		*filename = (char *)key;
+	    if (line)
+		*line = retval;
+	    return 0;
+	}
+    }
+
+    return -1;
+}
+
 struct lsymbol *debugfile_lookup_sym_line__int(struct debugfile *debugfile,
 					       char *filename,int line,
 					       SMOFFSET *offset,ADDR *addr) {

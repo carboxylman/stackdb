@@ -670,6 +670,8 @@ struct array_list *debugfile_lookup_addrs_line(struct debugfile *debugfile,
 					       char *filename,int line);
 int debugfile_lookup_line_addr(struct debugfile *debugfile,
 			       char *filename,ADDR addr);
+int debugfile_lookup_filename_line_addr(struct debugfile *debugfile,
+					ADDR addr,char **filename,int *line);
 struct lsymbol *debugfile_lookup_sym_line(struct debugfile *debugfile,
 					  char *filename,int line,
 					  SMOFFSET *offset,ADDR *addr);
