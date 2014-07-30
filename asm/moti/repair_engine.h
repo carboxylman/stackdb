@@ -789,7 +789,9 @@ void report_anomalies(void) {
     }
 
     /* cleanup the anomaly file */
-    if (truncate("state_information/anomalies_detected.fac", 0))
+    if ((fp = fopen("state_information/anomalies_detected.fac", "w")) != NULL)
+	fclose(fp);
+    else
 	fprintf(stdout, "WARNING: could not truncate state_information/anomalies_detected.fac.\n");
 }
 #endif
@@ -1258,7 +1260,9 @@ int parse_recovery_action() {
     }
     fclose(fp);
     /* cleanup the recovery_action file */
-    if (truncate("state_information/recovery_action.fac", 0))
+    if ((fp = fopen("state_information/recovery_action.fac", "w")) != NULL)
+	fclose(fp);
+    else
 	fprintf(stdout, "WARNING: could not truncate state_information/recovery_action.fac.\n");
     return 0;
 
