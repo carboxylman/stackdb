@@ -1339,6 +1339,69 @@ struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr) {
     return NULL;
 }
 
+int target_lookup_sym_addr_alt(struct target *target,ADDR addr,
+			       struct bsymbol **primary,struct bsymbol **alt) {
+    struct addrspace *space;
+    struct memregion *region;
+    GHashTableIter iter;
+    gpointer key;
+    struct debugfile *debugfile;
+    struct bsymbol *bsymbol;
+    struct lsymbol *primary_ls,*alt_ls;
+    struct memrange *range;
+
+    if (list_empty(&target->spaces))
+	return -1;
+
+    vdebug(9,LA_TARGET,LF_SYMBOL,
+	   "trying to find symbol at address 0x%"PRIxADDR"\n",
+	   addr);
+
+    list_for_each_entry(space,&target->spaces,space) {
+	list_for_each_entry(region,&space->regions,region) {
+	    if ((range = memregion_find_range_real(region,addr)))
+		goto found;
+	}
+    }
+
+    return -1;
+
+ found:
+    g_hash_table_iter_init(&iter,region->debugfiles);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer)&key,(gpointer)&debugfile)) {
+	primary_ls = alt_ls = NULL;
+
+	if (debugfile_lookup_addr_alt__int(debugfile,
+					   memrange_unrelocate(range,addr),
+					   (primary) ? &primary_ls : NULL,
+					   (alt) ? &alt_ls : NULL))
+	    continue;
+
+	if (primary_ls) {
+	    bsymbol = bsymbol_create(primary_ls,region);
+	    /* Take a ref to bsymbol on the user's behalf, since this is
+	     * a lookup function.
+	    */
+	    RHOLD(bsymbol,bsymbol);
+	    *primary = bsymbol;
+	}
+
+	if (alt_ls) {
+	    bsymbol = bsymbol_create(alt_ls,region);
+	    /* Take a ref to bsymbol on the user's behalf, since this is
+	     * a lookup function.
+	    */
+	    RHOLD(bsymbol,bsymbol);
+	    *alt = bsymbol;
+	}
+
+	return 0;
+    }
+
+    return -1;
+}
+
 struct bsymbol *target_lookup_sym(struct target *target,
 				  const char *name,const char *delim,
 				  char *srcfile,symbol_type_flag_t ftype) {
@@ -4448,7 +4511,9 @@ struct target_location_ctxt *target_unwind(struct target *target,tid_t tid) {
     struct target_location_ctxt_frame *tlctxtf;
     struct target_thread *tthread;
     REGVAL ipval;
-    struct bsymbol *bsymbol;
+    struct bsymbol *bsymbol = NULL;
+    struct bsymbol *alt_bsymbol = NULL;
+    int rc;
 
     if (target->ops->unwind)
 	return target->ops->unwind(target,tid);
@@ -4467,8 +4532,8 @@ struct target_location_ctxt *target_unwind(struct target *target,tid_t tid) {
 	return NULL;
     }
 
-    bsymbol = target_lookup_sym_addr(target,ipval);
-    if (!bsymbol) {
+    rc = target_lookup_sym_addr_alt(target,ipval,&bsymbol,&alt_bsymbol);
+    if (rc) {
 	verror("could not find symbol for IP addr 0x%"PRIxADDR"!\n",ipval);
 	errno = EADDRNOTAVAIL;
 	return NULL;
@@ -4491,6 +4556,7 @@ struct target_location_ctxt *target_unwind(struct target *target,tid_t tid) {
     tlctxtf->tlctxt = tlctxt;
     tlctxtf->frame = 0;
     tlctxtf->bsymbol = bsymbol;
+    tlctxtf->alt_bsymbol = alt_bsymbol;
     tlctxtf->registers = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     g_hash_table_insert(tlctxtf->registers,
@@ -4507,7 +4573,9 @@ int target_location_ctxt_unwind(struct target_location_ctxt *tlctxt) {
     tid_t tid;
     struct target_location_ctxt_frame *tlctxtf;
     REGVAL ipval;
-    struct bsymbol *bsymbol;
+    struct bsymbol *bsymbol = NULL;
+    struct bsymbol *alt_bsymbol = NULL;
+    int rc;
 
     if (tlctxt->frames) {
 	errno = EALREADY;
@@ -4527,8 +4595,8 @@ int target_location_ctxt_unwind(struct target_location_ctxt *tlctxt) {
 	return -1;
     }
 
-    bsymbol = target_lookup_sym_addr(target,ipval);
-    if (!bsymbol) {
+    rc = target_lookup_sym_addr_alt(target,ipval,&bsymbol,&alt_bsymbol);
+    if (rc) {
 	verror("could not find symbol for IP addr 0x%"PRIxADDR"!\n",ipval);
 	errno = EADDRNOTAVAIL;
 	return -1;
@@ -4551,6 +4619,7 @@ int target_location_ctxt_unwind(struct target_location_ctxt *tlctxt) {
     tlctxtf->tlctxt = tlctxt;
     tlctxtf->frame = 0;
     tlctxtf->bsymbol = bsymbol;
+    tlctxtf->alt_bsymbol = alt_bsymbol;
     tlctxtf->registers = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     g_hash_table_insert(tlctxtf->registers,
@@ -4634,7 +4703,18 @@ int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
 		rc += retval;
 	}
 
-	name = (tlctxtf->bsymbol) ? bsymbol_get_name(tlctxtf->bsymbol) : "";
+	name = NULL;
+	if (tlctxtf->bsymbol)
+	    name = bsymbol_get_name(tlctxtf->bsymbol);
+	/* If this was a file symbol, try to find something better! */
+	if ((!name
+	     || !tlctxtf->bsymbol
+	     || SYMBOL_IS_ROOT(bsymbol_get_symbol(tlctxtf->bsymbol)))
+	    && tlctxtf->alt_bsymbol)
+	    name = bsymbol_get_name(tlctxtf->alt_bsymbol);
+	if (!name)
+	    name = "";
+
 	if (fstyle == TARGET_UNWIND_STYLE_GDB)
 	    retval = snprintf(buf + rc,buflen - rc,
 			      "#%d 0x%"PRIxFULLADDR" in %s (",
@@ -4844,7 +4924,8 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
     struct target_location_ctxt_frame *new;
     int rc;
     ADDR retaddr;
-    struct bsymbol *bsymbol;
+    struct bsymbol *bsymbol = NULL;
+    struct bsymbol *alt_bsymbol = NULL;
     REG rbp;
     REG rsp;
     ADDR bp = 0,sp = 0,stack_retaddr = 0,old_bp = 0,old_sp = 0;
@@ -4931,8 +5012,9 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
     /*
      * Look up the new symbol.
      */
-    bsymbol = target_lookup_sym_addr(tlctxt->thread->target,retaddr);
-    if (!bsymbol) 
+    rc = target_lookup_sym_addr_alt(tlctxt->thread->target,retaddr,
+				    &bsymbol,&alt_bsymbol);
+    if (rc)
 	vwarn("could not find symbol for IP addr 0x%"PRIxADDR"!\n",retaddr);
 
     /*
@@ -4947,6 +5029,7 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
     new->tlctxt = tlctxt;
     new->frame = array_list_len(tlctxt->frames);
     new->bsymbol = bsymbol;
+    new->alt_bsymbol = alt_bsymbol;
     new->registers = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     g_hash_table_insert(new->registers,

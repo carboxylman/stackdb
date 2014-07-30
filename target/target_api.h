@@ -1852,9 +1852,15 @@ struct target_location_ctxt_frame {
     target_location_ctxt_flag_t flags;
 
     /*
-     * The function symbol associated with this frame.
+     * The function symbol associated with this frame.  Ok, now we have
+     * an "alternate" symbol -- the primary is the one associated with
+     * the debuginfo; the alternate is the binfile symbol.  Sometimes
+     * the best debuginfo symbol we can get is the file symbol; but
+     * usually the binfile has more fine-grained symbols we can use
+     * instead; they just might not be in debuginfo.
      */
     struct bsymbol *bsymbol;
+    struct bsymbol *alt_bsymbol;
 
     /*
      * This contains the restored registers.

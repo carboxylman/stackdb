@@ -226,6 +226,8 @@ int debugfile_define_by_specification(struct debugfile *debugfile,
 				      struct symbol *specification,
 				      struct symbol *definition);
 struct lsymbol *debugfile_lookup_addr__int(struct debugfile *debugfile,ADDR addr);
+int debugfile_lookup_addr_alt__int(struct debugfile *debugfile,ADDR addr,
+				   struct lsymbol **primary,struct lsymbol **alt);
 struct lsymbol *debugfile_lookup_sym__int(struct debugfile *debugfile,
 					  char *name,const char *delim,
 					  struct rfilter *srcfile_filter,

@@ -462,7 +462,6 @@ struct lsymbol *debugfile_lookup_addr__int(struct debugfile *debugfile,ADDR addr
     struct lsymbol *ls;
     struct symbol *s = (struct symbol *)g_hash_table_lookup(debugfile->addresses,
 							    (gpointer)addr);
-    struct symbol *bs = NULL;
 
     if (!s) {
 	/* If we didn't find it, try our scope search struct! */
@@ -517,20 +516,6 @@ struct lsymbol *debugfile_lookup_addr__int(struct debugfile *debugfile,ADDR addr
     }
 
     /*
-     * If we only were able to find a root symbol from debuginfo, try to
-     * find a better symbol from the binfile.
-     *
-     * XXX: is this really what we want?  The binfile symbol isn't going
-     * to have much metadata associated with it... we should figure a
-     * way to expose this to the user?  Why?  Debuginfo symbols are
-     * linked into a big hierarchy, unlike binfile symbols.
-     */
-    if (s && SYMBOL_IS_ROOT(s)) {
-	bs = s;
-	s = NULL;
-    }
-
-    /*
      * If we still didn't find it, check the binfile and
      * binfile_pointing symtabs as necessary.
      */
@@ -541,20 +526,99 @@ struct lsymbol *debugfile_lookup_addr__int(struct debugfile *debugfile,ADDR addr
 	s = (struct symbol *)clrange_find(&debugfile->binfile_pointing->ranges,
 					  addr);
 
-    /*
-     * If we didn't find one in binfile, put back the backup if we had
-     * that.  Something (the debugfile root symbol) is still better than
-     * nothing...
-     */
-    if (bs && (!s || (s && SYMBOL_IS_ROOT(s))))
-	s = bs;
-
     if (s) 
 	ls = lsymbol_create_from_symbol__int(s);
     else 
 	ls = NULL;
 
     return ls;
+}
+
+int debugfile_lookup_addr_alt__int(struct debugfile *debugfile,ADDR addr,
+				   struct lsymbol **primary,struct lsymbol **alt) {
+    struct scope *scope;
+    struct symbol *s = NULL,*p = NULL,*a = NULL;
+
+    if (primary) {
+	s = (struct symbol *)g_hash_table_lookup(debugfile->addresses,
+						 (gpointer)addr);
+	
+	if (!s) {
+	    /* If we didn't find it, try our scope search struct! */
+	    scope = (struct scope *)clrange_find(&debugfile->ranges,addr);
+
+	    /*
+	     * If ALLRANGES was not set, scope will be the CU scope;
+	     * otherwise it will be the absolute tightest.  So -- if it was
+	     * not set, we have to call scope_lookup_addr to find the
+	     * tightest bound.
+	     */
+	    if (scope && !(debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_ALLRANGES))
+		scope = scope_lookup_addr(scope,addr);
+
+	    if (scope) {
+		if (scope->symbol) {
+		    vdebug(6,LA_DEBUG,LF_DLOOKUP,
+			   "found scope(0x%"PRIxADDR",0x%"PRIxADDR"%s)"
+			   " (symbol %s:0x%"PRIxSMOFFSET")\n",
+			   scope->range->start,scope->range->end,
+			   (scope->range->next != NULL) ? ";..." : "",
+			   symbol_get_name(scope->symbol),scope->symbol->ref);
+
+		    /*
+		     * Make sure the symbol is fully loaded; then repeat the
+		     * search to be sure we have the tightest bound.
+		     */
+		    if (!SYMBOL_IS_FULL(scope->symbol)) {
+			SYMBOL_EXPAND_WARN(scope->symbol);
+
+			scope = (struct scope *)clrange_find(&debugfile->ranges,addr);
+
+			if (scope && !(debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_ALLRANGES))
+			    scope = scope_lookup_addr(scope,addr);
+		    }
+		}
+		else {
+		    vdebug(6,LA_DEBUG,LF_DLOOKUP,
+			   "found scope(0x%"PRIxADDR",0x%"PRIxADDR"%s)\n",
+			   scope->range->start,scope->range->end,
+			   (scope->range->next != NULL) ? ";..." : "");
+		}
+	    }
+
+	    while (scope) {
+		if (scope->symbol) {
+		    s = scope->symbol;
+		    break;
+		}
+		scope = scope->parent;
+	    }
+	}
+
+	p = s;
+	if (p)
+	    *primary = lsymbol_create_from_symbol__int(p);
+    }
+
+    if (alt) {
+	if (debugfile->binfile && debugfile->binfile->ranges) 
+	    s = (struct symbol *)clrange_find(&debugfile->binfile->ranges,addr);
+	else if (!s && debugfile->binfile_pointing 
+		 && debugfile->binfile_pointing->ranges) 
+	    s = (struct symbol *) \
+		clrange_find(&debugfile->binfile_pointing->ranges,addr);
+
+	a = s;
+	if (a)
+	    *alt = lsymbol_create_from_symbol__int(a);
+    }
+
+    if (p)
+	return 0;
+    else if (a)
+	return 0;
+    else
+	return -1;
 }
 
 struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
