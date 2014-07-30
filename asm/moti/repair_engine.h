@@ -763,8 +763,12 @@ void report_anomalies(void) {
 	    argc = 0;
 	    cur_token = (char *)strtok(fact, delim);
 	    function_name = cur_token;
-	    if (strcmp(function_name, "unknown-process") == 0) {
-		/* (unknown-process (name "X") (pid N)) */
+	    if (strcmp(function_name, "unknown-process") == 0 ||
+		strcmp(function_name, "wrong-process-cred") == 0 ||
+		strcmp(function_name, "wrong-process-hierarchies") == 0 ||
+		strcmp(function_name, "open-tcp-socket") == 0 ||
+		strcmp(function_name, "open-udp-socket") == 0) {
+		/* (FUNC (name "X") (pid N)) */
 		cur_token = (char *) strtok(NULL, delim);
 		cur_token = (char *) strtok(NULL, delim);
 		argv[argc++] = cur_token;
@@ -772,8 +776,41 @@ void report_anomalies(void) {
 		cur_token = (char *) strtok(NULL, delim);
 		argv[argc++] = cur_token;
 		snprintf(msg, sizeof msg,
-			 "ANOM=unknown-process NAME=%s PID=%s",
-			 argv[0], argv[1]);
+			 "ANOM=%s NAME=%s PID=%s",
+			 function_name, argv[0], argv[1]);
+	    }
+	    else if (strcmp(function_name, "unknown module") == 0) {
+		/* (unknown-module (name "X")) */
+		cur_token = (char *) strtok(NULL, delim);
+		cur_token = (char *) strtok(NULL, delim);
+		argv[argc++] = cur_token;
+		snprintf(msg, sizeof msg,
+			 "ANOM=%s NAME=%s",
+			 function_name, argv[0]);
+	    }
+	    else if (strcmp(function_name, "missing-process") == 0) {
+		/* (missing-process (name "X") (command Y)) */
+		cur_token = (char *) strtok(NULL, delim);
+		cur_token = (char *) strtok(NULL, delim);
+		argv[argc++] = cur_token;
+		snprintf(msg, sizeof msg,
+			 "ANOM=%s NAME=%s",
+			 function_name, argv[0]);
+	    }
+	    else if (strcmp(function_name, "unknown-object-list") == 0) {
+	    /* (unknown-object-list (name "X") (pid Y) (object-list "A" "B" "NULL")) */
+		cur_token = (char *) strtok(NULL, delim);
+		cur_token = (char *) strtok(NULL, delim);
+		argv[argc++] = cur_token;
+		cur_token = (char *) strtok(NULL, delim);
+		cur_token = (char *) strtok(NULL, delim);
+		argv[argc++] = cur_token;
+		cur_token = (char *) strtok(NULL, delim);
+		cur_token = (char *) strtok(NULL, delim);
+		argv[argc++] = cur_token;
+		snprintf(msg, sizeof msg,
+			 "ANOM=%s NAME=%s PID=%s OBJECT=%s",
+			 function_name, argv[0], argv[1], argv[2]);
 	    }
 	    else {
 		fprintf(stdout, "WARNING: could not parse anomaly 'fact'\n");
