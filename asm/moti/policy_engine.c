@@ -467,6 +467,7 @@ int main( int argc, char** argv) {
     target_status_t tstat;
     int iteration = 1;
     struct stat st;
+    FILE *fp;
 
     memset(&opts,0,sizeof(opts));
     opts.app_file_path = "application_knowledge.cls";
@@ -526,16 +527,43 @@ int main( int argc, char** argv) {
 	mkdir("state_information",0700);
     }
     
-    result = truncate("state_information/cpu_state_info.fac", 0);
-    result |= truncate("state_information/module_state_info.fac", 0);
-    result |= truncate("state_information/process_priv_state_info.fac", 0);
-    result |= truncate("state_information/process_state_info.fac", 0);
-    result |= truncate("state_information/tcp_state_info.fac", 0);
-    result |= truncate("state_information/udp_state_info.fac", 0);
-    result |= truncate("state_information/unload_unknown_object_state_info.fac", 0);
-    result |= truncate("state_information/recovery_action.fac", 0);
+    if ((fp = fopen("state_information/cpu_state_info.fac", "w")) != NULL)
+	fclose(fp);
+    else
+	result++;
+    if ((fp = fopen("state_information/module_state_info.fac", "w")) != NULL)
+	fclose(fp);
+    else
+	result++;
+    if ((fp = fopen("state_information/process_priv_state_info.fac", "w")) != NULL)
+	fclose(fp);
+    else
+	result++;
+    if ((fp = fopen("state_information/process_state_info.fac", "w")) != NULL)
+	fclose(fp);
+    else
+	result++;
+    if ((fp = fopen("state_information/tcp_state_info.fac", "w")) != NULL)
+	fclose(fp);
+    else
+	result++;
+    if ((fp = fopen("state_information/udp_state_info.fac", "w")) != NULL)
+	fclose(fp);
+    else
+	result++;
+    if ((fp = fopen("state_information/unload_unknown_object_state_info.fac", "w")) != NULL)
+	fclose(fp);
+    else
+	result++;
+    if ((fp = fopen("state_information/recovery_action.fac", "w")) != NULL)
+	fclose(fp);
+    else
+	result++;
 #ifdef ENABLE_A3
-    result |= truncate("state_information/anomalies_detected.fac", 0);
+    if ((fp = fopen("state_information/anomalies_detected.fac", "w")) != NULL)
+	fclose(fp);
+    else
+	result++;
 #endif
     if (result)
 	fprintf(stdout, "WARNING: Could not truncate all files in state_information.\n");
@@ -597,7 +625,7 @@ int main( int argc, char** argv) {
 	    fprintf(stdout,"INFO: Loading the base facts file\n");
 	result = LoadFacts(base_fact_file);
 	if(!result) {
-	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
+	   fprintf(stdout,"ERROR: Failed to load the base facts file '%s'.\n", base_fact_file);
 	   exit(0);
 	}
 	
@@ -664,7 +692,8 @@ int main( int argc, char** argv) {
 	    fprintf(stdout,"INFO: Loading the  recovery rules file\n");
 	result = Load(opts.recovery_rules_file);
 	if(!result) {
-	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
+	   fprintf(stdout,"ERROR: Failed to load the recovery facts file '%s'.\n",
+		   opts.recovery_rules_file);
 	   exit(0);
 	}
 
