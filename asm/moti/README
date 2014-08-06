@@ -47,9 +47,9 @@ III. Build instructions for the kernel modules.
     4. Load the main driver module: "insmod repair_driver.ko"
 
 IV. Execution instructions.
-    1. Copy the application_knowledge.cls and recovery_contructs.cls file to the vmi-obj/asm/moti directory.
+    1. Copy the application_knowledge.cls and recovery_constructs.cls file to the vmi-obj/asm/moti directory.
     2. Create a new directory vmi-obj/tools/state_information. This directory is for storing file with temp state information. These temp files will be automatically created.
     3. Execute the policy using this command :
-       sudo LD_LIBRARY_PATH=/opt/vmi/elfutils/lib:/opt/vmi/glib/lib:/us/local/lib:/usr/lib:/opt/clips/clips-6.24/clipssrc gdb --args ./policy_engine -m ubuntu
+       sudo LD_LIBRARY_PATH=/opt/vmi/elfutils/lib:/opt/vmi/glib/lib:/usr/local/lib:/usr/lib:/opt/clips/clips-6.24/clipssrc gdb --args ./policy_engine -m ubuntu
     4. The tool runs once in every WAIT_TIME number of seconds. 
 
