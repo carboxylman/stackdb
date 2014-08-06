@@ -4423,7 +4423,7 @@ static int bfi_find_elf(Dwfl_Module *mod __attribute__ ((unused)),
 			char **file_name __attribute__ ((unused)),
 			Elf **elfp) {
     struct binfile *binfile;
-    struct binfile_instance *bfi;
+    //struct binfile_instance *bfi;
     struct binfile_elf *bfelf;
 
     if (!(binfile = (struct binfile *)*userdata)) {
@@ -4431,10 +4431,10 @@ static int bfi_find_elf(Dwfl_Module *mod __attribute__ ((unused)),
 	return -1;
     }
 
-    if (!(bfi = binfile->instance)) {
-	verror("no instance info for binfile %s!\n",binfile->filename);
-	return -1;
-    }
+    //if (!(bfi = binfile->instance)) {
+    //	verror("no instance info for binfile %s!\n",binfile->filename);
+    //	return -1;
+    //}
 
     if (!(bfelf = (struct binfile_elf *)binfile->priv)) {
 	verror("no ELF info for binfile %s!\n",binfile->filename);
@@ -4473,12 +4473,20 @@ static int bfi_find_section_address(Dwfl_Module *mod,void **userdata,
 
     if (addr) {
 	if (shndx >= bfielf->num_sections) {
-	    verror("section index %d out of range (%d) in binfile instance %s!\n",
-		   shndx,bfielf->num_sections,bfi->filename);
-	    return -1;
+	    /*
+	     * XXX: we probably were using a binfile instance that
+	     * doesn't correspond exactly to the binfile; but in this
+	     * case, we can just pretend that the section didn't get
+	     * mapped :).
+	     */
+	    vwarnopt(12,LA_DEBUG,LF_DWARF,
+		     "section %d out of range (%d) in binfile instance %s!\n",
+		     shndx,bfielf->num_sections,bfi->filename);
+	    tmp = 0;
+	    //return -1;
 	}
-
-	tmp = ((struct binfile_instance_elf *)(bfi->priv))->section_tab[shndx];
+	else
+	    tmp = ((struct binfile_instance_elf *)(bfi->priv))->section_tab[shndx];
 
 	vdebug(8,LA_DEBUG,LF_ELF,
 	       "shndx = %d addr = %"PRIxADDR" base = %x\n",
