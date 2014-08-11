@@ -16,6 +16,9 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+/* define this to turn on dumping of memory use stats; debug for finding leaks */
+#undef MEMUSESTATS
+
 /*  Policy_engine outline: 
  *   Step1: Initialize  the CLIPS environment.
  *   Step2: Load the rules file into the framework: both application levl rules
@@ -494,6 +497,7 @@ void sigh(int signo) {
     exit(0);
 }
 
+#ifdef MEMUSESTATS
 void dumpstat(char *msg, int full)
 {
     static char *pfile;
@@ -537,6 +541,7 @@ void dumpstat(char *msg, int full)
 	fclose(fd);
     }
 }
+#endif
 
 int main( int argc, char** argv) {
 
@@ -661,13 +666,17 @@ int main( int argc, char** argv) {
 	fprintf(stdout,"============================ ITERATION %d ============================\n",iteration++);
         if (opts.dump_debug)
 	    fprintf(stdout,"INFO: Loading the application level rules\n");
-dumpstat("Before load", 1);
+#ifdef MEMUSESTATS
+	dumpstat("Before load", 1);
+#endif
 	result = Load(opts.app_file_path);
 	if(result != 1) {
 	    fprintf(stdout,"ERROR: Failed to load the application rules file\n");
 	    exit(0);
 	}	
-dumpstat("After load", 0); 
+#ifdef MEMUSESTATS
+	dumpstat("After load", 0); 
+#endif
 
 	// Generate a time stamp for the base facts file name
 	result = generate_timestamp(base_fact_file);
@@ -684,7 +693,9 @@ dumpstat("After load", 0);
 	gettimeofday(&tm1, NULL);
 	result = generate_snapshot();
 	gettimeofday(&tm2, NULL);
-dumpstat("After snapshot", 0);
+#ifdef MEMUSESTATS
+	dumpstat("After snapshot", 0);
+#endif
 	if( result) {
 	    fprintf(stdout,"ERROR: Failed to generate the system snapshot.\n \
 		    Trying again...\n");
@@ -697,7 +708,9 @@ dumpstat("After snapshot", 0);
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO: Resetting the CLIPS environemnt\n");
 	Reset();
-dumpstat("After Reset", 0);
+#ifdef MEMUSESTATS
+	dumpstat("After Reset", 0);
+#endif
 	
 	if (opts.dump_debug) {
 	    result = Watch("all");
@@ -720,12 +733,16 @@ dumpstat("After Reset", 0);
 	   fprintf(stdout,"ERROR: Failed to load the tcp_state_info file.\n");
 	   exit(0);
 	}
-dumpstat("After LoadFacts", 0);
+#ifdef MEMUSESTATS
+	dumpstat("After LoadFacts", 0);
+#endif
 
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO: Parsing the base facts through the application rules\n");
 	result = Run(-1L);
-dumpstat("After Run", 0);
+#ifdef MEMUSESTATS
+	dumpstat("After Run", 0);
+#endif
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO : %d application rules were fired\n",result);
 	/* At this time the anomaly facts are generated. Now load the
@@ -739,7 +756,9 @@ dumpstat("After Run", 0);
 
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO: Loading the state information of recovery facts from the previous execution \n");
-dumpstat("Before LoadFacts2", 0);
+#ifdef MEMUSESTATS
+	dumpstat("Before LoadFacts2", 0);
+#endif
 	result = LoadFacts("state_information/process_state_info.fac");
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the process_state_info file.\n");
@@ -775,7 +794,9 @@ dumpstat("Before LoadFacts2", 0);
 	   fprintf(stdout,"ERROR: Failed to load the unload_unknown_object_info file.\n");
 	   exit(0);
 	}
-dumpstat("After LoadFacts2", 0);
+#ifdef MEMUSESTATS
+	dumpstat("After LoadFacts2", 0);
+#endif
 
 	if (opts.dump_debug)	
 	    fprintf(stdout,"INFO: Loading the  recovery rules file\n");
@@ -785,10 +806,14 @@ dumpstat("After LoadFacts2", 0);
 		   opts.recovery_rules_file);
 	   exit(0);
 	}
-dumpstat("After Load", 0);
+#ifdef MEMUSESTATS
+	dumpstat("After Load", 0);
+#endif
 
 	result = Run(-1L);
-dumpstat("After Run2", 0);
+#ifdef MEMUSESTATS
+	dumpstat("After Run2", 0);
+#endif
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO : %d recovery rules were fired\n",result);
 
@@ -796,7 +821,9 @@ dumpstat("After Run2", 0);
 	    if (opts.dump_debug)
 		fprintf(stdout,"INFO: Parsing the recovery action file.\n");
 	    result = parse_recovery_action();
-dumpstat("After parse_recovery_action", 0);
+#ifdef MEMUSESTATS
+	    dumpstat("After parse_recovery_action", 0);
+#endif
 	    if(result) {
 		fprintf(stdout,"ERROR: parse_recovery_action function call failed.\n");
 		exit(0);
@@ -806,7 +833,9 @@ dumpstat("After parse_recovery_action", 0);
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO: Clearing up all the facts and rules\n");
 	Clear();
-dumpstat("After Clear", 0);
+#ifdef MEMUSESTATS
+	dumpstat("After Clear", 0);
+#endif
 	fprintf(stdout," Sleeping for %d seconds before the next iteration.\n", opts.wait_time);
 	sleep(opts.wait_time);
     }
