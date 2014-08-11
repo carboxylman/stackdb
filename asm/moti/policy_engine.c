@@ -208,9 +208,12 @@ int generate_snapshot() {
 
     int result = 0;
     target_status_t status;
-	
     static struct timeval tm1;
-    gettimeofday(&tm1, NULL);
+    static struct timeval tm2;
+    unsigned long long t;
+
+    if (opts.dump_timing)
+	gettimeofday(&tm1, NULL);
 
     /* Pause the target */
     if ((status = target_status(target)) != TSTATUS_PAUSED) {	
@@ -220,61 +223,74 @@ int generate_snapshot() {
 		goto resume;
 	 }
     }
-    static struct timeval tm2;
-    gettimeofday(&tm2, NULL);
-    unsigned long long t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    if (opts.dump_timing)
+    if (opts.dump_timing) {
+	gettimeofday(&tm2, NULL);
+	timersub(&tm2, &tm1, &tm2);
+	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
 	fprintf(stderr,"INFO: Time taken to pause the target is %llu ms\n", t); 
-		    
+    }
+
     /* Start making calls to each of the VMI function */ 
-    gettimeofday(&tm1, NULL);
+    if (opts.dump_timing)
+	gettimeofday(&tm1, NULL);
     result = process_info();
     if(result) {
 	fprintf(stdout,"ERROR: process_info function failed\n");
 	result = 1;
 	goto resume;
     }
-    gettimeofday(&tm2, NULL);
-    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    if (opts.dump_timing)
+    if (opts.dump_timing) {
+	gettimeofday(&tm2, NULL);
+	timersub(&tm2, &tm1, &tm2);
+	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
 	fprintf(stderr,"INFO: Time taken to get process info is %llu ms\n", t); 
+    }
 
-    gettimeofday(&tm1, NULL);
+    if (opts.dump_timing)
+	gettimeofday(&tm1, NULL);
     result =  file_info();
     if(result) {
 	fprintf(stdout,"ERROR: file_info function failed.\n");
 	result = 1;
 	goto resume;
     }
-    gettimeofday(&tm2, NULL);
-    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    if (opts.dump_timing)
-	fprintf(stderr,"INFO: Time taken to get file info is %llu ms\n", t); 
+    if (opts.dump_timing) {
+	gettimeofday(&tm2, NULL);
+	timersub(&tm2, &tm1, &tm2);
+	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
+	fprintf(stderr,"INFO: Time taken to get file info is %llu ms\n", t);
+    }
 
-    gettimeofday(&tm1, NULL);
+    if (opts.dump_timing)
+	gettimeofday(&tm1, NULL);
     result = module_info();
     if(result) {
 	fprintf(stdout,"ERRROR: module_info function failed.\n");
 	result = 1;
 	goto resume;
     }
-    gettimeofday(&tm2, NULL);
-    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    if (opts.dump_timing)
-	fprintf(stdout,"INFO: Time taken to get module info is %llu ms\n", t); 
-   
+    if (opts.dump_timing) {
+	gettimeofday(&tm2, NULL);
+	timersub(&tm2, &tm1, &tm2);
+	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
+	fprintf(stdout,"INFO: Time taken to get module info is %llu ms\n", t);
+    }
     
-    gettimeofday(&tm1, NULL);
+    if (opts.dump_timing)
+	gettimeofday(&tm1, NULL);
     result = cpu_load_info();
     if(result) {
 	fprintf(stdout,"ERROR: cpu_load_info failed.\n");
 	result = 1;
 	goto resume;
     }
-    gettimeofday(&tm2, NULL);
-    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    if (opts.dump_timing)
-	fprintf(stdout,"INFO: Time taken to get cpu load info is %llu ms\n", t);     
+    if (opts.dump_timing) {
+	gettimeofday(&tm2, NULL);
+	timersub(&tm2, &tm1, &tm2);
+	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
+	fprintf(stdout,"INFO: Time taken to get cpu load info is %llu ms\n", t);
+    }
+
    /*
     result = process_cpu_utilization();
     if(result) {
@@ -284,76 +300,95 @@ int generate_snapshot() {
     }
     */
 
-    gettimeofday(&tm1, NULL);
+    if (opts.dump_timing)
+	gettimeofday(&tm1, NULL);
     result = object_info();
     if(result) {
 	fprintf(stdout,"ERROR: object_info failed.\n");
 	result  = 1;
 	goto resume;
     }
-    gettimeofday(&tm2, NULL);
-    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    if (opts.dump_timing)
-	fprintf(stdout,"INFO: Time taken to get object file info is %llu ms\n", t);  
+    if (opts.dump_timing) {
+	gettimeofday(&tm2, NULL);
+	timersub(&tm2, &tm1, &tm2);
+	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
+	fprintf(stdout,"INFO: Time taken to get object file info is %llu ms\n", t);
+    }
     
-    gettimeofday(&tm1, NULL);
+    if (opts.dump_timing)
+	gettimeofday(&tm1, NULL);
     result = syscalltable_info();
     if(result) {
 	fprintf(stdout,"ERROR: syscallcalltable_info failed.\n");
 	result = 1;
 	goto resume;
     }
-    gettimeofday(&tm2, NULL);
-    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    if (opts.dump_timing)
-	fprintf(stderr,"INFO: Time taken to get syscalltable info is %llu ms\n", t); 
+    if (opts.dump_timing) {
+	gettimeofday(&tm2, NULL);
+	timersub(&tm2, &tm1, &tm2);
+	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
+	fprintf(stderr,"INFO: Time taken to get syscalltable info is %llu ms\n", t);
+    }
    
-    gettimeofday(&tm1, NULL);
+    if (opts.dump_timing)
+	gettimeofday(&tm1, NULL);
     result = commandline_info();
     if( result) {
 	fprintf(stdout,"ERROR: commandline_info failed.\n");
 	goto resume;
     }
-    gettimeofday(&tm2, NULL);
-    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    if (opts.dump_timing)
-	fprintf(stderr,"INFO: Time taken to get commandline info is %llu ms\n", t); 
+    if (opts.dump_timing) {
+	gettimeofday(&tm2, NULL);
+	timersub(&tm2, &tm1, &tm2);
+	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
+	fprintf(stderr,"INFO: Time taken to get commandline info is %llu ms\n", t);
+    }
     
-    gettimeofday(&tm1, NULL);
+    if (opts.dump_timing)
+	gettimeofday(&tm1, NULL);
     result = syscall_hooking_info();
     if( result) {
 	fprintf(stdout,"ERROR: syscall_hooking_info failed.\n");
 	goto resume;
     }
-    gettimeofday(&tm2, NULL);
-    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    if (opts.dump_timing)
-	fprintf(stderr,"INFO: Time taken to check for hooked system calls is %llu ms\n", t); 
+    if (opts.dump_timing) {
+	gettimeofday(&tm2, NULL);
+	timersub(&tm2, &tm1, &tm2);
+	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
+	fprintf(stderr,"INFO: Time taken to check for hooked system calls is %llu ms\n", t);
+    }
   
     /*
-    gettimeofday(&tm1, NULL);
+    if (opts.dump_timing)
+	gettimeofday(&tm1, NULL);
     result = socket_info();
     if( result) {
 	fprintf(stdout,"ERROR: socket_info failed.\n");
 	goto resume;
     }
-    gettimeofday(&tm2, NULL);
-    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    if (opts.dump_timing)
-	fprintf(stderr,"INFO: Time taken to gather information about open sockets is %llu ms\n", t); 
+    if (opts.dump_timing) {
+	gettimeofday(&tm2, NULL);
+	timersub(&tm2, &tm1, &tm2);
+	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
+	fprintf(stderr,"INFO: Time taken to gather information about open sockets is %llu ms\n", t);
+    }
     */
 resume:
-    gettimeofday(&tm1, NULL);
+    if (opts.dump_timing)
+	gettimeofday(&tm1, NULL);
     if ((status = target_status(target)) == TSTATUS_PAUSED) {
 	if (target_resume(target)) {
 	    fprintf(stdout, "ERROR: Failed to resume target.\n ");
 	    result = 1;
 	}
     }
-    gettimeofday(&tm2, NULL);
-    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    if (opts.dump_timing)
+    if (opts.dump_timing) {
+	gettimeofday(&tm2, NULL);
+	timersub(&tm2, &tm1, &tm2);
+	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
 	fprintf(stderr,"INFO: Time taken to resume the target is %llu ms\n", t);
+    }
+
     return result;
 }
 
@@ -457,6 +492,50 @@ void sigh(int signo) {
     }
 
     exit(0);
+}
+
+void dumpstat(char *msg, int full)
+{
+    static char *pfile;
+    static int lsize, lrss, ldata, lstk;
+    int size, rss, data, stk;
+    FILE *fd;
+
+    if (pfile == NULL) {
+	lsize = lrss = ldata = lstk = -1;
+	pfile = malloc(20);
+	snprintf(pfile, 20, "/proc/%d/status", getpid());
+    }
+    fd = fopen(pfile, "r");
+    if (fd != NULL) {
+	char line[100];
+
+	size = rss = data = stk = -1;
+	fprintf(stderr, "%s:\n", msg);
+	while (fgets(line, 100, fd) != NULL) {
+	    if (strncmp(line, "VmSize", 6) == 0)
+		sscanf(line, "VmSize: %d kB", &size);
+	    else if (strncmp(line, "VmRSS", 5) == 0)
+		sscanf(line, "VmRSS: %d kB", &rss);
+	    else if (strncmp(line, "VmData", 6) == 0)
+		sscanf(line, "VmData: %d kB", &data);
+	    else if (strncmp(line, "VmStk", 5) == 0) {
+		sscanf(line, "VmStk: %d kB", &stk);
+		break;
+	    }
+	}
+	if (full)
+	    fprintf(stderr, "  size=%d, rss=%d, data=%d, stk=%d\n",
+		    size, rss, data, stk);
+	else
+	    fprintf(stderr, "  Dsize=%d, Drss=%d, Ddata=%d, Dstk=%d\n",
+		    (size-lsize), (rss-lrss), (data-ldata), (stk-lstk));
+	lsize = size;
+	lrss = rss;
+	ldata = data;
+	lstk = stk;
+	fclose(fd);
+    }
 }
 
 int main( int argc, char** argv) {
@@ -576,15 +655,20 @@ int main( int argc, char** argv) {
     }
     
     while(1) {	
+	static struct timeval tm1;
+	static struct timeval tm2;
+
 	fprintf(stdout,"============================ ITERATION %d ============================\n",iteration++);
         if (opts.dump_debug)
 	    fprintf(stdout,"INFO: Loading the application level rules\n");
+dumpstat("Before load", 1);
 	result = Load(opts.app_file_path);
-	    if(result != 1) {
+	if(result != 1) {
 	    fprintf(stdout,"ERROR: Failed to load the application rules file\n");
 	    exit(0);
 	}	
- 
+dumpstat("After load", 0); 
+
 	// Generate a time stamp for the base facts file name
 	result = generate_timestamp(base_fact_file);
 	if(!result) {
@@ -597,22 +681,23 @@ int main( int argc, char** argv) {
 	/*  Make call to the base VMI  base function. This function invokes all
 	    the VMI tools that gather state information of the virtual appliance 
 	*/	
-	static struct timeval tm1;
 	gettimeofday(&tm1, NULL);
 	result = generate_snapshot();
-	static struct timeval tm2;
 	gettimeofday(&tm2, NULL);
+dumpstat("After snapshot", 0);
 	if( result) {
 	    fprintf(stdout,"ERROR: Failed to generate the system snapshot.\n \
 		    Trying again...\n");
 	    continue;
 	}
-	unsigned long long t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
+	timersub(&tm2, &tm1, &tm2);
+	unsigned long long t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
 	fprintf(stdout,"INFO: Time taken to generate the snapshot is %llu ms\n", t); 
 
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO: Resetting the CLIPS environemnt\n");
 	Reset();
+dumpstat("After Reset", 0);
 	
 	if (opts.dump_debug) {
 	    result = Watch("all");
@@ -635,10 +720,12 @@ int main( int argc, char** argv) {
 	   fprintf(stdout,"ERROR: Failed to load the tcp_state_info file.\n");
 	   exit(0);
 	}
+dumpstat("After LoadFacts", 0);
 
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO: Parsing the base facts through the application rules\n");
 	result = Run(-1L);
+dumpstat("After Run", 0);
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO : %d application rules were fired\n",result);
 	/* At this time the anomaly facts are generated. Now load the
@@ -652,6 +739,7 @@ int main( int argc, char** argv) {
 
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO: Loading the state information of recovery facts from the previous execution \n");
+dumpstat("Before LoadFacts2", 0);
 	result = LoadFacts("state_information/process_state_info.fac");
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the process_state_info file.\n");
@@ -687,6 +775,7 @@ int main( int argc, char** argv) {
 	   fprintf(stdout,"ERROR: Failed to load the unload_unknown_object_info file.\n");
 	   exit(0);
 	}
+dumpstat("After LoadFacts2", 0);
 
 	if (opts.dump_debug)	
 	    fprintf(stdout,"INFO: Loading the  recovery rules file\n");
@@ -696,8 +785,10 @@ int main( int argc, char** argv) {
 		   opts.recovery_rules_file);
 	   exit(0);
 	}
+dumpstat("After Load", 0);
 
 	result = Run(-1L);
+dumpstat("After Run2", 0);
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO : %d recovery rules were fired\n",result);
 
@@ -705,6 +796,7 @@ int main( int argc, char** argv) {
 	    if (opts.dump_debug)
 		fprintf(stdout,"INFO: Parsing the recovery action file.\n");
 	    result = parse_recovery_action();
+dumpstat("After parse_recovery_action", 0);
 	    if(result) {
 		fprintf(stdout,"ERROR: parse_recovery_action function call failed.\n");
 		exit(0);
@@ -714,6 +806,7 @@ int main( int argc, char** argv) {
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO: Clearing up all the facts and rules\n");
 	Clear();
+dumpstat("After Clear", 0);
 	fprintf(stdout," Sleeping for %d seconds before the next iteration.\n", opts.wait_time);
 	sleep(opts.wait_time);
     }

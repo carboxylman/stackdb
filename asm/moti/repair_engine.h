@@ -47,7 +47,7 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 
     struct bsymbol *bs = NULL;
     struct value *v = NULL, *value = NULL;
-    struct target_location_ctxt *tlctxt;
+    struct target_location_ctxt *tlctxt = NULL;
     unsigned int index;
     unsigned int size_in_recs;
     unsigned int size_of_a_rec;
@@ -128,6 +128,8 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
     }
     value_free(v);
     value_free(value);
+    target_location_ctxt_free(tlctxt);
+    bsymbol_release(bs);
 
     /* 
      * Now do the pointer math to compute the address
@@ -136,26 +138,24 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
     addr = (rec_base_ptr + (index % size_in_recs) * size_of_a_rec);
     return addr;
 fail:
-    if(bs) {
-	bsymbol_release(bs);
-    }
-    if(v) {
+    if (v)
 	value_free(v);
-    }
-    if(value) {
+    if (value)
 	value_free(value);
-    }
+    if (tlctxt)
+	target_location_ctxt_free(tlctxt);
+    if (bs)
+	bsymbol_release(bs);
     return 0;
-
 }
 
 int load_command_func(int cmd_id, int submodule_id, void * argv, int argc) {
 
     ADDR cmd_ptr;
-    struct bsymbol *ack_struct_type=NULL, *bs=NULL;
+    struct bsymbol *bs=NULL;
     struct symbol *command_struct_type=NULL;
     struct value *v=NULL, *value=NULL;
-    struct target_location_ctxt *tlctxt;
+    struct target_location_ctxt *tlctxt=NULL;
     int res;
     target_status_t status;
     ci_error_t ret = CI_SUCCESS;
@@ -276,8 +276,7 @@ int load_command_func(int cmd_id, int submodule_id, void * argv, int argc) {
     }
     value_free(v);
 
-    v = target_load_value_member(target, tlctxt, value, "argv", NULL,
-	    LOAD_FLAG_NONE);
+    v = target_load_value_member(target, tlctxt, value, "argv", NULL, LOAD_FLAG_NONE);
     if(!v){
 	fprintf(stderr,"ERROR: Failed to load the value of memeber argv \n");
 	ret = CI_LOAD_ERR;
@@ -290,8 +289,10 @@ int load_command_func(int cmd_id, int submodule_id, void * argv, int argc) {
 	ret = CI_STORE_ERR;
 	goto failure;
     }
-    value_free(v);
-    symbol_release(command_struct_type);
+    value_free(v); v = NULL;
+    value_free(value); value = NULL;
+    target_location_ctxt_free(tlctxt); tlctxt = NULL;
+    bsymbol_release(bs);
 
     /* Increment prod index */
     bs = target_lookup_sym(target, "req_ring_channel", NULL, "repair_driver",
@@ -347,18 +348,14 @@ int load_command_func(int cmd_id, int submodule_id, void * argv, int argc) {
      */
 
 failure: 
-    if (v) {
+    if (v)
 	value_free(v);
-    }
-    if (bs) {
+    if (value)
+	value_free(value);
+    if (tlctxt)
+	target_location_ctxt_free(tlctxt);
+    if (bs)
 	bsymbol_release(bs);
-    }
-    if (command_struct_type) {
-	symbol_release(command_struct_type);
-    }
-    if (ack_struct_type) {
-	bsymbol_release(ack_struct_type);
-    }
 
     if ((status = target_status(target)) == TSTATUS_PAUSED) {
 	if (target_resume(target)) {
@@ -373,7 +370,7 @@ int result_ready() {
 
     target_status_t status;
     struct bsymbol *bs=NULL;
-    struct target_location_ctxt *tlctxt;
+    struct target_location_ctxt *tlctxt=NULL;
     int ready;
     int res;
     struct value *v=NULL;
@@ -424,8 +421,9 @@ int result_ready() {
 	    }
 	    goto pass;
 	}
-	value_free(v);
-	bsymbol_release(bs);
+	value_free(v); v = NULL;
+	target_location_ctxt_free(tlctxt); tlctxt = NULL;
+	bsymbol_release(bs); bs = NULL;
 
 	if ((status = target_status(target)) == TSTATUS_PAUSED) {
 	    if (target_resume(target)) {
@@ -444,23 +442,23 @@ pass:
 	    fprintf(stderr, "ERROR: Failed to resume target.\n ");
 	}
     }
-    if(v) {
+    if (v)
 	value_free(v);
-    }
-    if(bs) {
+    if (tlctxt)
+	target_location_ctxt_free(tlctxt);
+    if (bs)
 	bsymbol_release(bs);
-    }
     if (opts.dump_debug)
 	fprintf(stdout,"INFO: result is ready, ret=%d.\n", ret);
     return ret;
 }
 
-
+#if 0
 int get_result(struct ack_rec *result) {
     ADDR ack_ptr;
     struct bsymbol  *bs=NULL;
     struct symbol *ack_struct_type = NULL;
-    struct target_location_ctxt *tlctxt;
+    struct target_location_ctxt *tlctxt=NULL;
     struct value *v=NULL , *value=NULL;
     ci_error_t ret = CI_SUCCESS;
     int res;
@@ -603,7 +601,10 @@ int get_result(struct ack_rec *result) {
     }
 
     memcpy(result->argv, v->buf, 500);
-    value_free(v);
+    value_free(v); v = NULL;
+    value_free(value); value = NULL;
+    target_location_ctxt_free(tlctxt); tlctxt = NULL;
+    bsymbol_release(bs);
     
     /* Increment cons index */ 
     bs = target_lookup_sym(target, "res_ring_channel", NULL, "repair_driver",
@@ -650,24 +651,22 @@ int get_result(struct ack_rec *result) {
     }
 
 get_result_fail:
-    if(v){
+    if (v)
 	value_free(v);
-    }
-    if(bs){
+    if (value)
+	value_free(value);
+    if (tlctxt)
+	target_location_ctxt_free(tlctxt);
+    if (bs)
 	bsymbol_release(bs);
-    }
-    if(ack_struct_type){
-	symbol_release(ack_struct_type);
-    }
     if ((res = target_status(target)) == TSTATUS_PAUSED) {
 	if(target_resume(target)) {
 		fprintf(stderr, "ERROR: Failed to resume the target.\n");
 	}
     }
     return ret;
-
 }
-
+#endif
 
 int function_name_to_id(char * function_name, int* function_id, int* submodule_id){
 
@@ -862,6 +861,12 @@ int parse_recovery_action() {
 	return 1;
     }
 
+    arguments = malloc(500);
+    if(!arguments) {
+	fprintf(stderr,"ERROR: Failed to allocate memory for the arguments buffer.\n");
+	return 1;
+    }
+
     /* now read one fact at a time and parse it */
     while(fgets(fact,1024,fp) != NULL) {
 	if (opts.dump_debug)
@@ -900,12 +905,7 @@ int parse_recovery_action() {
 	    continue;
 	}
 
-	arguments = (void *)malloc(500);
-	if(!arguments) {
-	    fprintf(stderr,"ERROR: Failed to allocate memory for the arguments buffer.\n");
-	    continue;
-	}
-	bzero(arguments, 500);
+	memset(arguments, 0, 500);
 
 #ifdef ENABLE_A3
 	/* Report an attempted recovery action */
@@ -1144,14 +1144,12 @@ int parse_recovery_action() {
 		fprintf(stdout,"INFO: Invoking function to restart process : %d  in a trusted boot mode\n", pid);
 		/* Only passing the pid to the recovery component */
 		ret = load_command_func(0,0,arguments,1);
-		if(ret) {
-		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
-		    return 1;
-		}
+		if(ret)
+		    goto fail;
 	    	
 		/* Get result of command execution */
 		result_ready();
-		bzero(arguments, 500);
+		memset(arguments, 0, 500);
 		argc--;
 		//fprintf(stdout, "INFO: argc = %d\n",argc);
 		char_ptr = (char *) arguments;
@@ -1178,7 +1176,7 @@ int parse_recovery_action() {
 
 
 	    	/* load the command line arguments */
-		bzero(arguments, 500);
+		memset(arguments, 0, 500);
 		i++;
 		char_ptr = (char *) arguments;		
 		for(; i< (argc - 3 ) ;i++) {
@@ -1218,7 +1216,7 @@ int parse_recovery_action() {
 		result_ready();
 			    
 		/* unhook the syscall table */
-		bzero(arguments, 500);
+		memset(arguments, 0, 500);
 		char_ptr = (char *) arguments;
 		memcpy((void *)char_ptr, (void*)&syscall_table_vm, sizeof(unsigned long));
 		char_ptr = char_ptr + sizeof(unsigned long);
@@ -1242,7 +1240,7 @@ int parse_recovery_action() {
 	    	
 		/* Get result of command execution */
 		result_ready();
-		bzero(arguments, 500);
+		memset(arguments, 0, 500);
 		
 		/* restart a process */
 		char_ptr = (char *) arguments;
@@ -1284,8 +1282,6 @@ int parse_recovery_action() {
 		break; 
 	}
 
-	free(arguments);
-
 #ifdef ENABLE_A3
 	/* Report a successful recovery action */
 	if (opts.a3_server) {
@@ -1301,6 +1297,8 @@ int parse_recovery_action() {
 	fclose(fp);
     else
 	fprintf(stdout, "WARNING: could not truncate state_information/recovery_action.fac.\n");
+    if (arguments)
+	free(arguments);
     return 0;
 
  fail:
@@ -1316,5 +1314,7 @@ int parse_recovery_action() {
 	    fprintf(stderr,"ERROR: could not report to A3 HC\n");
     }
 #endif
+    if (arguments)
+	free(arguments);
     return ret;
 }
