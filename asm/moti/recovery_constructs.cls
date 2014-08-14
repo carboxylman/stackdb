@@ -4,10 +4,12 @@
 	(declare (salience 10))
 	?f <- (unknown-process 
 			 (name ?name1)
-			 (pid ?pid))
+			 (pid ?pid)
+			 (ppid ?ppid))
 	(not (exists (unknown-process-recovery-prev-action
 		         ( prev_action ps_kill|ps_kill_parent)
-			 (name ?name1))))
+			 (name ?name1)
+			 (pid ?pid))))
 
 	=>
 	(assert (recovery-action
@@ -15,46 +17,52 @@
 		    ( arg_list  ?name1 ?pid)))
 	(assert (unknown-process-recovery-prev-action
 		    ( name ?name1)
+		    ( pid ?pid)
 		    ( prev_action ps_kill)))
 	(retract ?f)
 	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
 	(save-facts "state_information/process_state_info.fac" visible unknown-process-recovery-prev-action)
-	(printout t "RECOVERY: Killing the unknown pocess " ?pid   crlf))
+	(printout t "RECOVERY: Killing the unknown process " ?pid   crlf))
 
 (defrule kill-unknown-process_1
 	(declare (salience 20))
 	?f <- (unknown-process 
 			 (name ?name2)
-			 (pid ?pid1))
+			 (pid ?pid1)
+			 (ppid ?ppid1))
 	 ?of <- (unknown-process-recovery-prev-action
 		         ( prev_action ps_kill)
-			 (name ?name2))
+			 (name ?name2)
+        		 (pid ?pid1))
 	=>
 	(assert (recovery-action
 		    (function-name kill_parent_process)
-		    (arg_list ?pid1 ?name2)))
+		    (arg_list ?name2 ?pid1 ?ppid1)))
 	(retract ?f)
 	(retract ?of)
 	(assert (unknown-process-recovery-prev-action
 		    (prev_action ps_kill_parent)
-		    (name ?name2)))
+		    (name ?name2)
+		    (pid ?pid1)))
 	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
 	(save-facts "state_information/process_state_info.fac" visible unknown-process-recovery-prev-action)
-	(printout t "RECOVERY: Killing the process and parent process" crlf))
+	(printout t "RECOVERY: Killing the unknown process " ?pid1 " and parent process " ?ppid1 crlf))
 
 (defrule kill-unknown-process_2
 	(declare (salience 30))
 	?f <- (unknown-process 
 			 (name ?name2)
-			 (pid ?pid1))
+			 (pid ?pid1)
+			 (ppid ?ppid1))
 	?of <- (unknown-process-recovery-prev-action
 		         ( prev_action ps_kill_parent)
-			 (name ?name2))
+			 (name ?name2)
+			 (pid ?pid1))
 	=>
 	(retract ?of)
 	(retract ?f)
 	(save-facts "state_information/process_state_info.fac" visible unknown-process-recovery-prev-action)
-        (printout t "RECOVERY: Tried killing the unknown process and its parent, but the process still exist. !!! Repeating the  recovery cycle now. " crlf))
+        (printout t "RECOVERY: Tried killing the unknown process " ?pid1 " and its parent " ?ppid1 ", but the process still exist. !!! Repeating the  recovery cycle now. " crlf))
 
 
 ;==============Rules for dealing with unknown modules that are loaded.=========================
@@ -312,7 +320,7 @@
 ;	=>
 ;	(assert (recovery-action
 ;		    (function-name kill_parent_process)
-;		    (arg_list  ?parent_pid)))
+;		    (arg_list ?name1 ?pid ?parent_pid)))
 ;	(retract ?f)
 ;	(retract ?of)
 ;	(assert (priv-escalation-recovery-prev-action
@@ -582,4 +590,3 @@
     ( retract ?f)
     ( save-facts "state_information/recovery_action.fac" visible recovery-action) 
     (printout t "RECOVERY: Killing the root shell " ?pid   crlf))
-

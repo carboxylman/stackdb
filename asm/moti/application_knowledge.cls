@@ -92,7 +92,8 @@
 
 (deftemplate unknown-process
      (slot name (type STRING))
-     (slot pid (type INTEGER)))
+     (slot pid (type INTEGER))
+     (slot ppid (type INTEGER)))
 
 (deftemplate unknown-module
      (slot name (type STRING)))
@@ -177,7 +178,8 @@
 
 (deftemplate unknown-process-recovery-prev-action
      (slot prev_action (type SYMBOL))
-     (slot name (type STRING)))
+     (slot name (type STRING))
+     (slot pid (type INTEGER)))
 
 
 (deftemplate unknown-module-recovery-prev-action
@@ -247,13 +249,15 @@
     ;=========rule to detect any unkown process that is executing======
     (defrule identify-unknown-process
     (task-struct (comm ?name1)
-	(pid ?pid))
+		 (pid ?pid)
+		 (parent_pid ?ppid))
     (known-processes $?name2)
     (test (not( member$ ?name1 $?name2)))
      =>
     (assert (unknown-process
 		(name ?name1)
-		(pid ?pid)))
+		(pid ?pid)
+		(ppid ?ppid)))
     (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
 	unknown-module tampered-syscall hooked-syscall open-udp-socket 
 	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
@@ -350,6 +354,10 @@
     (assert (open-udp-socket
 	    (name ?name1)
 	    (pid ?pid)))
+    (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
+	unknown-module tampered-syscall hooked-syscall open-udp-socket 
+	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
+	wrong-process-hierarchies missing-process root-shells)
     (printout t "ANOMALY: UDP sockets open for process " ?name1 crlf ))
 
     (defrule identify-open-tcp-sockets
@@ -503,7 +511,8 @@
     =>
     (assert(unknown-process
 		 (name ?name1)
-		 (pid ?pid1)))
+		 (pid ?pid1)
+		 (ppid ?parent_name)))
     (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
 	unknown-module tampered-syscall hooked-syscall open-udp-socket 
 	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
@@ -513,19 +522,19 @@
 
 
     ;============rule to make sure all the mandatory process are executing=========
-     (defrule identify-missing-process
-     (mandatory-process (name ?name)
+    (defrule identify-missing-process
+    (mandatory-process (name ?name)
 		       (command $?command))
-     (not (exists(task-struct (comm ?name))))
-      =>
-     (assert (missing-process
+    (not (exists(task-struct (comm ?name))))
+     =>
+    (assert (missing-process
 		(name ?name)
 		(command $?command)))
-     (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
+    (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
 	unknown-module tampered-syscall hooked-syscall open-udp-socket 
 	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
 	wrong-process-hierarchies missing-process root-shells)
-     (printout t "ANOMALY: Process " ?name " not found." crlf))
+    (printout t "ANOMALY: Process " ?name " not found." crlf))
 
      ;===========rule to check for root shells spawne from non root processes========
      (defrule identify-root-shells
@@ -545,7 +554,7 @@
 	unknown-module tampered-syscall hooked-syscall open-udp-socket 
 	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
 	wrong-process-hierarchies missing-process root-shells)
-     (printout t "ANOMALY: Root shell " ?name1 " found with pid" ?pid  crlf))
+     (printout t "ANOMALY: Root shell " ?pid " with non-root (" ?puid ") parent " ?ppid crlf))
 
      ;=============rule to check for invalid su command usage.================
      (defrule validate-su-processes
@@ -559,12 +568,14 @@
      (test(not (member$ ?puid $?su_users)))
      =>
      (assert (unknown-process
-     (pid ?pid)))
+		(name ?name1)
+		(pid ?pid)
+		(ppid ?ppid)))
      (save-facts "state_information/anomalies_detected.fac" visible unknown-process 
 	unknown-module tampered-syscall hooked-syscall open-udp-socket 
 	open-tcp-socket unknown-object-list unknown-open-files wrong-process-cred 
 	wrong-process-hierarchies missing-process root-shells)
-     (printout t "ANOMALY: Unauthorised su process found" ?pid  crlf))
+     (printout t "ANOMALY: Unauthorised su process " ?pid  crlf))
 
 
 
@@ -587,13 +598,13 @@
      
      (mandatory-process 
 	(name "apache2")
-	(command /usr/bin/sudo /etc/init.d/apache2 start HOME=/ TERM=linux /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)) 
+	(command /etc/init.d/apache2 start HOME=/ TERM=linux PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)) 
 
      (mandatory-process 
 	(name "sshd")
-	(command /usr/bin/sudo /usr/sbin/sshd  HOME=/ TERM=linux /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)) 
+	(command /usr/sbin/sshd  HOME=/ TERM=linux PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)) 
 
-     (known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport" "lp" "repair_driver" "sled_object_module" "psaction_module" "ps_deescalate_module" "close_file_module" "killsocket_module" "start_process_module" "sled_object_module")
+     (known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport" "lp" "repair_driver" "sled_object_module" "psaction_module" "ps_deescalate_module" "close_file_module" "killsocket_module" "start_process_module" "sled_object_module" "trusted_load_module")
      (process-with-udp "rpcbind" "ntpd" "mysqld" "apache2")                 
      (process-with-tcp  "mysqld"  "rpcbind" "sshd" "ntpd" "apache2") 
      (process-with-reg-files-opened "rpcbind" "rsyslogd" "ntpd" "cron" "atd" "mysqld" "udevd")
