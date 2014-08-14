@@ -100,58 +100,61 @@ int save_sys_call_table_entries() {
     bs = target_lookup_sym(target,"sys_call_table",NULL,NULL,
 				    SYMBOL_TYPE_FLAG_VAR);
     if (!bs) {
-	fprintf(stdout, "ERROR: Could not lookup symbol sys_call_table!\n");
-	exit(0);
+	fprintf(stderr, "ERROR: Could not lookup symbol sys_call_table!\n");
+	return 1;
     }	
 
     tlctxt = target_location_ctxt_create_from_bsymbol(target, TID_GLOBAL,bs);
 
     v = target_load_symbol(target,tlctxt,bs,LOAD_FLAG_NONE);
     if (!v) {
-	fprintf(stdout,"ERROR: Could not load sys_call_table!\n");
+	fprintf(stderr,"ERROR: Could not load sys_call_table!\n");
+	target_location_ctxt_free(tlctxt);
 	bsymbol_release(bs);
-	bs = NULL;
-	exit(0);
+	return 1;
     }
     syscall_table_vm = value_addr(v);
     if (opts.dump_debug)
 	fprintf(stdout,"INFO: Symbol syscall_table is at address %lx\n",
 							syscall_table_vm);
     value_free(v);
+    target_location_ctxt_free(tlctxt);
     bsymbol_release(bs);
-    bs = NULL;
 
     if (opts.dump_debug)
 	fprintf(stdout,"INFO: Loading the syscall table.\n");
     if(target_os_syscall_table_load(target)) {
-	fprintf(stdout,"ERROR: Failed to load the syscall table.\n");
+	fprintf(stderr,"ERROR: Failed to load the syscall table.\n");
 	return 1;
     }
 
     max_num = target_os_syscall_table_get_max_num(target);
     if(max_num < 0) {
-	fprintf(stdout,"ERROR: Failed to get the max number of target sysscalls.\n");
+	fprintf(stderr,"ERROR: Failed to get the max number of target sysscalls.\n");
 	return 1;
     }
     if (opts.dump_debug)
 	fprintf(stdout,"INFO: maximum number of system calls %d \n",max_num);
 
     /* Allocate memory for the sys_call_table and sys_call_names */
-    sys_call_table  = (unsigned long *) malloc(max_num * sizeof(unsigned long));
+    sys_call_table  = calloc(max_num, sizeof(unsigned long));
     if(sys_call_table == NULL) {
-	fprintf(stdout,"ERROR: Failed to allocate memory for sys_call_table.\n");
-	exit(0);
+	fprintf(stderr,"ERROR: Failed to allocate memory for sys_call_table.\n");
+	return 1;
     }
-    sys_call_names = (char **) malloc(max_num * sizeof(char *));
+    sys_call_names = calloc(max_num, sizeof(char *));
     if(sys_call_names == NULL) {
-	fprintf(stdout,"ERROR: Failed to allocate memmory for sys_call_names.\n");
-	exit(0);
+	fprintf(stderr,"ERROR: Failed to allocate memmory for sys_call_names.\n");
+	free(sys_call_table);
+	return 1;
     }
     
-    function_prologue = (unsigned long **) malloc(max_num * sizeof(unsigned long *));
+    function_prologue = calloc(max_num, sizeof(unsigned long *));
     if(function_prologue == NULL) {
-	fprintf(stdout,"ERROR: Failed to allocate memory for function prologue.\n");
-	exit(0);
+	fprintf(stderr,"ERROR: Failed to allocate memory for function prologue.\n");
+	free(sys_call_names);
+	free(sys_call_table);
+	return 1;
     }
 
     for(i = 0; i < max_num; i++) {
@@ -165,24 +168,40 @@ int save_sys_call_table_entries() {
 		fprintf(stdout,"%d\t %"PRIxADDR"\t%s\n", sc->num, sc->addr, 
 					    bsymbol_get_name(sc->bsymbol));
 	    sys_call_table[sc->num] = sc->addr;
-	    sys_call_names[sc->num] =  (char *) malloc(100* sizeof(char));
+	    sys_call_names[sc->num] = malloc(100);
 	    if(sys_call_names[sc->num] == NULL) {
-		fprintf(stdout,"ERROR: Failed to allocate memory for the string.\n");
-		exit(0);
+		fprintf(stderr,"ERROR: Failed to allocate memory for the string.\n");
+		goto fail;
 	    }
-	    strcpy(sys_call_names[sc->num], bsymbol_get_name(sc->bsymbol));
-	    function_prologue[sc->num] = (unsigned long *) malloc(2 * sizeof(unsigned long));
+	    strncpy(sys_call_names[sc->num], bsymbol_get_name(sc->bsymbol), 100);
+	    function_prologue[sc->num] = malloc(2 * sizeof(unsigned long));
+	    if (function_prologue[sc->num] == NULL) {
+		fprintf(stderr,"ERROR: Failed to allocate memory for function prologue.\n");
+		goto fail;
+	    }
 
 	    res = target_read_addr(target, sc->addr, 16, prologue);
 	    if(!res) {
-		fprintf(stdout, "ERROR: Could not read 8 bytes at 0x%"PRIxADDR"!\n",sc->addr);
-		exit(0);
+		fprintf(stderr, "ERROR: Could not read 8 bytes at 0x%"PRIxADDR"!\n",sc->addr);
+		goto fail;
 	    }
 	    memcpy(function_prologue[sc->num], &prologue,16);
-	    
+
 	}
     }
     return 0;
+
+ fail:
+    for (i = 0; i < max_num; i++) {
+	if (function_prologue[i])
+	    free(function_prologue[i]);
+	if (sys_call_names[i])
+	    free(sys_call_names[i]);
+    }
+    free(function_prologue);
+    free(sys_call_names);
+    free(sys_call_table);
+    return 1;
 }
 
 target_status_t cleanup() {
@@ -221,7 +240,7 @@ int generate_snapshot() {
     /* Pause the target */
     if ((status = target_status(target)) != TSTATUS_PAUSED) {	
 	if (target_pause(target)) {
-		fprintf(stderr,"Failed to pause the target \n");
+		fprintf(stderr,"ERROR: Failed to pause the target \n");
 		result = 1;
 		goto resume;
 	 }
@@ -230,7 +249,7 @@ int generate_snapshot() {
 	gettimeofday(&tm2, NULL);
 	timersub(&tm2, &tm1, &tm2);
 	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
-	fprintf(stderr,"INFO: Time taken to pause the target is %llu ms\n", t); 
+	fprintf(stdout,"INFO: Time taken to pause the target is %llu ms\n", t); 
     }
 
     /* Start making calls to each of the VMI function */ 
@@ -238,7 +257,7 @@ int generate_snapshot() {
 	gettimeofday(&tm1, NULL);
     result = process_info();
     if(result) {
-	fprintf(stdout,"ERROR: process_info function failed\n");
+	fprintf(stderr,"ERROR: process_info function failed\n");
 	result = 1;
 	goto resume;
     }
@@ -246,14 +265,14 @@ int generate_snapshot() {
 	gettimeofday(&tm2, NULL);
 	timersub(&tm2, &tm1, &tm2);
 	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
-	fprintf(stderr,"INFO: Time taken to get process info is %llu ms\n", t); 
+	fprintf(stdout,"INFO: Time taken to get process info is %llu ms\n", t); 
     }
 
     if (opts.dump_timing)
 	gettimeofday(&tm1, NULL);
     result =  file_info();
     if(result) {
-	fprintf(stdout,"ERROR: file_info function failed.\n");
+	fprintf(stderr,"ERROR: file_info function failed.\n");
 	result = 1;
 	goto resume;
     }
@@ -261,14 +280,14 @@ int generate_snapshot() {
 	gettimeofday(&tm2, NULL);
 	timersub(&tm2, &tm1, &tm2);
 	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
-	fprintf(stderr,"INFO: Time taken to get file info is %llu ms\n", t);
+	fprintf(stdout,"INFO: Time taken to get file info is %llu ms\n", t);
     }
 
     if (opts.dump_timing)
 	gettimeofday(&tm1, NULL);
     result = module_info();
     if(result) {
-	fprintf(stdout,"ERRROR: module_info function failed.\n");
+	fprintf(stderr,"ERROR: module_info function failed.\n");
 	result = 1;
 	goto resume;
     }
@@ -283,7 +302,7 @@ int generate_snapshot() {
 	gettimeofday(&tm1, NULL);
     result = cpu_load_info();
     if(result) {
-	fprintf(stdout,"ERROR: cpu_load_info failed.\n");
+	fprintf(stderr,"ERROR: cpu_load_info failed.\n");
 	result = 1;
 	goto resume;
     }
@@ -297,7 +316,7 @@ int generate_snapshot() {
    /*
     result = process_cpu_utilization();
     if(result) {
-	fprintf(stdout,"ERROR: process_cpu_utilization failed.\n");
+	fprintf(stderr,"ERROR: process_cpu_utilization failed.\n");
 	result = 1;
 	goto resume;
     }
@@ -307,7 +326,7 @@ int generate_snapshot() {
 	gettimeofday(&tm1, NULL);
     result = object_info();
     if(result) {
-	fprintf(stdout,"ERROR: object_info failed.\n");
+	fprintf(stderr,"ERROR: object_info failed.\n");
 	result  = 1;
 	goto resume;
     }
@@ -322,7 +341,7 @@ int generate_snapshot() {
 	gettimeofday(&tm1, NULL);
     result = syscalltable_info();
     if(result) {
-	fprintf(stdout,"ERROR: syscallcalltable_info failed.\n");
+	fprintf(stderr,"ERROR: syscallcalltable_info failed.\n");
 	result = 1;
 	goto resume;
     }
@@ -330,35 +349,35 @@ int generate_snapshot() {
 	gettimeofday(&tm2, NULL);
 	timersub(&tm2, &tm1, &tm2);
 	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
-	fprintf(stderr,"INFO: Time taken to get syscalltable info is %llu ms\n", t);
+	fprintf(stdout,"INFO: Time taken to get syscalltable info is %llu ms\n", t);
     }
    
     if (opts.dump_timing)
 	gettimeofday(&tm1, NULL);
     result = commandline_info();
     if( result) {
-	fprintf(stdout,"ERROR: commandline_info failed.\n");
+	fprintf(stderr,"ERROR: commandline_info failed.\n");
 	goto resume;
     }
     if (opts.dump_timing) {
 	gettimeofday(&tm2, NULL);
 	timersub(&tm2, &tm1, &tm2);
 	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
-	fprintf(stderr,"INFO: Time taken to get commandline info is %llu ms\n", t);
+	fprintf(stdout,"INFO: Time taken to get commandline info is %llu ms\n", t);
     }
     
     if (opts.dump_timing)
 	gettimeofday(&tm1, NULL);
     result = syscall_hooking_info();
     if( result) {
-	fprintf(stdout,"ERROR: syscall_hooking_info failed.\n");
+	fprintf(stderr,"ERROR: syscall_hooking_info failed.\n");
 	goto resume;
     }
     if (opts.dump_timing) {
 	gettimeofday(&tm2, NULL);
 	timersub(&tm2, &tm1, &tm2);
 	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
-	fprintf(stderr,"INFO: Time taken to check for hooked system calls is %llu ms\n", t);
+	fprintf(stdout,"INFO: Time taken to check for hooked system calls is %llu ms\n", t);
     }
   
     /*
@@ -366,14 +385,14 @@ int generate_snapshot() {
 	gettimeofday(&tm1, NULL);
     result = socket_info();
     if( result) {
-	fprintf(stdout,"ERROR: socket_info failed.\n");
+	fprintf(stderr,"ERROR: socket_info failed.\n");
 	goto resume;
     }
     if (opts.dump_timing) {
 	gettimeofday(&tm2, NULL);
 	timersub(&tm2, &tm1, &tm2);
 	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
-	fprintf(stderr,"INFO: Time taken to gather information about open sockets is %llu ms\n", t);
+	fprintf(stdout,"INFO: Time taken to gather information about open sockets is %llu ms\n", t);
     }
     */
 resume:
@@ -381,7 +400,7 @@ resume:
 	gettimeofday(&tm1, NULL);
     if ((status = target_status(target)) == TSTATUS_PAUSED) {
 	if (target_resume(target)) {
-	    fprintf(stdout, "ERROR: Failed to resume target.\n ");
+	    fprintf(stderr, "ERROR: Failed to resume target.\n ");
 	    result = 1;
 	}
     }
@@ -389,7 +408,7 @@ resume:
 	gettimeofday(&tm2, NULL);
 	timersub(&tm2, &tm1, &tm2);
 	t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
-	fprintf(stderr,"INFO: Time taken to resume the target is %llu ms\n", t);
+	fprintf(stdout,"INFO: Time taken to resume the target is %llu ms\n", t);
     }
 
     return result;
@@ -560,7 +579,7 @@ int main( int argc, char** argv) {
     
     tspec = target_argp_driver_parse(&pe_argp,&opts,argc,argv,TARGET_TYPE_XEN,1);
     if (!tspec) {
-	fprintf(stdout,"ERROR: Could not parse target arguments!\n");
+	fprintf(stderr,"ERROR: Could not parse target arguments!\n");
 	exit(-1);
     }
 
@@ -582,11 +601,11 @@ int main( int argc, char** argv) {
 
      target = target_instantiate(tspec,NULL);
      if (!target) {
-	fprintf(stdout,"ERROR: Could not instantiate target!\n");
+	fprintf(stderr,"ERROR: Could not instantiate target!\n");
 	exit(0);
      }
     if (target_open(target)) {
-	fprintf(stdout,"ERROR: Could not open %s!\n",targetstr);
+	fprintf(stderr,"ERROR: Could not open %s!\n",targetstr);
 	exit(0);
     }
 
@@ -600,7 +619,7 @@ int main( int argc, char** argv) {
 
 	/* XXX how do we extract the command line -m argument? */
 	if (a3_hc_init("a3-ncz", opts.a3_server, 0)) {
-	    fprintf(stdout,"ERROR: Could not initialize A3\n");
+	    fprintf(stderr,"ERROR: Could not initialize A3\n");
 	    exit(0);
 	}
     }
@@ -655,13 +674,14 @@ int main( int argc, char** argv) {
     /* Copy the initil system_call_table contents */
     result = save_sys_call_table_entries();
     if(result) {
-	fprintf(stdout,"ERROR: Failed to save the initial system call table entries.\n");
+	fprintf(stderr,"ERROR: Failed to save the initial system call table entries.\n");
 	exit(0);
     }
     
     while(1) {	
 	static struct timeval tm1;
 	static struct timeval tm2;
+	int retries;
 
 	fprintf(stdout,"============================ ITERATION %d ============================\n",iteration++);
         if (opts.dump_debug)
@@ -671,7 +691,7 @@ int main( int argc, char** argv) {
 #endif
 	result = Load(opts.app_file_path);
 	if(result != 1) {
-	    fprintf(stdout,"ERROR: Failed to load the application rules file\n");
+	    fprintf(stderr,"ERROR: Failed to load the application rules file\n");
 	    exit(0);
 	}	
 #ifdef MEMUSESTATS
@@ -681,7 +701,7 @@ int main( int argc, char** argv) {
 	// Generate a time stamp for the base facts file name
 	result = generate_timestamp(base_fact_file);
 	if(!result) {
-	    fprintf(stdout,"Failed to generate timestamp");
+	    fprintf(stderr,"Failed to generate timestamp");
 	    exit(0);
 	}
 	if (opts.dump_debug)
@@ -690,16 +710,29 @@ int main( int argc, char** argv) {
 	/*  Make call to the base VMI  base function. This function invokes all
 	    the VMI tools that gather state information of the virtual appliance 
 	*/	
-	gettimeofday(&tm1, NULL);
-	result = generate_snapshot();
-	gettimeofday(&tm2, NULL);
+	for (retries = 0; retries < 10; retries++) {
+	    struct timespec ts;
+
+	    gettimeofday(&tm1, NULL);
+	    result = generate_snapshot();
+	    gettimeofday(&tm2, NULL);
+	    if (result == 0)
+		break;
+	    unlink(base_fact_file);
+
+	    /* sleep long enough to let the other domain run */
+	    fprintf(stdout, "INFO: snapshot generation failed, trying again\n");
+	    ts.tv_sec = 0;
+	    ts.tv_nsec = (1000000000 / 100);
+	    nanosleep(&ts, NULL);
+	}
 #ifdef MEMUSESTATS
 	dumpstat("After snapshot", 0);
 #endif
 	if( result) {
-	    fprintf(stdout,"ERROR: Failed to generate the system snapshot.\n \
-		    Trying again...\n");
-	    continue;
+	    fprintf(stderr,
+		    "ERROR: Failed to generate the system snapshot after %d tries.\n", retries);
+	    exit(0);
 	}
 	timersub(&tm2, &tm1, &tm2);
 	unsigned long long t = (1000 * tm2.tv_sec + tm2.tv_usec / 1000);
@@ -715,7 +748,7 @@ int main( int argc, char** argv) {
 	if (opts.dump_debug) {
 	    result = Watch("all");
 	    if(!result) {
-		fprintf(stdout,"Error: Faild to watch \n");
+		fprintf(stderr,"ERROR: Faild to watch \n");
 	    }
 	}
 	
@@ -723,14 +756,14 @@ int main( int argc, char** argv) {
 	    fprintf(stdout,"INFO: Loading the base facts file\n");
 	result = LoadFacts(base_fact_file);
 	if(!result) {
-	   fprintf(stdout,"ERROR: Failed to load the base facts file '%s'.\n", base_fact_file);
+	   fprintf(stderr,"ERROR: Failed to load the base facts file '%s'.\n", base_fact_file);
 	   exit(0);
 	}
 	
 	/* Load previous cpu utilization state */
 	result = LoadFacts("state_information/cpu_state_info.fac");
 	if(!result) {
-	   fprintf(stdout,"ERROR: Failed to load the tcp_state_info file.\n");
+	   fprintf(stderr,"ERROR: Failed to load the tcp_state_info file.\n");
 	   exit(0);
 	}
 #ifdef MEMUSESTATS
@@ -761,37 +794,37 @@ int main( int argc, char** argv) {
 #endif
 	result = LoadFacts("state_information/process_state_info.fac");
 	if(!result) {
-	   fprintf(stdout,"ERROR: Failed to load the process_state_info file.\n");
+	   fprintf(stderr,"ERROR: Failed to load the process_state_info file.\n");
 	   exit(0);
 	}
 	
 	result = LoadFacts("state_information/module_state_info.fac");
 	if(!result) {
-	   fprintf(stdout,"ERROR: Failed to load the module_state_info file.\n");
+	   fprintf(stderr,"ERROR: Failed to load the module_state_info file.\n");
 	   exit(0);
 	}
 
 	result = LoadFacts("state_information/udp_state_info.fac");
 	if(!result) {
-	   fprintf(stdout,"ERROR: Failed to load the base udp_state_info file.\n");
+	   fprintf(stderr,"ERROR: Failed to load the base udp_state_info file.\n");
 	   exit(0);
 	}
 	
 	result = LoadFacts("state_information/tcp_state_info.fac");
 	if(!result) {
-	   fprintf(stdout,"ERROR: Failed to load the tcp_state_info file.\n");
+	   fprintf(stderr,"ERROR: Failed to load the tcp_state_info file.\n");
 	   exit(0);
 	}
 
 	result = LoadFacts("state_information/process_priv_state_info.fac");
 	if(!result) {
-	   fprintf(stdout,"ERROR: Failed to load the process_priv_info file.\n");
+	   fprintf(stderr,"ERROR: Failed to load the process_priv_info file.\n");
 	   exit(0);
 	}
 
 	result = LoadFacts("state_information/unload_unknown_object_state_info.fac");
 	if(!result) {
-	   fprintf(stdout,"ERROR: Failed to load the unload_unknown_object_info file.\n");
+	   fprintf(stderr,"ERROR: Failed to load the unload_unknown_object_info file.\n");
 	   exit(0);
 	}
 #ifdef MEMUSESTATS
@@ -802,7 +835,7 @@ int main( int argc, char** argv) {
 	    fprintf(stdout,"INFO: Loading the  recovery rules file\n");
 	result = Load(opts.recovery_rules_file);
 	if(!result) {
-	   fprintf(stdout,"ERROR: Failed to load the recovery facts file '%s'.\n",
+	   fprintf(stderr,"ERROR: Failed to load the recovery facts file '%s'.\n",
 		   opts.recovery_rules_file);
 	   exit(0);
 	}
@@ -825,7 +858,7 @@ int main( int argc, char** argv) {
 	    dumpstat("After parse_recovery_action", 0);
 #endif
 	    if(result) {
-		fprintf(stdout,"ERROR: parse_recovery_action function call failed.\n");
+		fprintf(stderr,"ERROR: parse_recovery_action function call failed.\n");
 		exit(0);
 	    }
 	}
@@ -844,15 +877,15 @@ int main( int argc, char** argv) {
     fflush(stdout);
     tstat = cleanup();
     if(tstat == TSTATUS_DONE) {
-	printf(" Monitoring finished.\n");
+	fprintf(stdout, " Monitoring finished.\n");
 	return 0;
     }
     else if (tstat == TSTATUS_ERROR) {
-	printf("Monitoring failed!\n");
+	fprintf(stdout, "Monitoring failed!\n");
 	return 1;
     }
     else {
-	printf("Monitoring failed with %d!\n",tstat);
+	fprintf(stdout, "Monitoring failed with %d!\n",tstat);
 	return 1;
     }
     return 0;

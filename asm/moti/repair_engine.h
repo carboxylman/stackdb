@@ -670,7 +670,8 @@ get_result_fail:
 
 int function_name_to_id(char * function_name, int* function_id, int* submodule_id){
 
-    if(!strncmp(function_name, "kill_process",12)) {
+    if(!strncmp(function_name, "kill_process",12) ||
+       !strncmp(function_name, "kill_parent_process",19)) {
 	*function_id = 0;
 	*submodule_id = 0;
 	return 0;
@@ -764,9 +765,23 @@ void report_anomalies(void) {
 	    function_name = cur_token;
 	    if (strcmp(function_name, "unknown-process") == 0 ||
 		strcmp(function_name, "wrong-process-cred") == 0 ||
-		strcmp(function_name, "wrong-process-hierarchies") == 0 ||
-		strcmp(function_name, "open-tcp-socket") == 0 ||
-		strcmp(function_name, "open-udp-socket") == 0) {
+		strcmp(function_name, "wrong-process-hierarchies") == 0) {
+		/* (FUNC (name "X") (pid N) (ppid M)) */
+		cur_token = (char *) strtok(NULL, delim);
+		cur_token = (char *) strtok(NULL, delim);
+		argv[argc++] = cur_token;
+		cur_token = (char *) strtok(NULL, delim);
+		cur_token = (char *) strtok(NULL, delim);
+		argv[argc++] = cur_token;
+		cur_token = (char *) strtok(NULL, delim);
+		cur_token = (char *) strtok(NULL, delim);
+		argv[argc++] = cur_token;
+		snprintf(msg, sizeof msg,
+			 "ANOM=%s NAME=%s PID=%s PPID=%s",
+			 function_name, argv[0], argv[1], argv[2]);
+	    }
+	    else if (strcmp(function_name, "open-tcp-socket") == 0 ||
+		     strcmp(function_name, "open-udp-socket") == 0) {
 		/* (FUNC (name "X") (pid N)) */
 		cur_token = (char *) strtok(NULL, delim);
 		cur_token = (char *) strtok(NULL, delim);
@@ -831,6 +846,91 @@ void report_anomalies(void) {
 	fprintf(stdout, "WARNING: could not truncate state_information/anomalies_detected.fac.\n");
 }
 #endif
+
+int start_a_process(char args[128][128], int fa, int argc)
+{
+    char *arg, *argbuf, arguments[500];
+    int nargc = 0;
+    int i, length, ret;
+
+    fprintf(stdout,"INFO: Starting a process with %d args.\n",
+	    argc-fa); 
+
+    memset(arguments, 0, sizeof(arguments));
+    argbuf = arguments;
+
+    /*
+     * We use "bash -c" to start the command so it has a
+     * "regular" parent in case we do kill_parent_process.
+     * Otherwise its parent would be the kernel's user-helper
+     * thread and we probably should not kill that!
+     */
+    arg = "/bin/bash";
+    length = strlen(arg);
+    memcpy(argbuf, &length, sizeof(int));
+    argbuf += sizeof(int);
+    memcpy(argbuf, arg, length + 1);
+    printf("INFO: real arg%d@%p: len=%d, arg=%s\n", nargc+1, argbuf, length, argbuf);
+    argbuf += length + 1;
+    nargc++;
+
+    arg = "-c";
+    length = strlen(arg);
+    memcpy(argbuf, &length, sizeof(int));
+    argbuf += sizeof(int);
+    memcpy(argbuf, arg, length + 1);
+    printf("INFO: real arg%d@%p: len=%d, arg=%s\n", nargc+1, argbuf, length, argbuf);
+    argbuf += length + 1;
+    nargc++;
+
+    /* make a string with all the command line args */
+    length = 0;
+    for(i = fa; i < argc; i++) {
+	/* XXX if arg contains an '=', assume it is env */
+	if (index(args[i], '='))
+	    break;
+	length += strlen(args[i]) + 1;
+    }
+    length--;
+    memcpy(argbuf, &length, sizeof(int));
+    argbuf = argbuf + sizeof(int);
+    char *tmp = argbuf;
+    for(i = fa; i < argc; i++) {
+	/* XXX if arg contains an '=', assume it is env */
+	if (index(args[i], '='))
+	    break;
+	length = strlen(args[i]);
+	memcpy(argbuf, &args[i], length);
+	argbuf += length;
+	*argbuf++ = ' ';
+    }
+    if (i > 0)
+	argbuf[-1] = '\0';
+    printf("INFO: real arg%d@%p: len=%d, arg=%s\n", nargc+1, tmp, length, tmp);
+    nargc++;
+
+    length = 0;
+    memcpy(argbuf, &length, sizeof(int));
+    argbuf += sizeof(int);
+
+    /* load the environment */
+    for( ; i < argc; i++) {
+	length = strlen(args[i]);
+	memcpy(argbuf, &length, sizeof(int));
+	argbuf += sizeof(int);
+	memcpy(argbuf, &args[i], length + 1);
+	printf("INFO: real arg%d@%p: len=%d, arg=%s\n", nargc+1, argbuf, length, argbuf);
+	argbuf += length + 1;
+	nargc++;
+    }
+    length = 0;
+    memcpy(argbuf, &length, sizeof(int));
+    argbuf += sizeof(int);
+		
+    ret = load_command_func(0, 6, arguments, nargc);
+
+    return ret;
+}
 
 int parse_recovery_action() {
 
@@ -898,7 +998,7 @@ int parse_recovery_action() {
 	    i++;
 	}
 
-	/* Map funtion name to appropriate funtion ID */
+	/* Map function name to appropriate funtion ID */
 	ret = function_name_to_id (function_name, &function_id, &submodule_id);
 	if(ret) {
 	    fprintf(stderr,"ERROR: Invalid function name : %s\n", function_name);
@@ -926,17 +1026,29 @@ int parse_recovery_action() {
 	unsigned long base;
 	long ix;
 	unsigned long address;
-	int pid, i, length;
+	int pid, ppid, i, length;
 	unsigned long bytes1, bytes2;
 	switch(submodule_id) 
 	{
 	    case 0 :        /* Function to kill a process */
 		int_ptr = (int *) arguments;
 		pid = atoi(args[1]);
+		if (strncmp(function_name, "kill_process", 12) == 0)
+		    ppid = -1;
+		else
+		    ppid = atoi(args[2]);
+
 		memcpy((void *)int_ptr, (void *) &pid, sizeof(int));
 		fprintf(stdout,"INFO: Invoking function to kill process %s : %d \n",
 			args[0], *int_ptr);
+	   again:
 		int_ptr++;
+
+		/* Don't ever kill pid 1 */
+		if (pid == 1) {
+		    fprintf(stdout,"INFO: Will not kill pid 1\n");
+		    break;
+		}
 
 		/* Only passing the pid to the recovery component */
 		argc = 1;
@@ -946,24 +1058,17 @@ int parse_recovery_action() {
 	    	
 		/* Get result of command execution */
 		result_ready();
-#if 0
-		if(get_result(&result)) {
-		    fprintf(stderr,"ERROR: Failed to result of command execution.\n");
-		}
 
-		// Display the result 
-		if(result.submodule_id != 0 || result.cmd_id !=0) {
-		    fprintf(stderr,"ERROR: Invalid result read.\n");
-		    continue;
+		/* Do parent too if requested */
+		if (ppid != -1) {
+		    int_ptr = (int *) arguments;
+		    memcpy((void *)int_ptr, (void *) &ppid, sizeof(int));
+		    fprintf(stdout,"INFO: Invoking function to kill parent of process %s : %d \n",
+			    args[0], *int_ptr);
+		    pid = ppid;
+		    ppid = -1;
+		    goto again;
 		}
-		unsigned int *int_ptr = (unsigned int*) result.argv;
-		if(result.exec_status) {
-		    fprintf(stdout,"INFO: Process with pid %d killed succesfully.\n", *int_ptr);
-		}
-		else {
-		   fprintf(stderr,"ERROR: Failed to kill process with pid %u.\n",*int_ptr);
-		}
-#endif
 		break;
 
 	    case 1 :
@@ -1097,40 +1202,7 @@ int parse_recovery_action() {
 		result_ready();
 		break;
 	    case 6: /*start a process */
-		char_ptr = (char *) arguments;
-		argc--;
-		fprintf(stdout,"INFO: Starting a process.\n"); 
-		/* load the command line arguments */
-		for(i = 0; i < argc; i++) {
-		    /* XXX if arg contains an '=', assume it is env */
-		    if (index(args[i], '='))
-			break;
-		    length = strlen(args[i]);
-		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
-		    char_ptr = char_ptr + sizeof(int);
-		    //fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
-		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char)) + 1);
-		    char_ptr =  char_ptr + (length * sizeof(char)) + 1; ;
-		}
-		length = 0;
-		memcpy((void *)char_ptr, (void*)&length, sizeof(int));
-		char_ptr = char_ptr + sizeof(int);
-
-		/* load the environment */
-		for( ; i < argc; i++) {
-		    length = strlen(args[i]);
-		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
-		    char_ptr = char_ptr + sizeof(int);
-		    //fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
-		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char))+1);
-		    char_ptr =  char_ptr + ((length * sizeof(char)) + 1);
-
-		}
-		length = 0;
-		memcpy((void *)char_ptr, (void*)&length, sizeof(int));
-		char_ptr = char_ptr + sizeof(int);
-		
-		ret = load_command_func(function_id,submodule_id,arguments,argc);
+		ret = start_a_process(args, 0, argc);
 		if(ret)
 		    goto fail;
 		result_ready();
@@ -1139,10 +1211,11 @@ int parse_recovery_action() {
 	    case 7: /* Trusted load of objects */
 		int_ptr = (int *) arguments;
 		pid = atoi(args[0]);
+		fprintf(stdout,"INFO: Invoking functions to do trusted restart of process : %d  in a trusted boot mode\n", pid);
+
 		memcpy((void *)int_ptr, (void *) &pid, sizeof(int));
 		int_ptr++;
-		fprintf(stdout,"INFO: Invoking function to restart process : %d  in a trusted boot mode\n", pid);
-		/* Only passing the pid to the recovery component */
+		fprintf(stdout,"INFO: Killing old process\n");
 		ret = load_command_func(0,0,arguments,1);
 		if(ret)
 		    goto fail;
@@ -1150,8 +1223,7 @@ int parse_recovery_action() {
 		/* Get result of command execution */
 		result_ready();
 		memset(arguments, 0, 500);
-		argc--;
-		//fprintf(stdout, "INFO: argc = %d\n",argc);
+
 		char_ptr = (char *) arguments;
 		memcpy((void *)char_ptr, (void*)&syscall_table_vm, sizeof(unsigned long));
 		char_ptr = char_ptr + sizeof(unsigned long);
@@ -1168,45 +1240,14 @@ int parse_recovery_action() {
 		    char_ptr =  char_ptr + (length * sizeof(char));
 		}
 
-		/* Invoke the sumodule to set up the hook */
+		/* Invoke the submodule to set up the hook */
+		fprintf(stdout,"INFO: Loading trusted objects\n");
 	    	ret = load_command_func(0,submodule_id,arguments, i - 1 );
 		if(ret)
 		    goto fail;
 		result_ready();
 
-
-	    	/* load the command line arguments */
-		memset(arguments, 0, 500);
-		i++;
-		char_ptr = (char *) arguments;		
-		for(; i< (argc - 3 ) ;i++) {
-		    length = strlen(args[i]);
-		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
-		    char_ptr = char_ptr + sizeof(int);
-		    //fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
-		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char))+ 1);
-		    char_ptr =  char_ptr + (length * sizeof(char)) + 1 ;
-		}
-		i = 0;
-		memcpy((void *)char_ptr, (void*)&i, sizeof(int));
-		char_ptr = char_ptr + sizeof(int);
-
-		/* load the environment */
-		for( i = (argc-3) ; i < argc; i++) {
-		    length = strlen(args[i]);
-		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
-		    char_ptr = char_ptr + sizeof(int);
-		    //fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
-		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char))+1);
-		    char_ptr =  char_ptr + ((length * sizeof(char)) + 1);
-
-		}
-		i = 0;
-		memcpy((void *)char_ptr, (void*)&i, sizeof(int));
-		char_ptr = char_ptr + sizeof(int);
-		
-		/*invoke the submodule to start the process */
-		ret = load_command_func(0, 6, arguments,argc);
+		ret = start_a_process(args, i+1, argc);
 		if(ret)
 		    goto fail;
 		
@@ -1225,58 +1266,31 @@ int parse_recovery_action() {
 		    goto fail;
 	    
 		result_ready();
-	
 		break;
+
 	    case 8: 	
 		int_ptr = (int *) arguments;
 		pid = atoi(args[0]);
+		fprintf(stdout,"INFO: Invoking functions to restart process : %d \n", pid);
+
 		memcpy((void *)int_ptr, (void *) &pid, sizeof(int));
 		int_ptr++;
-		fprintf(stdout,"INFO: Invoking function to restart  process : %d \n", pid);
-		/* Only passing the pid to the recovery component */
+		fprintf(stdout,"INFO: Killing old process\n");
 		ret = load_command_func(0,0,arguments,1);
 		if(ret)
 		    goto fail;
 	    	
 		/* Get result of command execution */
 		result_ready();
-		memset(arguments, 0, 500);
 		
 		/* restart a process */
-		char_ptr = (char *) arguments;
-		argc = argc - 1;
-		/* load the command line arguments */
-		for(i= 1; i< (argc - 3 ) ;i++) {
-		    length = strlen(args[i]);
-		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
-		    char_ptr = char_ptr + sizeof(int);
-		    //fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
-		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char)) + 1);
-		    char_ptr =  char_ptr + (length * sizeof(char)) + 1; ;
-		}
-		i = 0;
-		memcpy((void *)char_ptr, (void*)&i, sizeof(int));
-		char_ptr = char_ptr + sizeof(int);
-
-		/* load the environment */
-		for( i = (argc-3) ; i < argc; i++) {
-		    length = strlen(args[i]);
-		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
-		    char_ptr = char_ptr + sizeof(int);
-		    //fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
-		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char))+1);
-		    char_ptr =  char_ptr + ((length * sizeof(char)) + 1);
-
-		}
-		i = 0;
-		memcpy((void *)char_ptr, (void*)&i, sizeof(int));
-		char_ptr = char_ptr + sizeof(int);
-		
-		ret = load_command_func(0,6,arguments,argc);
+		ret = start_a_process(args, 1, argc);
 		if(ret)
 		    goto fail;
+
 		result_ready();
 		break;
+
 	    default:
 		fprintf(stderr,"ERROR: Invalid function called.\n");
 		break; 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011-2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -381,7 +381,8 @@ static int load_submodules(void *__unused) {
 			ack_ready++;
 		    }
 		} else {
-		    printk(KERN_INFO "ERROR: Sub Module not loaded.\n");
+		    printk(KERN_INFO "ERROR: Sub Module %d not loaded.\n",
+			   cmd->submodule_id);
 		}
 		printk(KERN_INFO "Waiting for the next command.\n");
 		break;
