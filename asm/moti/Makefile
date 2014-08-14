@@ -1,6 +1,6 @@
 # -*- mode: Makefile -*-
 ##
-## Copyright (c) 2013 The University of Utah
+## Copyright (c) 2013-2014 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -26,6 +26,7 @@ obj-m += killsocket_module.o
 obj-m += close_file_module.o
 obj-m += start_process_module.o
 obj-m += sled_object_module.o
+obj-m += trusted_load_module.o
 
 KDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)

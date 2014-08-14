@@ -71,8 +71,9 @@ int set_page_rw(unsigned long addr) {
     return change_page_attr(pg, 1, prot);
 #else
     unsigned int level;
+    pte_t *pte;
     printk(KERN_INFO " Now doing lookup \n");
-    pte_t *pte = lookup_address(addr, &level);
+    pte = lookup_address(addr, &level);
     if(pte == NULL) {
 	printk(KERN_INFO "lookup_address failed\n");
 	return -EINVAL;
@@ -117,8 +118,7 @@ asmlinkage long hooked_mmap(unsigned long addr, unsigned long len,
 			    unsigned long prot, unsigned long flags, 
 			    unsigned long fd, unsigned long off) {
 
-    struct task_struct *task;
-    char *file_name;
+    const char *file_name;
     int i;
     long ret;
     struct file *file = NULL;
@@ -132,7 +132,7 @@ asmlinkage long hooked_mmap(unsigned long addr, unsigned long len,
     for ( i= 0; i < no_of_objects ; i++) {
     	if(strstr(file_name, blocked_objects[i])) {
     	    printk(KERN_INFO "INFO: Trying to mmap the restricted object %s \n",blocked_objects[i]);
-    	    ret -ENOENT;
+    	    ret = -ENOENT;
     	    return ret;
     	}
     }
@@ -152,7 +152,7 @@ asmlinkage  int hooked_open(const char * name, int flags, int mode) {
     for ( i= 0; i < no_of_objects ; i++) {
 	if(strstr(name, blocked_objects[i])) {
 	   printk(KERN_INFO "INFO: Trying to load the restricted object %s \n",blocked_objects[i]);
-	    ret -EPERM;
+	    ret = -EPERM;
 	    return ret;
 	}
     }
@@ -198,7 +198,7 @@ static int add_hook_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     ack->cmd_id = cmd->cmd_id;
     ack->submodule_id = cmd->submodule_id;
 
-    printk(KERN_INFO " Setting the write permissions at %lx \n",
+    printk(KERN_INFO " Setting the write permissions at %p\n",
 	    system_call_table);
 
     /* store the original address of the system_call */
@@ -215,7 +215,7 @@ static int add_hook_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     system_call_table[__NR_open] = hooked_open;
     //system_call_table[__NR_mmap] = hooked_mmap;
 
-    printk(KERN_INFO "INFO: System call table entry changed to %lx.\n",
+    printk(KERN_INFO "INFO: System call table entry changed to %p.\n",
 	    hooked_open);
 
     printk(KERN_INFO " Reset the orignal permissions on the system call table. \n");
@@ -231,7 +231,7 @@ static int remove_hook_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 
     void **system_call_table = NULL;
     unsigned char *char_ptr = NULL;
-    int i, length;
+    int i;
 
 
     /* Parse the arguments passed */
@@ -239,7 +239,7 @@ static int remove_hook_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 
     /* Get the base address for the system.map table */
     char_ptr = (unsigned char*)cmd->argv;
-    system_call_table = *(unsigned long *)char_ptr;
+    system_call_table = *(void **)char_ptr;
     char_ptr = char_ptr + (sizeof(unsigned long));
 
     /* Set write permissions on the system call table */
@@ -249,7 +249,7 @@ static int remove_hook_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 
     system_call_table[__NR_open] = original_open;
    // system_call_table[__NR_mmap] = original_mmap;
-    printk(KERN_INFO "INFO: System call table entry changed to %lx.\n",
+    printk(KERN_INFO "INFO: System call table entry changed to %p.\n",
 	    hooked_open);
 
     printk(KERN_INFO " Reset the orignal permissions on the system call table. \n");
