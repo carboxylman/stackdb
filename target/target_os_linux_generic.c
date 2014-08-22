@@ -71,11 +71,12 @@ int os_linux_attach(struct target *target) {
 
     /*
      * First, parse out its version.  We look for the first number
-     * followed by a dot.
+     * followed by a '.' and preceded by a '-'.
      */
     slen = strlen(lstate->kernel_filename);
     for (i = 0; i < slen; ++i) {
-	if (isdigit(lstate->kernel_filename[i])
+	if ((i > 0 && lstate->kernel_filename[i - 1] == '-')
+	    && isdigit(lstate->kernel_filename[i])
 	    && (i + 1) < slen && lstate->kernel_filename[i + 1] == '.') {
 	    lstate->kernel_version = strdup(&lstate->kernel_filename[i]);
 	    break;
