@@ -723,7 +723,7 @@ int main( int argc, char** argv) {
 	    /* sleep long enough to let the other domain run */
 	    fprintf(stdout, "INFO: snapshot generation failed, trying again\n");
 	    ts.tv_sec = 0;
-	    ts.tv_nsec = (1000000000 / 100);
+	    ts.tv_nsec = (1000000000 / 10);
 	    nanosleep(&ts, NULL);
 	}
 #ifdef MEMUSESTATS
