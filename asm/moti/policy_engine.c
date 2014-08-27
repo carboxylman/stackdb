@@ -615,10 +615,17 @@ int main( int argc, char** argv) {
 
 #ifdef ENABLE_A3
     if (opts.a3_server != NULL) {
+	char domid[32], *id;
+
 	fprintf(stdout,"INFO: Initializing the A3 environment.\n");
 
+	sscanf(target_name(target), "domain(%s", domid);
+	if ((id = rindex(domid, ')')))
+	    *id = '\0';
+	fprintf(stdout,"INFO:   monitoring '%s'\n", domid);
+
 	/* XXX how do we extract the command line -m argument? */
-	if (a3_hc_init("a3-ncz", opts.a3_server, 0)) {
+	if (a3_hc_init(domid, opts.a3_server, 0)) {
 	    fprintf(stderr,"ERROR: Could not initialize A3\n");
 	    exit(0);
 	}
