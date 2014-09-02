@@ -206,6 +206,20 @@ typedef uint32_t REFCNT;
  * track ref holders.
  */
 
+/*
+ * NB for internal users that use refcnts to protect objects:
+ *
+ * If an object maintains its own refcnt, plus it allows other objects
+ * to take weak refs to it, when it frees itself after its refcnt goes
+ * to 0, it must protect itself from getting double-freed by RPUTW,
+ * which will get called on it as it frees its children.  So these
+ * functions just temporarily jack up its own refcnt temporarily to do
+ * that.  By the time these are called, its refcnt is already 0, or
+ * we're forcing a free.
+ */
+#define RWGUARD(x) ++((x)->refcnt)
+#define RWUNGUARD(x) --((x)->refcnt)
+
 #ifdef REF_DEBUG
 
 #include <glib.h>
@@ -393,8 +407,8 @@ extern GHashTable *grefwstab;
 	/* if ((x)->refcntw == 0) */					\
 	    /* asm("int $3");  */					\
 									\
-	(rc) = (--((x)->refcntw) == 0)					\
-	            ? objtype ## _free(x,0) : ((x)->refcntw);		\
+	(rc) = ((--((x)->refcntw) + (x)->refcnt) == 0)			\
+	        ? objtype ## _free(x,0) : ((x)->refcntw + (x)->refcnt);	\
 									\
 	if (_x == _hx) {						\
 	    if (!grefwstab)						\
@@ -610,6 +624,10 @@ extern GHashTable *grefwstab;
 #define RPUT(x,objtype,hx,rc)  ((rc) = (--((x)->refcnt) == 0)	\
 				           ? objtype ## _free(x,0) \
 				           : (x)->refcnt); \
+                               (rc) += 0
+#define RPUTW(x,objtype,hx,rc)  ((rc) = ((--((x)->refcntw) + (x)->refcnt) == 0) \
+				           ? objtype ## _free(x,0) \
+				           : (x)->refcntw + (x)->refcnt); \
                                (rc) += 0
 /*
  * Allows the caller to free the object even if the refcnt has gone
