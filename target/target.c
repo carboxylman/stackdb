@@ -2538,7 +2538,7 @@ struct value *target_load_symbol(struct target *target,
     char *rbuf;
     struct symbol *tdatatype;
     struct target_thread *tthread;
-    loctype_t rc;
+    int rc;
     ADDR word;
     struct location tloc;
     tid_t tid;
@@ -2589,8 +2589,8 @@ struct value *target_load_symbol(struct target *target,
     addr = 0;
     datatype = NULL;
     memset(&tloc,0,sizeof(tloc));
-    rc = target_lsymbol_resolve_location(target,tlctxt,lsymbol,0,
-					 flags,&tloc,&datatype,&range);
+    rc = (int)target_lsymbol_resolve_location(target,tlctxt,lsymbol,0,
+					      flags,&tloc,&datatype,&range);
     if (rc <= LOCTYPE_UNKNOWN) {
 	verror("symbol %s: failed to compute location\n",
 	       lsymbol_get_name(lsymbol));
@@ -4938,6 +4938,8 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
 	return NULL;
     }
 
+#define __SWC 64
+
     if (tlctxt->thread->target->ops->unwind_prev)
 	return tlctxt->thread->target->ops->unwind_prev(tlctxt);
 
@@ -4949,6 +4951,58 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
 
     tlctxtf = (struct target_location_ctxt_frame *) \
 	array_list_item(tlctxt->frames,tlctxt->lctxt->current_frame);
+
+    rsp = target_dw_reg_no(tlctxt->thread->target,CREG_SP);
+    errno = 0;
+    rc = location_ctxt_read_reg(tlctxt->lctxt,rsp,&sp);
+
+    if (vdebug_is_on(8,LA_TARGET,LF_TUNW)) {
+	vdebug(8,LA_TARGET,LF_TUNW,"    current stack:\n");
+	char *pp;
+	char *tmp;
+	tmp = malloc(__SWC * tlctxt->thread->target->wordsize);
+	target_read_addr(tlctxt->thread->target,sp,
+			 __SWC * tlctxt->thread->target->wordsize,
+			 (unsigned char *)tmp);
+	pp = tmp + (__SWC - 1) * tlctxt->thread->target->wordsize;
+	while (pp >= tmp) {
+	    if (tlctxt->thread->target->wordsize == 8) {
+		vdebug(8,LA_TARGET,LF_TUNW,"      0x%"PRIxADDR" == %"PRIxADDR"\n",
+		       sp + (pp - tmp),*(uint64_t *)pp);
+	    }
+	    else {
+		vdebug(8,LA_TARGET,LF_TUNW,"      0x%"PRIxADDR" == %"PRIxADDR"\n",
+		       sp + (pp - tmp),(ADDR)*(uint32_t *)pp);
+	    }
+	    pp -= tlctxt->thread->target->wordsize;
+	}
+	vdebug(8,LA_TARGET,LF_TUNW,"\n");
+	free(tmp);
+    }
+    if (vdebug_is_on(8,LA_TARGET,LF_TUNW)) {
+	vdebug(8,LA_TARGET,LF_TUNW,"    current (beyond) stack:\n");
+	char *pp;
+	char *tmp;
+	tmp = malloc(__SWC * tlctxt->thread->target->wordsize);
+	target_read_addr(tlctxt->thread->target,
+			 sp - __SWC * tlctxt->thread->target->wordsize,
+			 __SWC * tlctxt->thread->target->wordsize,
+			 (unsigned char *)tmp);
+	pp = tmp + (__SWC - 1) * tlctxt->thread->target->wordsize;
+	while (pp >= tmp) {
+	    if (tlctxt->thread->target->wordsize == 8) {
+		vdebug(8,LA_TARGET,LF_TUNW,"      0x%"PRIxADDR" == %"PRIxADDR"\n",
+		       sp - __SWC * tlctxt->thread->target->wordsize + (pp - tmp),*(uint64_t *)pp);
+	    }
+	    else {
+		vdebug(8,LA_TARGET,LF_TUNW,"      0x%"PRIxADDR" == %"PRIxADDR"\n",
+		       sp - __SWC * tlctxt->thread->target->wordsize + (pp - tmp),(ADDR)*(uint32_t *)pp);
+	    }
+	    pp -= tlctxt->thread->target->wordsize;
+	}
+	vdebug(8,LA_TARGET,LF_TUNW,"\n");
+	free(tmp);
+    }
 
     retaddr = 0;
     if (tlctxtf->bsymbol) {
@@ -4975,20 +5029,6 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
 	    vwarn("could not read %%bp to manually unwind; halting!\n");
 	    return NULL;
 	}
-	rsp = target_dw_reg_no(tlctxt->thread->target,CREG_SP);
-	errno = 0;
-	rc = location_ctxt_read_reg(tlctxt->lctxt,rsp,&sp);
-
-	vdebug(8,LA_TARGET,LF_TUNW,"    current stack:\n");
-	for (i = 32; i >= -8; --i) {
-	    target_read_addr(tlctxt->thread->target,
-			     sp + i * tlctxt->thread->target->wordsize,
-			     tlctxt->thread->target->wordsize,
-			     (unsigned char *)&tmp);
-	    vdebug(8,LA_TARGET,LF_TUNW,"      0x%"PRIxADDR" == %"PRIxADDR"\n",
-		   sp + i * tlctxt->thread->target->wordsize,tmp);
-	}
-	vdebug(8,LA_TARGET,LF_TUNW,"\n");
 
 	/* Get the old bp and retaddr. */
 	target_read_addr(tlctxt->thread->target,bp + 16,sizeof(ADDR),
