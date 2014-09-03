@@ -86,13 +86,13 @@ void cleanup() {
 	    if (!ots[j])
 		continue;
 	    target_close(ots[j]);
-	    target_free(ots[j]);
+	    target_finalize(ots[j]);
 	    ots[j] = NULL;
 	}
     }
 
     target_close(t);
-    target_free(t);
+    target_finalize(t);
 
     target_free_spec(tspec);
 
@@ -281,7 +281,7 @@ error_t bt_argp_parse_opt(int key, char *arg,struct argp_state *state) {
 	ospec->spec = target_argp_driver_parse(NULL,NULL,
 					       array_list_len(argv_list) - 1,
 					       (char **)argv_list->list,
-					       TARGET_TYPE_PHP | TARGET_TYPE_XEN_PROCESS,0);
+					       TARGET_TYPE_PHP | TARGET_TYPE_OS_PROCESS,0);
 	if (!ospec->spec) {
 	    verror("could not parse overlay spec %d!\n",opts->ospecs_len);
 	    array_list_free(argv_list);
@@ -320,7 +320,8 @@ int main(int argc,char **argv) {
     memset(&opts,0,sizeof(opts));
 
     tspec = target_argp_driver_parse(&bt_argp,&opts,argc,argv,
-				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN,1);
+				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN
+				         | TARGET_TYPE_GDB,1);
 
     if (!tspec) {
 	verror("could not parse target arguments!\n");
@@ -357,7 +358,7 @@ int main(int argc,char **argv) {
 
     /*
      * Make a permanent copy so we can print useful messages after
-     * target_free.
+     * target_finalize.
      */
     targetstr = target_name(t);
     if (!targetstr) 

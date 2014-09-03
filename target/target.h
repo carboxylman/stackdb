@@ -19,16 +19,17 @@
 #ifndef __TARGET_H__
 #define __TARGET_H__
 
+#include "config.h"
+
 #include <stdint.h>
 #include <inttypes.h>
 #include <glib.h>
 
+#include "common.h"
+#include "object.h"
 #include "debugpred.h"
-#include "list.h"
 #include "alist.h"
-#include "config.h"
 #include "log.h"
-
 #include "memcache.h"
 #include "target_api.h"
 #include "dwdebug.h"
@@ -40,13 +41,14 @@
 #define LOGDUMPBSYMBOL(dl,lt,s) \
     vdebugc((dl),(lt), \
 	    "bsymbol(lsymbol(%s,%s,%"PRIxSMOFFSET";chainlen=%d),"	\
-	    "region=(%s(space=%s)))",					\
+	    "region=(%s(space=%s:0x%"PRIxADDR")))",			\
 	    symbol_get_name((s)->lsymbol->symbol),			\
 	    SYMBOL_TYPE((s)->lsymbol->symbol->type),			\
 	    (s)->lsymbol->symbol->ref,					\
 	    array_list_len((s)->lsymbol->chain),			\
 	    (s)->region ? (s)->region->name : NULL,			\
-	    (s)->region ? (s)->region->space->idstr : NULL);
+	    (s)->region ? (s)->region->space->name : NULL,		\
+	    (s)->region ? (s)->region->space->tag : 0);
 
 #define LOGDUMPBSYMBOL_NL(dl,lt,s) \
     LOGDUMPBSYMBOL((dl),(lt),(s)); \
@@ -54,13 +56,14 @@
 
 #define ERRORDUMPBSYMBOL(s) \
     verrorc("bsymbol(lsymbol(%s,%s,%"PRIxSMOFFSET";chainlen=%d),"	\
-	    "region=(%s(space=%s)))",					\
+	    "region=(%s(space=%s:0x%"PRIxADDR")))",			\
 	    symbol_get_name((s)->lsymbol->symbol),			\
 	    SYMBOL_TYPE((s)->lsymbol->symbol->type),			\
 	    (s)->lsymbol->symbol->ref,					\
 	    array_list_len((s)->lsymbol->chain),			\
 	    (s)->region ? (s)->region->name : NULL,			\
-	    (s)->region ? (s)->region->space->idstr : NULL);
+	    (s)->region ? (s)->region->space->name : NULL,		\
+	    (s)->region ? (s)->region->space->tag : 0);
 
 #define ERRORDUMPBSYMBOL_NL(s) \
     ERRORDUMPBSYMBOL((s)); \
@@ -73,20 +76,6 @@ struct addrspace;
 struct memregion;
 struct memrange;
 struct value;
-
-typedef enum {
-    REGION_TYPE_UNKNOWN        = 0,
-    REGION_TYPE_HEAP           = 1,
-    REGION_TYPE_STACK          = 2,
-    REGION_TYPE_VDSO           = 3,
-    REGION_TYPE_VSYSCALL       = 4,
-    REGION_TYPE_ANON           = 5,
-    REGION_TYPE_MAIN           = 6,
-    REGION_TYPE_LIB            = 7,
-    __REGION_TYPE_MAX,
-} region_type_t;
-extern char *REGION_TYPE_STRINGS[];
-#define REGION_TYPE(n) (((n) < __REGION_TYPE_MAX) ? REGION_TYPE_STRINGS[(n)] : NULL)
 
 /**
  ** Target functions.
@@ -112,6 +101,9 @@ unsigned long target_generic_fd_write(int fd,
 int target_associate_debugfile(struct target *target,
 			       struct memregion *region,
 			       struct debugfile *debugfile);
+
+int target_attach_space(struct target *target,struct addrspace *space);
+int target_detach_space(struct target *target,struct addrspace *space);
 
 /*
  * Utility function for targets and personalities to set a register
@@ -234,34 +226,6 @@ int target_personality_attach(struct target *target,
 			      char *personality,char *personality_lib);
 int target_personality_register(char *personality,target_personality_t pt,
 				struct target_personality_ops *ptops,void *pops);
-
-int target_personality_init(struct target *target);
-int target_personality_postloadinit(struct target *target);
-int target_personality_postopened(struct target *target);
-
-int target_personality_handle_exception(struct target *target);
-
-struct target_thread *target_personality_load_current_thread(struct target *target,
-							     int force);
-struct target_thread *target_personality_load_thread(struct target *target,
-						     tid_t tid,int force);
-int target_personality_flush_current_thread(struct target *target);
-int target_personality_flush_thread(struct target *target,tid_t tid);
-struct array_list *target_personality_list_available_tids(struct target *target);
-int target_personality_load_available_threads(struct target *target,int force);
-int target_personality_invalidate_thread(struct target *target,
-					 struct target_thread *tthread);
-int target_personality_thread_snprintf(struct target_thread *tthread,
-				       char *buf,int bufsiz,
-				       int detail,char *sep,char *key_val_sep);
-/*
-struct target_thread *target_personality_load_global_thread(struct target *target);
-int target_personality_flush_global_thread(struct target *target);
-*/
-
-int target_personality_set_active_probing(struct target *target,
-					  active_probe_flags_t flags);
-
 
 /**
  ** Overlays.
@@ -448,6 +412,26 @@ int target_insert_probepoint(struct target *target,
 int target_remove_probepoint(struct target *target,
 			     struct target_thread *tthread,
 			     struct probepoint *probepoint);
+int target_attach_space(struct target *target,struct addrspace *space);
+int target_detach_space(struct target *target,struct addrspace *space);
+
+/**
+ ** Targets.
+ **/
+target_status_t target_get_status(struct target *target);
+void target_set_status(struct target *target,target_status_t status);
+
+/**
+ * Propagates object tracking flags to a target.  Nobody should call
+ * this directly; the OBJ*() macros in object.h call it.
+ */
+int target_obj_flags_propagate(struct target *target,
+			       obj_flags_t orf,obj_flags_t nandf);
+/**
+ * Frees a target.  Nobody should call this directly; the refcnt system
+ * calls it.  Internal library users should call RHOLD/RPUT instead.
+ */
+REFCNT target_free(struct target *target,int force);
 
 /**
  ** Threads.
@@ -458,15 +442,14 @@ struct target_thread *target_create_thread(struct target *target,tid_t tid,
 void target_reuse_thread_as_global(struct target *target,
 				   struct target_thread *thread);
 void target_detach_thread(struct target *target,struct target_thread *tthread);
-void target_delete_thread(struct target *target,struct target_thread *thread,
-			  int nohashdelete);
+int target_thread_obj_flags_propagate(struct target_thread *tthread,
+				      obj_flags_t orf,obj_flags_t nandf);
+REFCNT target_thread_free(struct target_thread *tthread,int force);
 
 int target_invalidate_thread(struct target *target,
 			     struct target_thread *tthread);
 int target_invalidate_all_threads(struct target *target);
 
-target_status_t target_get_status(struct target *target);
-void target_set_status(struct target *target,target_status_t status);
 void target_thread_set_status(struct target_thread *tthread,
 			      thread_status_t status);
 void target_tid_set_status(struct target *target,tid_t tid,
@@ -475,7 +458,7 @@ void target_tid_set_status(struct target *target,tid_t tid,
 /**
  ** Address spaces.
  **/
-struct addrspace *addrspace_create(struct target *target,char *name,int id);
+struct addrspace *addrspace_create(struct target *target,char *name,ADDR tag);
 struct memregion *addrspace_find_region(struct addrspace *space,char *name);
 struct memregion *addrspace_match_region_name(struct addrspace *space,
 					      region_type_t rtype,char *name);
@@ -484,6 +467,9 @@ struct memregion *addrspace_match_region_start(struct addrspace *space,
 int addrspace_find_range_real(struct addrspace *space,ADDR addr,
 			      struct memregion **region_saveptr,
 			      struct memrange **range_saveptr);
+int addrspace_detach_region(struct addrspace *space,struct memregion *region);
+void addrspace_obj_flags_propagate(struct addrspace *addrspace,
+				   obj_flags_t orf,obj_flags_t nandf);
 REFCNT addrspace_free(struct addrspace *space,int force);
 void addrspace_dump(struct addrspace *space,struct dump_info *ud);
 
@@ -501,10 +487,12 @@ ADDR memregion_relocate(struct memregion *region,ADDR obj_addr,
 			struct memrange **range_saveptr);
 ADDR memregion_unrelocate(struct memregion *region,ADDR real_addr,
 			  struct memrange **range_saveptr);
-struct target *memregion_target(struct memregion *region);
 struct memrange *memregion_match_range(struct memregion *region,ADDR start);
 void memregion_dump(struct memregion *region,struct dump_info *ud);
-void memregion_free(struct memregion *region);
+int memregion_detach_range(struct memregion *region,struct memrange *range);
+void memregion_obj_flags_propagate(struct memregion *region,
+				   obj_flags_t orf,obj_flags_t nandf);
+REFCNT memregion_free(struct memregion *region,int force);
 
 struct memrange *memrange_create(struct memregion *region,
 				   ADDR start,ADDR end,OFFSET offset,
@@ -516,7 +504,9 @@ ADDR memrange_relocate(struct memrange *range,ADDR obj);
 struct target *memrange_target(struct memrange *range);
 struct addrspace *memrange_space(struct memrange *range);
 void memrange_dump(struct memrange *range,struct dump_info *ud);
-void memrange_free(struct memrange *range);
+void memrange_obj_flags_propagate(struct memrange *range,
+				  obj_flags_t orf,obj_flags_t nandf);
+REFCNT memrange_free(struct memrange *range,int force);
 
 struct mmap_entry *target_lookup_mmap_entry(struct target *target,
 					    ADDR base_addr);
@@ -578,15 +568,6 @@ void target_thread_gkv_remove(struct target *target,tid_t tid,char *key);
 /* NB: internal. */
 void target_thread_gkv_destroy(struct target *target,
 			       struct target_thread *tthread);
-
-/**
- ** State changes.
- **/
-void target_add_state_change(struct target *target,tid_t tid,
-			     target_state_change_type_t chtype,
-			     unsigned long code,unsigned long data,
-			     ADDR start,ADDR end,char *msg);
-void target_clear_state_changes(struct target *target);
 
 /**
  ** Probes and actions.
@@ -737,6 +718,132 @@ int disasm_get_prologue_stack_size(struct target *target,
 #endif
 
 /**
+ ** Target/Personality API wrappers.
+ **/
+#define SAFE_PERSONALITY_OP_WARN(op,outvar,expoutval,target,...)	\
+    do {								\
+	if (target->personality_ops && target->personality_ops->op) {	\
+	    vdebug(5,LA_TARGET,LF_TARGET,				\
+		   "target(%s): personality_ops->" #op "\n",		\
+		   target->name);					\
+	    outvar = target->personality_ops->op(target, ## __VA_ARGS__); \
+	    if (outvar != expoutval) {					\
+		vwarnopt(5,LA_TARGET,LF_TARGET,				\
+			 "target(%s): personality_ops->" #op " failed!\n", \
+			 target->name);					\
+		return outvar;						\
+	    }								\
+	}								\
+	else								\
+	    outvar = expoutval;						\
+    } while (0);
+
+#define SAFE_PERSONALITY_OP_WARN_NORET(op,outvar,expoutval,target,...)	\
+    do {								\
+	if (target->personality_ops && target->personality_ops->op) {	\
+	    vdebug(5,LA_TARGET,LF_TARGET,				\
+		   "target(%s): personality_ops->" #op "\n",	\
+		   target->name);					\
+	    outvar = target->personality_ops->op(target, ## __VA_ARGS__); \
+	    if (outvar != expoutval) {					\
+		vwarnopt(5,LA_TARGET,LF_TARGET,				\
+			 "target(%s): personality_ops->" #op " failed!\n", \
+			 target->name);					\
+	    }								\
+	}								\
+	else								\
+	    outvar = expoutval;						\
+    } while (0);
+
+#define SAFE_PERSONALITY_OP(op,outvar,defoutval,target,...)		\
+    do {								\
+	if (target->personality_ops && target->personality_ops->op) {	\
+	    vdebug(5,LA_TARGET,LF_TARGET,				\
+		   "target(%s): personality_ops->" #op "\n",		\
+		   target->name);					\
+	    outvar = target->personality_ops->op(target, ## __VA_ARGS__); \
+	}								\
+	else								\
+	    outvar = defoutval;						\
+    } while (0);
+
+#define SAFE_TARGET_OP(op,outvar,expoutval,target,...)			\
+    do {								\
+	if (target->ops && target->ops->op) {	\
+	    vdebug(5,LA_TARGET,LF_TARGET,				\
+		   "target(%s): ops->" #op "\n",			\
+		   target->name);					\
+	    outvar = target->ops->op(target, ## __VA_ARGS__);		\
+	    if (outvar != expoutval) {					\
+		vwarnopt(5,LA_TARGET,LF_TARGET,				\
+			 "target(%s): ops->" #op " failed!\n",		\
+			 target->name);					\
+		return outvar;						\
+	    }								\
+	}								\
+	else if (target->personality_ops && target->personality_ops->op) { \
+	    vdebug(5,LA_TARGET,LF_TARGET,				\
+		   "target(%s): personality_ops->" #op "\n",		\
+		   target->name);					\
+	    outvar = target->personality_ops->op(target, ## __VA_ARGS__); \
+	    if (outvar != expoutval) {					\
+		vwarnopt(5,LA_TARGET,LF_TARGET,				\
+			 "target(%s): personality_ops->" #op " failed!\n", \
+			 target->name);					\
+		return outvar;						\
+	    }								\
+	}								\
+	else								\
+	    outvar = expoutval;						\
+    } while (0);
+
+#define SAFE_TARGET_OP_WARN_NORET(op,outvar,expoutval,target,...)			\
+    do {								\
+	if (target->ops && target->ops->op) {	\
+	    vdebug(5,LA_TARGET,LF_TARGET,				\
+		   "target(%s): ops->" #op "\n",			\
+		   target->name);					\
+	    outvar = target->ops->op(target, ## __VA_ARGS__);		\
+	    if (outvar != expoutval) {					\
+		vwarnopt(5,LA_TARGET,LF_TARGET,				\
+			 "target(%s): ops->" #op " failed!\n",		\
+			 target->name);					\
+	    }								\
+	}								\
+	else if (target->personality_ops && target->personality_ops->op) { \
+	    vdebug(5,LA_TARGET,LF_TARGET,				\
+		   "target(%s): personality_ops->" #op "\n",		\
+		   target->name);					\
+	    outvar = target->personality_ops->op(target, ## __VA_ARGS__); \
+	    if (outvar != expoutval) {					\
+		vwarnopt(5,LA_TARGET,LF_TARGET,				\
+			 "target(%s): personality_ops->" #op " failed!\n", \
+			 target->name);					\
+	    }								\
+	}								\
+	else								\
+	    outvar = expoutval;						\
+    } while (0);
+
+#define SAFE_TARGET_ONLY_OP(op,outvar,expoutval,target,...)		\
+    do {								\
+	if (target->ops && target->ops->op) {				\
+	    vdebug(5,LA_TARGET,LF_TARGET,				\
+		   "target(%s): ops->" #op "\n",			\
+		   target->name);					\
+	    outvar = target->ops->op(target, ## __VA_ARGS__);		\
+	    if (outvar != expoutval) {					\
+		vwarnopt(5,LA_TARGET,LF_TARGET,				\
+			 "target(%s): ops->" #op " failed!\n",		\
+			 target->name);					\
+		return outvar;						\
+	    }								\
+	}								\
+	else 								\
+	    outvar = expoutval;						\
+    } while (0);
+
+/**
  ** Data structure definitions.
  **/
 /*
@@ -759,14 +866,11 @@ int disasm_get_prologue_stack_size(struct target *target,
  */
 
 struct addrspace {
-    /* name:id:pid */
-    char *idstr;
+    /* A backref to the target containing this address space. */
+    struct target *target;
 
+    ADDR tag;
     char *name;
-    int id;
-
-    /* Our member node on the global spaces list */
-    struct list_head space;
 
     /*
      * The regions contained in this address space.
@@ -777,13 +881,11 @@ struct addrspace {
      * a single giant kernel region, but then to have "sub" regions for
      * modules.  Process address spaces do not need this.
      */
-    struct list_head regions;
-
-    /* A backref to the target containing this address space. */
-    struct target *target;
+    GList *regions;
 
     REFCNT refcnt;
     REFCNT refcntw;
+    obj_flags_t obj_flags;
 };
 
 /*
@@ -811,8 +913,13 @@ struct memregion {
 
     char *name;
     region_type_t type;
-    int8_t exists:1,
-	   new:1;
+
+    obj_flags_t obj_flags;
+    REFCNT refcnt;
+    REFCNT refcntw;
+
+    /* The ranges contained in this region. */
+    GList *ranges;
 
     /*
      * Debugfiles associated with this region.
@@ -827,21 +934,6 @@ struct memregion {
      * A ref to the primary binfile
      */
     struct binfile *binfile;
-
-    /* This is an identifier that must be changed every time this
-     * memrange changes status, and something about it has been
-     * reloaded.  For instance, if it is now using different memory
-     * addresses than when we were last resolved symbols to locations
-     * inside of it, we need those symbols to be re-resolved before
-     * loading them again.
-     */
-    uint32_t stamp;
-
-    /* The list node linking this into the addrspace. */
-    struct list_head region;
-
-    /* The ranges contained in this region. */
-    struct list_head ranges;
 
     /*
      * This is the base physical address the region's code got loaded
@@ -877,14 +969,10 @@ struct memrange {
     ADDR start;
     ADDR end;
     ADDR offset;
-
     unsigned int prot_flags;
-    int8_t same:1,
-	   updated:1,
-	   new:1;
 
-    /* The list node linking this into the region. */
-    struct list_head range;
+    obj_flags_t obj_flags;
+    REFCNT refcnt;
 };
 
 /*
@@ -908,7 +996,6 @@ struct bsymbol {
     //struct memrange *range;
 
     REFCNT refcnt;
-    REFCNT refcntw;
 };
 
 #endif

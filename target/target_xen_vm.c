@@ -40,6 +40,8 @@
 #include <argp.h>
 
 #include "common.h"
+#include "glib_wrapper.h"
+#include "object.h"
 #include "arch.h"
 #include "arch_x86.h"
 #include "arch_x86_64.h"
@@ -49,6 +51,7 @@
 #include "dwdebug_priv.h"
 #include "target_api.h"
 #include "target.h"
+#include "target_event.h"
 #include "target_arch_x86.h"
 #include "target_os.h"
 #include "probe_api.h"
@@ -93,6 +96,7 @@ static int xen_vm_set_active_probing(struct target *target,
 				     active_probe_flags_t flags);
 
 static target_status_t xen_vm_handle_exception(struct target *target,
+					       target_exception_flags_t flags,
 					       int *again,void *priv);
 
 static struct target *
@@ -150,7 +154,8 @@ static int xen_vm_flush_current_thread(struct target *target);
 static int xen_vm_flush_all_threads(struct target *target);
 static int xen_vm_invalidate_thread(struct target *target,
 				    struct target_thread *tthread);
-static int xen_vm_thread_snprintf(struct target_thread *tthread,
+static int xen_vm_thread_snprintf(struct target *target,
+				  struct target_thread *tthread,
 				  char *buf,int bufsiz,
 				  int detail,char *sep,char *key_val_sep);
 /*
@@ -927,7 +932,7 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	    target->state = NULL;
     }
     if (target)
-	target_free(target);
+	target_finalize(target);
 
     return NULL;
 }
@@ -1045,7 +1050,7 @@ static struct target_thread *__xen_vm_load_cached_thread(struct target *target,
     if (!tthread)
 	return NULL;
 
-    if (!tthread->valid)
+    if (!OBJVALID(tthread))
 	return xen_vm_load_thread(target,tid,0);
 
     return tthread;
@@ -1126,7 +1131,7 @@ static struct target_thread *xen_vm_load_thread(struct target *target,
 	 * current thread if it's not loaded.  So... see
 	 * _load_current_thread for more...
 	 */
-	if (target->global_thread->valid)
+	if (OBJVALID(target->global_thread))
 	    return target->global_thread;
 	else {
 	    xen_vm_load_current_thread(target,force);
@@ -1150,7 +1155,7 @@ static struct target_thread *xen_vm_load_thread(struct target *target,
      * valid, or if the thread is in our cache and is valid.
      */
     else if (target->current_thread 
-	     && target->current_thread->valid
+	     && OBJVALID(target->current_thread)
 	     && target->current_thread->tid == tid) {
 	return xen_vm_load_current_thread(target,force);
     }
@@ -1158,7 +1163,7 @@ static struct target_thread *xen_vm_load_thread(struct target *target,
      * Otherwise, try to lookup thread @tid.
      */
     else if ((tthread = target_lookup_thread(target,tid))) {
-	if (tthread->valid && !force) {
+	if (OBJVALID(tthread) && !force) {
 	    vdebug(4,LA_TARGET,LF_XV,"did not need to load thread; copy is valid\n");
 	    return tthread;
 	}
@@ -1173,7 +1178,9 @@ static struct target_thread *xen_vm_load_thread(struct target *target,
      * This means we must ask the personality to do it, because only the
      * personality can interpret the kernel stack.
      */
-    return target_personality_load_thread(target,tid,force);
+    SAFE_PERSONALITY_OP_WARN_NORET(load_thread,tthread,NULL,target,tid,force);
+
+    return tthread;
 }
 
 #ifdef __x86_64__
@@ -1582,14 +1589,14 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
      * wants, and they don't want to force a reload, give them that.
      */
     if (globalonly && !force
-	&& target->global_thread && target->global_thread->valid)
+	&& target->global_thread && OBJVALID(target->global_thread))
 	return target->global_thread;
     /*
      * Otherwise, if the current thread is valid, and we're not forcing
      * a reload, give them the current thread.
      */
     else if (!globalonly && !force
-	     && target->current_thread && target->current_thread->valid)
+	     && target->current_thread && OBJVALID(target->current_thread))
 	return target->current_thread;
 
     if (target_status(target) != TSTATUS_PAUSED) {
@@ -1615,7 +1622,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     /*
      * Only need to call xc if we haven't loaded this thread.
      */
-    if (!target->global_thread->valid) {
+    if (!OBJVALID(target->global_thread)) {
 	if (__xen_vm_cpu_getcontext(target,&gtstate->context) < 0) {
 	    verror("could not get vcpu context for %d\n",xstate->id);
 	    goto errout;
@@ -1642,7 +1649,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     cpl = 0x3 & gtstate->context.user_regs.cs;
 
     /* Keep loading the global thread... */
-    if(!target->global_thread->valid) {
+    if(!OBJVALID(target->global_thread)) {
 	if (__xen_vm_in_userspace(target,cpl,ipval))
 	    target->global_thread->tidctxt = THREAD_CTXT_USER;
 	else
@@ -1675,7 +1682,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	 * technically still loading it, mark it as valid now... it'll
 	 * be fully valid shortly!
 	 */
-	target->global_thread->valid = 1;
+	OBJSVALID(target->global_thread);
 	target_thread_set_status(target->global_thread,THREAD_STATUS_RUNNING);
     }
 
@@ -1698,7 +1705,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     /*
      * Ask the personality to detect our current thread.
      */
-    tthread = target_personality_load_current_thread(target,force);
+    SAFE_PERSONALITY_OP(load_current_thread,tthread,NULL,target,force);
 
     /*
      * Set the current thread (might be a real thread, or the global
@@ -1749,7 +1756,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	   gtstate->context.debugreg[6],gtstate->context.debugreg[7]);
 
     /* Mark its state as valid in our cache. */
-    tthread->valid = 1;
+    OBJSVALID(tthread);
 
     return tthread;
 
@@ -1782,7 +1789,7 @@ static struct target_thread *xen_vm_load_current_thread(struct target *target,
 tid_t xen_vm_gettid(struct target *target) {
     struct target_thread *tthread;
 
-    if (target->current_thread && target->current_thread->valid)
+    if (target->current_thread && OBJVALID(target->current_thread))
 	return target->current_thread->tid;
 
     tthread = xen_vm_load_current_thread(target,0);
@@ -2260,8 +2267,6 @@ int xen_vm_virq_or_vmp_read(int *vmid) {
 static int xen_vm_attach_internal(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct xen_domctl domctl;
-    struct addrspace *space;
-    struct addrspace *tspace;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
     struct xen_vm_spec *xspec;
@@ -2354,7 +2359,7 @@ static int xen_vm_attach_internal(struct target *target) {
 	xtstate->context.debugreg[6] = 0;
 	xtstate->context.debugreg[7] = 0;
 
-	tthread->dirty = 1;
+	OBJSDIRTY(tthread);
 
 	if (target->current_thread) {
 	    tthread = target->current_thread;
@@ -2377,7 +2382,7 @@ static int xen_vm_attach_internal(struct target *target) {
 	    xtstate->context.debugreg[6] = 0;
 	    xtstate->context.debugreg[7] = 0;
 
-	    target->current_thread->dirty = 1;
+	    OBJSDIRTY(target->current_thread);
 	}
     }
 
@@ -2454,6 +2459,8 @@ static int xen_vm_fini(struct target *target) {
     if (target->opened) 
 	xen_vm_detach(target);
 
+
+
     if (xstate->vmpath)
 	free(xstate->vmpath);
     if (xstate->kernel_filename)
@@ -2480,12 +2487,8 @@ static int xen_vm_kill(struct target *target,int sig) {
  */
 static int xen_vm_loadspaces(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
-    struct addrspace *space = addrspace_create(target,"kernel",xstate->id);
 
-    space->target = target;
-    RHOLD(space,target);
-
-    list_add_tail(&space->space,&target->spaces);
+    addrspace_create(target,"kernel",xstate->id);
 
     return 0;
 }
@@ -2571,11 +2574,7 @@ static int xen_vm_loaddebugfiles(struct target *target,
 	goto out;
 
     if (target_associate_debugfile(target,region,debugfile)) {
-	debugfile_release(debugfile);
 	goto out;
-    }
-    else {
-	debugfile_release(debugfile);
     }
 
     /*
@@ -2638,9 +2637,8 @@ static int xen_vm_postloadinit(struct target *target) {
 	target->ipregno = REG_X86_EIP;
     }
 
-    rc = target_personality_postloadinit(target);
-    if (rc < 0)
-	return rc;
+    SAFE_PERSONALITY_OP_WARN(init,rc,0,target);
+    SAFE_PERSONALITY_OP_WARN(postloadinit,rc,0,target);
 
     char *start = (char *)g_hash_table_lookup(target->config,
 					      "OS_KERNEL_START_ADDR");
@@ -2651,12 +2649,16 @@ static int xen_vm_postloadinit(struct target *target) {
 }
 
 static int xen_vm_postopened(struct target *target) {
-    return target_personality_postopened(target);
+    int rc;
+    SAFE_PERSONALITY_OP_WARN(postopened,rc,0,target);
+    return rc;
 }
 
 static int xen_vm_set_active_probing(struct target *target,
 				     active_probe_flags_t flags) {
-    return target_personality_set_active_probing(target,flags);
+    int rc;
+    SAFE_PERSONALITY_OP_WARN(set_active_probing,rc,0,target,flags);
+    return rc;
 }
 
 static struct target *
@@ -2669,13 +2671,14 @@ xen_vm_instantiate_overlay(struct target *target,
     tid_t ltid;
     struct target_thread *leader;
 
-    if (spec->target_type != TARGET_TYPE_XEN_PROCESS) {
+    if (spec->target_type != TARGET_TYPE_OS_PROCESS) {
 	errno = EINVAL;
 	return NULL;
     }
 
     errno = 0;
-    thip = target_read_reg(target,tthread->tid,target->ipregno);
+    thip = target_read_reg_ctxt(target,tthread->tid,THREAD_CTXT_USER,
+				target->ipregno);
     if (errno) {
 	verror("could not read IP for tid %"PRIiTID"!!\n",tthread->tid);
 	return NULL;
@@ -2706,7 +2709,7 @@ xen_vm_instantiate_overlay(struct target *target,
     /*
      * All we want to do here is create the overlay target.
      */
-    overlay = target_create("xen_vm_process",spec);
+    overlay = target_create("os_process",spec);
 
     return overlay;
 }
@@ -2894,6 +2897,7 @@ static int xen_vm_flush_current_thread(struct target *target) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *tstate;
     tid_t tid;
+    int rc;
 
     if (!target->current_thread) {
 	verror("current thread not loaded!\n");
@@ -2907,10 +2911,10 @@ static int xen_vm_flush_current_thread(struct target *target) {
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d tid %"PRIiTID"\n",xstate->id,tid);
 
-    if (!tthread->valid || !tthread->dirty) {
+    if (!OBJVALID(tthread) || !OBJDIRTY(tthread)) {
 	vdebug(8,LA_TARGET,LF_XV,
 	       "dom %d tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
-	       xstate->id,tid,tthread->valid,tthread->dirty);
+	       xstate->id,tid,OBJVALID(tthread),OBJDIRTY(tthread));
 	return 0;
     }
 
@@ -2959,7 +2963,8 @@ static int xen_vm_flush_current_thread(struct target *target) {
 	   tstate->dr[0],tstate->dr[1],tstate->dr[2],tstate->dr[3],
 	   tstate->dr[6],tstate->dr[7]);
 
-    return target_personality_flush_current_thread(target);
+    SAFE_PERSONALITY_OP(flush_current_thread,rc,0,target);
+    return rc;
 }
 
 /*
@@ -3010,10 +3015,10 @@ static int xen_vm_flush_global_thread(struct target *target,
     else
 	tstate = NULL;
 
-    if (!gthread->valid || !gthread->dirty) {
+    if (!OBJVALID(gthread) || !OBJDIRTY(gthread)) {
 	vdebug(8,LA_TARGET,LF_XV,
 	       "dom %d tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
-	       xstate->id,gthread->tid,gthread->valid,gthread->dirty);
+	       xstate->id,gthread->tid,OBJVALID(gthread),OBJDIRTY(gthread));
 	return 0;
     }
     else {
@@ -3121,7 +3126,7 @@ static int xen_vm_flush_global_thread(struct target *target,
     }
 
     /* Mark cached copy as clean. */
-    gthread->dirty = 0;
+    OBJSCLEAN(gthread);
 
     if (!current_thread)
 	vdebug(4,LA_TARGET,LF_XV,
@@ -3157,6 +3162,7 @@ static int xen_vm_pause_thread(struct target *target,tid_t tid,int nowait) {
 static int xen_vm_flush_thread(struct target *target,tid_t tid) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct target_thread *tthread;
+    int rc;
 
     vdebug(16,LA_TARGET,LF_XV,"dom %d tid %"PRIiTID"\n",xstate->id,tid);
 
@@ -3185,7 +3191,7 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
 	       " tid %"PRIiTID"; exiting, user-mode EIP, or BUG?\n",
 	       tid);
     }
-    else if (!target->current_thread->valid) {
+    else if (!OBJVALID(target->current_thread)) {
 	vdebug(9,LA_TARGET,LF_XV,
 	       "current thread not valid to compare with"
 	       " tid %"PRIiTID"; exiting, user-mode EIP, or BUG?\n",
@@ -3214,17 +3220,18 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
     if (tthread == target->current_thread)
 	return xen_vm_flush_current_thread(target);
 
-    if (!tthread->valid || !tthread->dirty) {
+    if (!OBJVALID(tthread) || !OBJDIRTY(tthread)) {
 	vdebug(8,LA_TARGET,LF_XV,
 	       "dom %d tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
-	       xstate->id,tthread->tid,tthread->valid,tthread->dirty);
+	       xstate->id,tthread->tid,OBJVALID(tthread),OBJDIRTY(tthread));
 	return 0;
     }
 
-    if (target_personality_flush_thread(target,tid))
+    SAFE_PERSONALITY_OP(flush_thread,rc,0,target,tid);
+    if (rc)
 	goto errout;
 
-    tthread->dirty = 0;
+    OBJSCLEAN(tthread);
 
     return 0;
 
@@ -3264,7 +3271,7 @@ static int xen_vm_flush_all_threads(struct target *target) {
 	 * its state is valid (whether it is dirty or not!!), we must
 	 * merge.
 	 */
-	if (target->current_thread->valid)
+	if (OBJVALID(target->current_thread))
 	    current_thread = target->current_thread;
 
 	rc = xen_vm_flush_current_thread(target);
@@ -3325,7 +3332,9 @@ static int __value_get_append_tid(struct target *target,struct value *value,
 }
 
 static struct array_list *xen_vm_list_available_tids(struct target *target) {
-    return target_personality_list_available_tids(target);
+    struct array_list *retval;
+    SAFE_PERSONALITY_OP(list_available_tids,retval,NULL,target);
+    return retval;
 }
 
 static int xen_vm_load_all_threads(struct target *target,int force) {
@@ -3359,6 +3368,8 @@ static int xen_vm_load_all_threads(struct target *target,int force) {
 }
 
 static int xen_vm_load_available_threads(struct target *target,int force) {
+    int rc;
+
     /*
      * Load the current thread first to load the global thread.  The
      * current thread will get loaded again in the loop below if @force
@@ -3369,13 +3380,14 @@ static int xen_vm_load_available_threads(struct target *target,int force) {
 	return -1;
     }
 
-    return target_personality_load_available_threads(target,force);
+    SAFE_PERSONALITY_OP(load_available_threads,rc,0,target,force);
+    return rc;
 }
 
-static int xen_vm_thread_snprintf(struct target_thread *tthread,
+static int xen_vm_thread_snprintf(struct target *target,
+				  struct target_thread *tthread,
 				  char *buf,int bufsiz,
 				  int detail,char *sep,char *kvsep) {
-    struct target *target = tthread->target;
     int rc = 0;
     int nrc;
 
@@ -3386,10 +3398,10 @@ static int xen_vm_thread_snprintf(struct target_thread *tthread,
 	    return rc;
     }
 
-    nrc = target_personality_thread_snprintf(tthread,
-					     (rc >= bufsiz) ? NULL : buf + rc,
-					     (rc >= bufsiz) ? 0 : bufsiz - rc,
-					     detail,sep,kvsep);
+    SAFE_PERSONALITY_OP(thread_snprintf,nrc,0,target,tthread,
+			(rc >= bufsiz) ? NULL : buf + rc,
+			(rc >= bufsiz) ? 0 : bufsiz - rc,
+			detail,sep,kvsep);
     if (nrc < 0) {
 	verror("could not snprintf personality info for thread %d!\n",
 	       tthread->tid);
@@ -3477,7 +3489,9 @@ static int xen_vm_thread_snprintf(struct target_thread *tthread,
 
 static int xen_vm_invalidate_thread(struct target *target,
 				    struct target_thread *tthread) {
-    return target_personality_invalidate_thread(target,tthread);
+    int rc;
+    SAFE_PERSONALITY_OP(invalidate_thread,rc,0,target,tthread);
+    return rc;
 }
 
 static int __xen_vm_resume(struct target *target,int detaching) {
@@ -3532,6 +3546,7 @@ static int xen_vm_resume(struct target *target) {
  *   to 2 if just handled an ss and should try again.
  */
 static target_status_t xen_vm_handle_exception(struct target *target,
+					       target_exception_flags_t flags,
 					       int *again,void *priv) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     int cpl;
@@ -3548,8 +3563,6 @@ static target_status_t xen_vm_handle_exception(struct target *target,
     struct target_thread *bogus_sstep_thread;
     ADDR bogus_sstep_probepoint_addr;
     struct target *overlay;
-    GHashTableIter iter;
-    gpointer vp;
     struct target_memmod *pmmod;
     ADDR paddr;
     REGVAL tmp_ipval;
@@ -3574,8 +3587,6 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 	return tstatus;
     }
     else if (tstatus == TSTATUS_PAUSED) {
-	target_clear_state_changes(target);
-
 	vdebug(3,LA_TARGET,LF_XV,
 	       "new debug event (brctr = %"PRIu64", tsc = %"PRIx64")\n",
 	       xen_vm_get_counter(target),xen_vm_get_tsc(target));
@@ -3615,7 +3626,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 	/*
 	 * Give the personality a chance to update its state.
 	 */
-	target_personality_handle_exception(target);
+	SAFE_PERSONALITY_OP_WARN_NORET(handle_exception,rc,0,target,flags);
 
 	/* 
 	 * Give the memops a chance to update.
@@ -3652,39 +3663,6 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		   ipval,tid);
 	}
 	else {
-	    /*
-	     * If we are tracking thread exits, we have to nuke
-	     * "exiting" threads.  See comments near
-	     * xen_vm_active_thread_exit_handler .
-	     */
-	    if (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) {
-		g_hash_table_iter_init(&iter,target->threads);
-		while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&vp)) {
-		    tthread = (struct target_thread *)vp;
-
-		    if (!tthread->exiting) 
-			continue;
-
-		    if (tthread == target->current_thread) {
-			vdebug(5,LA_TARGET,LF_XV,
-			       "active-probed exiting thread %"PRIiTID" (%s)"
-			       " is still running; not deleting yet!\n",
-			       tthread->tid,tthread->name);
-		    }
-		    else {
-			vdebug(5,LA_TARGET,LF_XV,
-			       "active-probed exiting thread %"PRIiTID" (%s)"
-			       " can be deleted; doing it\n",
-			       tthread->tid,tthread->name);
-			target_add_state_change(target,tthread->tid,
-						TARGET_STATE_CHANGE_THREAD_EXITED,
-						0,0,0,0,NULL);
-			target_delete_thread(target,tthread,1);
-			g_hash_table_iter_remove(&iter);
-		    }
-		}
-	    }
-
 	    /*
 	     * First, we check the current thread's state/registers to
 	     * try to handle the exception in the current thread.  If
@@ -3757,10 +3735,10 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		/* Clear the status bits right now. */
 		/*
 		xtstate->context.debugreg[6] = 0;
-		tthread->dirty = 1;
+		OBJSDIRTY(tthread);
 
 		gtstate->context.debugreg[6] = 0;
-		target->global_thread->dirty = 1;
+		OBJSDIRTY(target->global_thread);
 		vdebug(5,LA_TARGET,LF_XV,"cleared status debug reg 6\n");
 		*/
 
@@ -3780,7 +3758,13 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 			   "single step event in overlay tid %"PRIiTID
 			   " (tgid %"PRIiTID"); notifying overlay\n",
 			   tid,target->sstep_thread_overlay->base_tid);
+
+		    /* Clear the status bits right now. */
+		    xtstate->context.debugreg[6] = 0;
+		    OBJSDIRTY(tthread);
+
 		    return target_notify_overlay(target->sstep_thread_overlay,
+						 EXCEPTION_SINGLESTEP,
 						 tid,ipval,again);
 		}
 		else {
@@ -3819,8 +3803,19 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 			   " (tgid %"PRIiTID") INTO KERNEL (at 0x%"PRIxADDR")"
 			   " notifying overlay\n",
 			   tid,target->sstep_thread_overlay->base_tid,ipval);
+
+		    /* Clear the status bits right now. */
+		    xtstate->context.debugreg[6] = 0;
+		    OBJSDIRTY(tthread);
+
+		    /*
+		     * Notify the overlay that a "bogus" singlestep
+		     * happened.
+		     */
 		    return target_notify_overlay(target->sstep_thread_overlay,
-						 tid,ipval,again);
+						 EXCEPTION_SINGLESTEP
+						   | EXCEPTION_SINGLESTEP_BOGUS,
+ 						 tid,ipval,again);
 		}
 	    }
 	    else
@@ -3843,7 +3838,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 
 			/* Clear the status bits right now. */
 			xtstate->context.debugreg[6] = 0;
-			tthread->dirty = 1;
+			OBJSDIRTY(tthread);
 			/*
 			 * MUST DO THIS.  If we are going to modify both the
 			 * current thread's CPU state possibly, and possibly
@@ -3854,7 +3849,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 			 * state; see flush_global_thread !
 			 */
 			gtstate->context.debugreg[6] = 0;
-			target->global_thread->dirty = 1;
+			OBJSDIRTY(target->global_thread);
 			vdebug(5,LA_TARGET,LF_XV,"cleared status debug reg 6\n");
 
 			goto out_ss_again;
@@ -3876,7 +3871,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 
 		/* Clear the status bits right now. */
 		xtstate->context.debugreg[6] = 0;
-		tthread->dirty = 1;
+		OBJSDIRTY(tthread);
 		/*
 		 * MUST DO THIS.  If we are going to modify both the
 		 * current thread's CPU state possibly, and possibly
@@ -3888,7 +3883,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		 */
 		if (spp->style == PROBEPOINT_HW) {
 		    gtstate->context.debugreg[6] = 0;
-		    target->global_thread->dirty = 1;
+		    OBJSDIRTY(target->global_thread);
 		}
 		vdebug(5,LA_TARGET,LF_XV,"cleared status debug reg 6\n");
 
@@ -3906,7 +3901,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 
 		/* Clear the status bits right now. */
 		xtstate->context.debugreg[6] = 0;
-		tthread->dirty = 1;
+		OBJSDIRTY(tthread);
 		vdebug(5,LA_TARGET,LF_XV,"cleared status debug reg 6\n");
 
 		goto out_ss_again;
@@ -3924,7 +3919,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 
 		/* Clear the status bits right now. */
 		xtstate->context.debugreg[6] = 0;
-		tthread->dirty = 1;
+		OBJSDIRTY(tthread);
 		vdebug(5,LA_TARGET,LF_XV,"cleared status debug reg 6\n");
 
 		goto out_ss_again;
@@ -3999,7 +3994,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 			 * flush_global_thread !
 			 */
 			gtstate->context.debugreg[6] = 0;
-			target->global_thread->dirty = 1;
+			OBJSDIRTY(target->global_thread);
 		    }
 		}
 	    }			    
@@ -4052,7 +4047,17 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 			   tid,overlay->base_tid,ipval,
 			   xtstate->context.debugreg[6],
 			   xtstate->context.user_regs.eflags);
-		    return target_notify_overlay(overlay,tid,ipval,again);
+
+		    target_exception_flags_t bp_ef = EXCEPTION_BREAKPOINT;
+		    if (xtstate->context.debugreg[6] & 0x4000)
+			bp_ef = EXCEPTION_BREAKPOINT_STEP;
+
+		    /* Clear the status bits right now. */
+		    xtstate->context.debugreg[6] = 0;
+		    OBJSDIRTY(tthread);
+
+		    return target_notify_overlay(overlay,bp_ef,
+						 tid,ipval,again);
 		}
 		else {
 		    /*
@@ -4092,10 +4097,10 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 			else {
 			    /* Clear the status bits right now. */
 			    xtstate->context.debugreg[6] = 0;
-			    tthread->dirty = 1;
+			    OBJSDIRTY(tthread);
 
 			    gtstate->context.debugreg[6] = 0;
-			    target->global_thread->dirty = 1;
+			    OBJSDIRTY(target->global_thread);
 			    vdebug(5,LA_TARGET,LF_XV,
 				   "cleared status debug reg 6\n");
 
@@ -4199,7 +4204,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 			 * flush_global_thread !
 			 */
 			gtstate->context.debugreg[6] = 0;
-			target->global_thread->dirty = 1;
+			OBJSDIRTY(target->global_thread);
 		    }			    
 		}
 
@@ -4220,7 +4225,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 
 		/* Clear the status bits right now. */
 		xtstate->context.debugreg[6] = 0;
-		tthread->dirty = 1;
+		OBJSDIRTY(tthread);
 		vdebug(5,LA_TARGET,LF_XV,"cleared status debug reg 6\n");
 
 		goto out_bp_again;
@@ -4234,7 +4239,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 
 		/* Clear the status bits right now. */
 		xtstate->context.debugreg[6] = 0;
-		tthread->dirty = 1;
+		OBJSDIRTY(tthread);
 		vdebug(5,LA_TARGET,LF_XV,"cleared status debug reg 6\n");
 
 		goto out_bp_again;
@@ -4324,7 +4329,7 @@ int xen_vm_evloop_handler(int readfd,int fdtype,void *state) {
 	return EVLOOP_HRET_SUCCESS;
 
     again = 0;
-    retval = xen_vm_handle_exception(target,&again,NULL);
+    retval = xen_vm_handle_exception(target,0,&again,NULL);
     if (retval == TSTATUS_ERROR && again == 0)
 	return EVLOOP_HRET_ERROR;
     /*
@@ -4416,7 +4421,7 @@ static target_status_t xen_vm_monitor(struct target *target) {
             continue; // not the event that we are looking for
 
 	again = 0;
-	retval = xen_vm_handle_exception(target,&again,NULL);
+	retval = xen_vm_handle_exception(target,0,&again,NULL);
 	if (retval == TSTATUS_ERROR && again == 0) {
 	    target->needmonitorinterrupt = 0;
 	    return retval;
@@ -4496,7 +4501,7 @@ static target_status_t xen_vm_poll(struct target *target,struct timeval *tv,
     }
 
     again = 0;
-    retval = xen_vm_handle_exception(target,&again,NULL);
+    retval = xen_vm_handle_exception(target,0,&again,NULL);
     if (pstatus)
 	*pstatus = again;
 
@@ -4528,7 +4533,6 @@ static int __xen_vm_pgd(struct target *target,tid_t tid,uint64_t *pgd) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
     REGVAL cr0 = 0,cr4 = 0,msr_efer = 0,cpuid_edx = 0;
-    REG reg;
 
     xstate = (struct xen_vm_state *)target->state;
 
@@ -5134,7 +5138,7 @@ static int xen_vm_set_hw_breakpoint(struct target *target,tid_t tid,
     xtstate->context.debugreg[6] = xtstate->dr[6];
     xtstate->context.debugreg[7] = xtstate->dr[7];
 
-    tthread->dirty = 1;
+    OBJSDIRTY(tthread);
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     struct xen_vm_state *xstate;
@@ -5209,7 +5213,7 @@ static int xen_vm_set_hw_watchpoint(struct target *target,tid_t tid,
     xtstate->context.debugreg[6] = xtstate->dr[6];
     xtstate->context.debugreg[7] = xtstate->dr[7];
 
-    tthread->dirty = 1;
+    OBJSDIRTY(tthread);
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     struct xen_vm_state *xstate;
@@ -5270,7 +5274,7 @@ static int xen_vm_unset_hw_breakpoint(struct target *target,tid_t tid,REG reg) {
     xtstate->context.debugreg[6] = xtstate->dr[6];
     xtstate->context.debugreg[7] = xtstate->dr[7];
 
-    tthread->dirty = 1;
+    OBJSDIRTY(tthread);
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     struct xen_vm_state *xstate;
@@ -5312,7 +5316,7 @@ int xen_vm_disable_hw_breakpoints(struct target *target,tid_t tid) {
 
     xtstate->context.debugreg[7] = 0;
 
-    tthread->dirty = 1;
+    OBJSDIRTY(tthread);
 
     return 0;
 }
@@ -5331,7 +5335,7 @@ int xen_vm_enable_hw_breakpoints(struct target *target,tid_t tid) {
 
     xtstate->context.debugreg[7] = xtstate->dr[7];
 
-    tthread->dirty = 1;
+    OBJSDIRTY(tthread);
 
     return 0;
 }
@@ -5363,7 +5367,7 @@ int xen_vm_disable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
     xtstate->context.debugreg[6] = xtstate->dr[6];
     xtstate->context.debugreg[7] = xtstate->dr[7];
 
-    tthread->dirty = 1;
+    OBJSDIRTY(tthread);
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     struct xen_vm_state *xstate;
@@ -5414,7 +5418,7 @@ int xen_vm_enable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
     xtstate->context.debugreg[6] = xtstate->dr[6];
     xtstate->context.debugreg[7] = xtstate->dr[7];
 
-    tthread->dirty = 1;
+    OBJSDIRTY(tthread);
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     struct xen_vm_state *xstate;
@@ -5537,7 +5541,7 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
 	    xtstate->context.user_regs.rflags |= EF_RF;
 	xtstate->context.user_regs.rflags &= ~EF_IF;
 #endif
-	tthread->dirty = 1;
+	OBJSDIRTY(tthread);
     }
 
     target->sstep_thread = tthread;
@@ -5589,7 +5593,7 @@ int xen_vm_singlestep_end(struct target *target,tid_t tid,
 #else
 	xtstate->context.user_regs.rflags &= ~EF_TF;
 #endif
-	tthread->dirty = 1;
+	OBJSDIRTY(tthread);
     }
 
     target->sstep_thread = NULL;
@@ -5624,7 +5628,7 @@ uint64_t xen_vm_get_tsc(struct target *target) {
     struct target_thread *gthread;
     struct xen_vm_thread_state *gtstate;
     if (xstate->dominfo.ttd_guest) {
-	if (target->global_thread && target->global_thread->valid)
+	if (target->global_thread && OBJVALID(target->global_thread))
 	    gthread = target->global_thread;
 	else if (!(gthread = __xen_vm_load_current_thread(target,0,1))) {
 	    verror("could not load global thread!\n");
@@ -5666,7 +5670,7 @@ uint64_t xen_vm_get_counter(struct target *target) {
     struct target_thread *gthread;
     struct xen_vm_thread_state *gtstate;
     if (xstate->dominfo.ttd_guest) {
-	if (target->global_thread && target->global_thread->valid)
+	if (target->global_thread && OBJVALID(target->global_thread))
 	    gthread = target->global_thread;
 	else if (!(gthread = __xen_vm_load_current_thread(target,0,1))) {
 	    verror("could not load global thread!\n");

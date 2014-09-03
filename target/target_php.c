@@ -18,7 +18,9 @@
 
 #include <sys/types.h>
 #include <unistd.h>
+#include <glib.h>
 
+#include "object.h"
 #include "binfile.h"
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
@@ -985,7 +987,8 @@ static int php_flush_current_thread(struct target *target);
 static int php_flush_all_threads(struct target *target);
 static int php_invalidate_thread(struct target *target,
 				 struct target_thread *tthread);
-static int php_thread_snprintf(struct target_thread *tthread,
+static int php_thread_snprintf(struct target *target,
+			       struct target_thread *tthread,
 			       char *buf,int bufsiz,
 			       int detail,char *sep,char *kvsep);
 static REGVAL php_read_reg(struct target *target,tid_t tid,REG reg);
@@ -1192,12 +1195,8 @@ static int php_attach(struct target *target) {
 
     /* Create a default lookup/load context. */
     /* Cheat: grab the first region :). */
-    list_for_each_entry(space,&target->spaces,space) {
-	list_for_each_entry(region,&space->regions,region) {
-	    break;
-	}
-	break;
-    }
+    space = (struct addrspace *)g_list_nth_data(target->spaces,0);
+    region = (struct memregion *)g_list_nth_data(space->regions,0);
 
     pstate->default_tlctxt = 
 	target_location_ctxt_create(target,target->base_tid,region);
@@ -1445,13 +1444,7 @@ static int php_detach(struct target *target) {
 }
 
 static int php_loadspaces(struct target *target) {
-    struct addrspace *space = addrspace_create(target,"php",target->base_tid);
-
-    space->target = target;
-    RHOLD(space,target);
-
-    list_add_tail(&space->space,&target->spaces);
-
+    addrspace_create(target,"php",target->base_tid);
     return 0;
 }
 
@@ -1499,7 +1492,7 @@ static int php_loaddebugfiles(struct target *target,
     struct symbol *base;
     char buf[64];
 
-    vdebug(5,LA_TARGET,LF_XVP,"tid %d\n",target->base_tid);
+    vdebug(5,LA_TARGET,LF_PHP,"tid %d\n",target->base_tid);
 
     pstate->debugfile_symbol_counter = 0;
 
@@ -1918,7 +1911,7 @@ static tid_t php_gettid(struct target *target) {
     // XXX: fix!
     return target->base_tid;
 
-    if (target->current_thread && target->current_thread->valid)
+    if (target->current_thread && OBJVALID(target->current_thread))
 	return target->current_thread->tid;
 
     tthread = php_load_current_thread(target,0);
@@ -1981,7 +1974,7 @@ php_load_current_thread(struct target *target,int force) {
 
     /* XXX: should we return the primary thread, or NULL? */
     if (!__is_our_tid(target,uthread->tid)) {
-	vwarnopt(9,LA_TARGET,LF_XVP,
+	vwarnopt(9,LA_TARGET,LF_PHP,
 		 "base target current tid %d is not in tgid %d!\n",
 		 uthread->tid,target->base_tid);
 	errno = ESRCH;
@@ -2012,7 +2005,7 @@ static int php_flush_thread(struct target *target,tid_t tid) {
     struct target_thread *tthread;
 
     tthread = target_lookup_thread(target,tid);
-    if (!tthread->dirty)
+    if (!OBJDIRTY(tthread))
 	return 0;
 
     if (!__is_our_tid(target,tid)) {
@@ -2029,7 +2022,7 @@ static int php_flush_thread(struct target *target,tid_t tid) {
     }
     */
 
-    tthread->dirty = 0;
+    OBJSCLEAN(tthread);
 
     return 0;
 }
@@ -2050,7 +2043,7 @@ static int php_invalidate_thread(struct target *target,
 
     ptstate = (struct php_thread_state *)tthread->state;
 
-    tthread->valid = 0;
+    OBJSINVALID(tthread);
 
     if (ptstate->current_execute_data_v) {
 	value_free(ptstate->current_execute_data_v);
@@ -2060,13 +2053,10 @@ static int php_invalidate_thread(struct target *target,
     return 0;
 }
 
-static int php_thread_snprintf(struct target_thread *tthread,
+static int php_thread_snprintf(struct target *target,
+			       struct target_thread *tthread,
 			       char *buf,int bufsiz,
 			       int detail,char *sep,char *kvsep) {
-    struct target *target;
-
-    target = tthread->target;
-
     if (!__is_our_tid(target,tthread->tid)) {
 	verror("tid %d is not in tgid %d!\n",
 	       tthread->tid,tthread->target->base_tid);
@@ -2074,7 +2064,7 @@ static int php_thread_snprintf(struct target_thread *tthread,
 	return -1;
     }
 
-    return target->base->ops->thread_snprintf(target->base_thread,
+    return target->base->ops->thread_snprintf(target->base,target->base_thread,
 					      buf,bufsiz,detail,sep,kvsep);
 }
 

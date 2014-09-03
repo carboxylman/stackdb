@@ -18,6 +18,7 @@
 
 #include "config.h"
 #include "common.h"
+#include "glib_wrapper.h"
 #include "arch.h"
 
 #include "target_api.h"
@@ -38,8 +39,8 @@
 #include "target_linux_userproc.h"
 #ifdef ENABLE_XENSUPPORT
 #include "target_xen_vm.h"
-#include "target_xen_vm_process.h"
 #endif
+#include "target_os_process.h"
 #include "target_php.h"
 #include "target_gdb.h"
 
@@ -61,13 +62,13 @@ struct target *target_instantiate(struct target_spec *spec,
     else if (spec->target_type == TARGET_TYPE_XEN) {
 	target = xen_vm_instantiate(spec,evloop);
     }
-    else if (spec->target_type == TARGET_TYPE_XEN_PROCESS) {
-	verror("cannot directly instantiate TARGET_TYPE_XEN_PROCESS;"
+#endif
+    else if (spec->target_type == TARGET_TYPE_OS_PROCESS) {
+	verror("cannot directly instantiate TARGET_TYPE_OS_PROCESS;"
 	       " call target_instantiate_overlay instead.\n");
 	errno = EINVAL;
 	return NULL;
     }
-#endif
     else if (spec->target_type == TARGET_TYPE_PHP) {
 	verror("cannot directly instantiate TARGET_TYPE_PHP;"
 	       " call target_instantiate_overlay instead.\n");
@@ -102,11 +103,11 @@ struct target_spec *target_build_spec(target_type_t type,target_mode_t mode) {
 	tspec = calloc(1,sizeof(*tspec));
 	tspec->backend_spec = xen_vm_build_spec();
     }
-    else if (type == TARGET_TYPE_XEN_PROCESS) {
-	tspec = calloc(1,sizeof(*tspec));
-	tspec->backend_spec = xen_vm_process_build_spec();
-    }
 #endif
+    else if (type == TARGET_TYPE_OS_PROCESS) {
+	tspec = calloc(1,sizeof(*tspec));
+	tspec->backend_spec = os_process_build_spec();
+    }
     else if (type == TARGET_TYPE_PHP) {
 	tspec = calloc(1,sizeof(*tspec));
 	tspec->backend_spec = php_build_spec();
@@ -140,10 +141,10 @@ void target_free_spec(struct target_spec *spec) {
 	else if (spec->target_type == TARGET_TYPE_XEN) {
 	    xen_vm_free_spec((struct xen_vm_spec *)spec->backend_spec);
 	}
-	else if (spec->target_type == TARGET_TYPE_XEN_PROCESS) {
-	    xen_vm_process_free_spec((struct xen_vm_process_spec *)spec->backend_spec);
-	}
 #endif
+	else if (spec->target_type == TARGET_TYPE_OS_PROCESS) {
+	    os_process_free_spec((struct os_process_spec *)spec->backend_spec);
+	}
 	else if (spec->target_type == TARGET_TYPE_PHP) {
 	    php_free_spec((struct php_spec *)spec->backend_spec);
 	}
@@ -194,6 +195,7 @@ int target_open(struct target *target) {
     struct addrspace *space;
     struct memregion *region;
     char buf[128];
+    GList *t1,*t2;
 
     if (!target->spec) {
 	verror("cannot open a target without a specification!\n");
@@ -228,13 +230,7 @@ int target_open(struct target *target) {
     if ((rc = target->ops->init(target))) {
 	return rc;
     }
-    if (target->personality_ops && target->personality_ops->init) {
-	vdebug(5,LA_TARGET,LF_TARGET,
-	       "target type(%d): init personality ops\n",target_type(target));
-	if ((rc = target->personality_ops->init(target))) {
-	    return rc;
-	}
-    }
+    SAFE_PERSONALITY_OP_WARN(init,rc,0,target);
 
     if (target_snprintf(target,buf,sizeof(buf)) < 0)
 	target->name = NULL;
@@ -248,73 +244,20 @@ int target_open(struct target *target) {
 	return -1;
     }
 
-    if (target->ops->loadspaces) {
-	vdebug(5,LA_TARGET,LF_TARGET,"target(%s): loadspaces\n",target->name);
-	if ((rc = target->ops->loadspaces(target))) {
-	    return rc;
-	}
-    }
-    else if (target->personality_ops && target->personality_ops->loadspaces) {
-	vdebug(5,LA_TARGET,LF_TARGET,"target(%s): personality loadspaces\n",
-	       target->name);
-	if ((rc = target->personality_ops->loadspaces(target))) {
-	    return rc;
-	}
+    SAFE_TARGET_OP(loadspaces,rc,0,target);
+    v_g_list_foreach(target->spaces,t1,space) {
+	SAFE_TARGET_OP(loadregions,rc,0,target,space);
     }
 
-    if (target->ops->loadregions) {
-	list_for_each_entry(space,&target->spaces,space) {
-	    vdebug(5,LA_TARGET,LF_TARGET,"target(%s): loadregions\n",
-		   target->name);
-	    if ((rc = target->ops->loadregions(target,space))) {
-		return rc;
-	    }
-	}
-    }
-    else if (target->personality_ops && target->personality_ops->loadregions) {
-	list_for_each_entry(space,&target->spaces,space) {
-	    vdebug(5,LA_TARGET,LF_TARGET,"target(%s): loadregions (personality)\n",
-		   target->name);
-	    if ((rc = target->personality_ops->loadregions(target,space))) {
-		return rc;
-	    }
-	}
-    }
-
-    list_for_each_entry(space,&target->spaces,space) {
-	list_for_each_entry(region,&space->regions,region) {
+    v_g_list_foreach(target->spaces,t1,space) {
+	v_g_list_foreach(space->regions,t2,region) {
 	    if (region->type == REGION_TYPE_HEAP
 		|| region->type == REGION_TYPE_STACK
 		|| region->type == REGION_TYPE_VDSO
 		|| region->type == REGION_TYPE_VSYSCALL) 
 		continue;
 
-	    if (target->ops->loaddebugfiles) {
-		vdebug(5,LA_TARGET,LF_TARGET,
-		       "loaddebugfiles target(%s:%s):region(%s:%s)\n",
-		       target->name,space->idstr,
-		       region->name,REGION_TYPE(region->type));
-		if ((rc = target->ops->loaddebugfiles(target,space,region))) {
-		    vwarn("could not open debuginfo for region %s (%d)\n",
-			  region->name,rc);
-		}
-	    }
-	    else if (target->personality_ops
-		     && target->personality_ops->loaddebugfiles) {
-		vdebug(5,LA_TARGET,LF_TARGET,
-		       "loaddebugfiles (personality) target(%s:%s):region(%s:%s)\n",
-		       target->name,space->idstr,
-		       region->name,REGION_TYPE(region->type));
-		if ((rc = target->personality_ops->loaddebugfiles(target,space,
-								  region))) {
-		    vwarn("could not open debuginfo for region %s (%d)\n",
-			  region->name,rc);
-		}
-	    }
-	    else {
-		vwarn("cannot setup region %s in space %s; no API functions!\n",
-		      region->name,space->idstr);
-	    }
+	    SAFE_TARGET_OP_WARN_NORET(loaddebugfiles,rc,0,target,space,region);
 
 	    /*
 	     * Once the region has been loaded and associated with a
@@ -335,11 +278,11 @@ int target_open(struct target *target) {
 		    + (region->base_phys_addr - region->base_virt_addr);
 
 	    vdebug(5,LA_TARGET,LF_TARGET,
-		   "target(%s:%s) finished region(%s:%s,"
+		   "target(%s:%s:0x%"PRIxADDR") finished region(%s:%s,"
 		   "base_load_addr=0x%"PRIxADDR",base_phys_addr=0x%"PRIxADDR
 		   ",base_virt_addr=0x%"PRIxADDR
 		   ",phys_offset=%"PRIiOFFSET" (0x%"PRIxOFFSET"))\n",
-		   target->name,space->idstr,
+		   target->name,space->name,space->tag,
 		   region->name,REGION_TYPE(region->type),
 		   region->base_load_addr,region->base_phys_addr,
 		   region->base_virt_addr,region->phys_offset,
@@ -347,19 +290,8 @@ int target_open(struct target *target) {
 	}
     }
 
-    if (target->ops->postloadinit) {
-	vdebug(5,LA_TARGET,LF_TARGET,"postloadinit target(%s)\n",target->name);
-	if ((rc = target->ops->postloadinit(target))) {
-	    return rc;
-	}
-    }
-
-    if (target->ops->attach) {
-	vdebug(5,LA_TARGET,LF_TARGET,"attach target(%s)\n",target->name);
-	if ((rc = target->ops->attach(target))) {
-	    return rc;
-	}
-    }
+    SAFE_TARGET_OP(postloadinit,rc,0,target);
+    SAFE_TARGET_OP(attach,rc,0,target);
 
     target->opened = 1;
 
@@ -371,15 +303,9 @@ int target_open(struct target *target) {
      * symbols exist, and it will be possible to probe them, in
      * postloadinit().
      */
-    if ((rc = target_set_active_probing(target,target->spec->active_probe_flags)))
-	vwarn("set_active_probing failed with %d; continuing anyway!\n",rc);
+    SAFE_TARGET_OP(set_active_probing,rc,0,target,target->spec->ap_flags);
 
-    if (target->ops->postopened) {
-	vdebug(5,LA_TARGET,LF_TARGET,"postopened target(%s)\n",target->name);
-	if ((rc = target->ops->postopened(target))) {
-	    return rc;
-	}
-    }
+    SAFE_TARGET_OP(postopened,rc,0,target);
 
     return 0;
 }
@@ -387,19 +313,16 @@ int target_open(struct target *target) {
 int target_set_active_probing(struct target *target,active_probe_flags_t flags) {
     int rc;
 
-    if (!target->ops->set_active_probing) {
-	verror("no active probing support in target(%s)!\n",target->name);
+    if (!target->ops->set_active_probing
+	&& !target->personality_ops
+	&& !target->personality_ops->set_active_probing) {
+	vwarnopt(5,LA_TARGET,LF_TARGET,
+		 "no active probing support in target(%s)\n",target->name);
 	errno = ENOTSUP;
 	return -1;
     }
 
-    vdebug(5,LA_TARGET,LF_TARGET,"set_active_probing target(%s)\n",target->name);
-    rc = target->ops->set_active_probing(target,flags);
-    if (rc) {
-	vdebug(5,LA_TARGET,LF_TARGET,
-	       "set_active_probing target(%s): failed with %d\n",
-	       target->name,rc);
-    }
+    SAFE_TARGET_OP(set_active_probing,rc,0,target,flags);
 
     return rc;
 }
@@ -488,6 +411,12 @@ struct target *target_instantiate_overlay(struct target *target,tid_t tid,
     struct target_thread *tthread;
     struct target_thread *ntthread = NULL;
 
+    if (!target->ops->instantiate_overlay) {
+	verror("no overlay support in target(%s)!\n",target->name);
+	errno = ENOTSUP;
+	return NULL;
+    }
+
     vdebug(16,LA_TARGET,LF_TARGET,
 	   "target(%s) tid %"PRIiTID"\n",target->name,tid);
 
@@ -517,11 +446,15 @@ struct target *target_instantiate_overlay(struct target *target,tid_t tid,
 	tthread = ntthread;
 
     overlay->base = target;
+    RHOLDW(overlay->base,overlay);
     overlay->base_id = target->id;
     overlay->base_thread = tthread;
+    RHOLDW(tthread,overlay);
     overlay->base_tid = tthread->tid;
 
-    g_hash_table_insert(target->overlays,(gpointer)(uintptr_t)tthread->tid,overlay);
+    g_hash_table_insert(target->overlays,
+			(gpointer)(uintptr_t)tthread->tid,overlay);
+    RHOLD(overlay,target);
 
     if (tid == tthread->tid) {
 	vdebug(8,LA_TARGET,LF_TARGET,
@@ -976,14 +909,14 @@ int target_gc_threads(struct target *target) {
 					  NULL,NULL)) {
 	    if (target->current_thread && target->current_thread->tid == tid) {
 		vwarn("thread %d seems to no longer exist, but is the"
-		      " current thread; not removing!\n",tid);
+		      " current thread; not detaching!\n",tid);
 		continue;
 	    }
 
 	    vdebug(5,LA_TARGET,LF_TARGET | LF_THREAD,
-		   "cached thread %"PRIiTID" no longer exists; removing!\n",tid);
+		   "cached thread %"PRIiTID" no longer exists; detaching!\n",tid);
 	    tthread = target_lookup_thread(target,tid);
-	    target_delete_thread(target,tthread,0);
+	    target_detach_thread(target,tthread);
 	    ++rc;
 	}
     }
@@ -1031,26 +964,26 @@ int target_thread_snprintf(struct target *target,tid_t tid,
     else if (!target->ops->thread_snprintf)
 	return snprintf(buf,bufsiz,
 			"tid%s%"PRIiTID "%s" "name%s%s" "%s" "curctxt%s%d" "%s"
-			"ptid%s%"PRIiTID "%s" "uid%s%d" "%s"
-			"gid%s%d",
+			"ptid%s%"PRIiTID "%s" "tgid%s%"PRIiTID "%s"
+			"uid%s%d" "%s" "gid%s%d",
 			kvsep,tthread->tid,sep,kvsep,tthread->name,sep, 
 			kvsep,tthread->tidctxt,sep, 
-			kvsep,tthread->ptid,sep,kvsep,tthread->uid,sep,
-			kvsep,tthread->gid);
+			kvsep,tthread->ptid,sep,kvsep,tthread->tgid,sep,
+			kvsep,tthread->uid,sep,kvsep,tthread->gid);
     else {
 	rc =   snprintf(buf,bufsiz,
 			"tid%s%"PRIiTID "%s" "name%s%s" "%s" "curctxt%s%d" "%s"
-			"ptid%s%"PRIiTID "%s" "uid%s%d" "%s"
-			"gid%s%d" "%s",
+			"ptid%s%"PRIiTID "%s" "ptid%s%"PRIiTID "%s"
+			"uid%s%d" "%s" "gid%s%d" "%s",
 			kvsep,tthread->tid,sep,kvsep,tthread->name,sep, 
 			kvsep,tthread->tidctxt,sep, 
-			kvsep,tthread->ptid,sep,kvsep,tthread->uid,sep,
-			kvsep,tthread->gid,sep);
+			kvsep,tthread->ptid,sep,kvsep,tthread->tgid,sep,
+			kvsep,tthread->uid,sep,kvsep,tthread->gid,sep);
 	if (rc >= bufsiz)
-	    rc += target->ops->thread_snprintf(tthread,NULL,0,
+	    rc += target->ops->thread_snprintf(target,tthread,NULL,0,
 					       detail,sep,kvsep);
 	else
-	    rc += target->ops->thread_snprintf(tthread,buf + rc,bufsiz - rc,
+	    rc += target->ops->thread_snprintf(target,tthread,buf + rc,bufsiz - rc,
 					       detail,sep,kvsep);
 	return rc;
     }
@@ -1100,11 +1033,6 @@ int target_close(struct target *target) {
 
     /* Make sure! */
     target_pause(target);
-
-    /*
-     * Destroy any generic keys first.
-     */
-    target_gkv_destroy(target);
 
     /*
      * Do it for all the overlays first.
@@ -1188,12 +1116,58 @@ int target_close(struct target *target) {
 
     target->opened = 0;
 
+    /*
+     * Set the target and its core objects to be non-live.
+     */
+    OBJSDEAD(target,target);
+
     return target->status;
+}
+
+int target_obj_flags_propagate(struct target *target,
+			       obj_flags_t orf,obj_flags_t nandf) {
+    int retval;
+    GHashTableIter iter;
+    gpointer vp;
+    struct target_thread *tthread;
+    GList *t1;
+    struct addrspace *space;
+
+    /*
+     * Notify all our children -- threads (which have no children),
+     * spaces -- and call the target_ops propagation method too, if it
+     * exists -- or call the personality method.
+     */
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,NULL,&vp)) {
+	tthread = (struct target_thread *)vp;
+	tthread->obj_flags |= orf;
+	tthread->obj_flags &= ~nandf;
+    }
+
+    v_g_list_foreach(target->spaces,t1,space) {
+	space->obj_flags |= orf;
+	space->obj_flags &= ~nandf;
+	addrspace_obj_flags_propagate(space,orf,nandf);
+    }
+
+    SAFE_TARGET_OP(obj_flags_propagate,retval,0,target,orf,nandf);
+
+    return retval;
 }
 
 int target_kill(struct target *target,int sig) {
     vdebug(5,LA_TARGET,LF_TARGET,"killing target(%s) with %d\n",target->name,sig);
     return target->ops->kill(target,sig);
+}
+
+void target_hold(struct target *target) {
+    RHOLD(target,target);
+}
+
+void target_release(struct target *target) {
+    REFCNT trefcnt;
+    RPUT(target,target,target,trefcnt);
 }
 
 struct probe *target_lookup_probe(struct target *target,int probe_id) {
@@ -1458,32 +1432,6 @@ int target_disable_feature(struct target *target,int feature) {
 	return target->ops->disable_feature(target,feature);
     errno = EINVAL;
     return -1;
-}
-
-int target_thread_is_valid(struct target *target,tid_t tid) {
-    struct target_thread *tthread;
-
-    tthread = target_lookup_thread(target,tid);
-    if (!tthread) {
-	verror("no such thread %"PRIiTID"\n",tid);
-	errno = EINVAL;
-	return -1;
-    }
-
-    return tthread->valid;
-}
-
-int target_thread_is_dirty(struct target *target,tid_t tid) {
-    struct target_thread *tthread;
-
-    tthread = target_lookup_thread(target,tid);
-    if (!tthread) {
-	verror("no such thread %"PRIiTID"\n",tid);
-	errno = EINVAL;
-	return -1;
-    }
-
-    return tthread->dirty;
 }
 
 thread_status_t target_thread_status(struct target *target,tid_t tid) {

@@ -17,6 +17,7 @@
  */
 
 #include "config.h"
+#include "glib_wrapper.h"
 
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -40,6 +41,8 @@
 #include <elf.h>
 #include <libelf.h>
 
+#include "common.h"
+#include "object.h"
 #include "arch.h"
 #include "arch_x86.h"
 #include "arch_x86_64.h"
@@ -81,6 +84,7 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 					 struct memregion *region);
 
 static target_status_t linux_userproc_handle_exception(struct target *target,
+						       target_exception_flags_t flags,
 						       int *again,void *priv);
 
 static struct target *
@@ -125,7 +129,8 @@ static int linux_userproc_flush_thread(struct target *target,tid_t tid);
 static int linux_userproc_flush_current_thread(struct target *target);
 static int linux_userproc_flush_all_threads(struct target *target);
 static int linux_userproc_invalidate_all_threads(struct target *target);
-static int linux_userproc_thread_snprintf(struct target_thread *tthread,
+static int linux_userproc_thread_snprintf(struct target *target,
+					  struct target_thread *tthread,
 					  char *buf,int bufsiz,
 					  int detail,char *sep,char *kvsep);
 
@@ -730,7 +735,7 @@ static struct target *linux_userproc_attach(struct target_spec *spec,
 
     lstate = (struct linux_userproc_state *)malloc(sizeof(*lstate));
     if (!lstate) {
-	target_free(target);
+	target_finalize(target);
 	errno = ENOMEM;
 	return NULL;
     }
@@ -1238,7 +1243,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
 
  errout:
     /*
-     * Cleanup I/O stuff first!  Do it before target_free!
+     * Cleanup I/O stuff first!  Do it before target_finalize!
      */
     if (inpfd[0] > -1) 
 	close(inpfd[0]);
@@ -1274,7 +1279,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
 	close(errfd);
 
     if (target)
-	target_free(target);
+	target_finalize(target);
     else if (binfile)
 	RPUT(binfile,binfile,target,trefcnt);
 
@@ -1303,6 +1308,7 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
     int racy_status;
     int pstatus;
     int rc;
+    struct target_event *event;
 
     lstate = (struct linux_userproc_state *)target->state;
 
@@ -1421,8 +1427,9 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
     tthread = target_create_thread(target,child,tstate,NULL);
     tthread->supported_overlay_types = TARGET_TYPE_PHP;
 
-    target_add_state_change(target,child,TARGET_STATE_CHANGE_THREAD_CREATED,0,0,
-			    0,0,NULL);
+    event = target_create_event(target,tthread,T_EVENT_PROCESS_THREAD_CREATED,
+				tthread);
+    target_broadcast_event(target,event);
 
     target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
 
@@ -1722,7 +1729,8 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid,
     snprintf(buf,256,"/proc/%d/task/%d",pid,tid);
     if (stat(buf,&sbuf) == 0) {
 
-	target_detach_thread(target,tthread);
+	/* Detach no longer means detach; now it means remove too. */
+	//target_detach_thread(target,tthread);
 
 	/*
 	 * If the thread is stopped with status, check it and handle it
@@ -1749,7 +1757,7 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid,
 	errno = 0;
     }
 
-    target_delete_thread(target,tthread,0);
+    target_detach_thread(target,tthread);
 
     return 0;
 }
@@ -1776,7 +1784,7 @@ static tid_t linux_userproc_gettid(struct target *target) {
      * -- but we also make sure we load the current thread.
      */
 
-    if (target->current_thread && target->current_thread->valid)
+    if (target->current_thread && OBJVALID(target->current_thread))
 	return target->current_thread->tid;
 
     tthread = linux_userproc_load_current_thread(target,0);
@@ -1805,7 +1813,7 @@ static int __linux_userproc_load_thread_status(struct target_thread *tthread,
     lstate = (struct linux_userproc_state *)tthread->target->state;
     pid = lstate->pid;
 
-    if (tthread->valid && !force) {
+    if (OBJVALID(tthread) && !force) {
 	vdebug(9,LA_TARGET,LF_LUP,
 	       "pid %d thread %"PRIiTID" already valid\n",pid,tid);
 	return 0;
@@ -1880,7 +1888,7 @@ static struct target_thread *__linux_userproc_load_thread(struct target *target,
     }
     tstate = (struct linux_userproc_thread_state *)tthread->state;
 
-    if (tthread->valid && !force) {
+    if (OBJVALID(tthread) && !force) {
 	vdebug(9,LA_TARGET,LF_LUP,"pid %d thread %"PRIiTID" already valid\n",
 	       pid,tid);
 	return tthread;
@@ -1899,18 +1907,18 @@ static struct target_thread *__linux_userproc_load_thread(struct target *target,
 	errno = 0;
 	if (ptrace(PTRACE_GETREGS,tthread->tid,NULL,&(tstate->regs)) == -1) {
 	    verror("ptrace(GETREGS): %s\n",strerror(errno));
-	    tthread->valid = 0;
-	    tthread->dirty = 0;
+	    OBJSINVALID(tthread);
+	    OBJSCLEAN(tthread);
 	    return NULL;
 	}
-	tthread->valid = 1;
+	OBJSVALID(tthread);
     }
     else {
 	memset(&tstate->regs,0,sizeof(tstate->regs));
-	tthread->valid = 0;
+	OBJSINVALID(tthread);
     }
 
-    tthread->dirty = 0;
+    OBJSCLEAN(tthread);
 
     return tthread;
 }
@@ -1963,7 +1971,7 @@ static int linux_userproc_flush_thread(struct target *target,tid_t tid) {
 	return -1;
     }
 
-    if (!tthread->valid || !tthread->dirty)
+    if (!OBJVALID(tthread) || !OBJDIRTY(tthread))
 	return 0;
 
     errno = 0;
@@ -1971,7 +1979,7 @@ static int linux_userproc_flush_thread(struct target *target,tid_t tid) {
 	verror("ptrace(SETREGS): %s\n",strerror(errno));
 	return -1;
     }
-    tthread->dirty = 0;
+    OBJSCLEAN(tthread);
 
     return 0;
 }
@@ -2004,7 +2012,8 @@ static int linux_userproc_flush_all_threads(struct target *target) {
     return retval;
 }
 
-static int linux_userproc_thread_snprintf(struct target_thread *tthread,
+static int linux_userproc_thread_snprintf(struct target *target,
+					  struct target_thread *tthread,
 					  char *buf,int bufsiz,
 					  int detail,char *sep,char *kvsep) {
     struct linux_userproc_thread_state *tstate;
@@ -2018,10 +2027,16 @@ static int linux_userproc_thread_snprintf(struct target_thread *tthread,
     r = &tstate->regs;
 
 #if __WORDSIZE == 64
-#define RF "lx"
+#define __V_LINUX_PTRACE_REG_LARGE_SIZE
+#ifdef __V_LINUX_PTRACE_REG_LARGE_SIZE
+#define RF "llx"
 #define DRF "lx"
 #else
 #define RF "lx"
+#define DRF "lx"
+#endif
+#else
+#define RF "llx"
 #define DRF "x"
 #endif
 
@@ -2317,7 +2332,7 @@ static int linux_userproc_detach(struct target *target) {
     }
 
     /* Also, remove the global thread from target->threads! */
-    g_hash_table_remove(target->threads,(gpointer)(uintptr_t)TID_GLOBAL);
+    //g_hash_table_remove(target->threads,(gpointer)(uintptr_t)TID_GLOBAL);
 
     /*
      *
@@ -2388,12 +2403,8 @@ static int linux_userproc_kill(struct target *target,int sig) {
 static int linux_userproc_loadspaces(struct target *target) {
     struct linux_userproc_state *lstate = \
 	(struct linux_userproc_state *)target->state;
-    struct addrspace *space = addrspace_create(target,"NULL",lstate->pid);
 
-    space->target = target;
-    RHOLD(space,target);
-
-    list_add_tail(&space->space,&target->spaces);
+    addrspace_create(target,"NULL",lstate->pid);
 
     return 0;
 }
@@ -2519,8 +2530,9 @@ static int linux_userproc_updateregions(struct target *target,
     char main_exe[PATH_MAX];
     FILE *f;
     char p[4];
-    struct memregion *region,*tregion;
-    struct memrange *range,*trange;
+    struct memregion *region;
+    struct memrange *range;
+    GList *t1,*t2,*t3,*t4;
     unsigned long long start,end,offset;
     region_type_t rtype;
     int rc;
@@ -2530,6 +2542,7 @@ static int linux_userproc_updateregions(struct target *target,
     uint32_t prot_flags;
     int exists;
     int updated;
+    struct target_event *event;
 
     vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
@@ -2543,6 +2556,13 @@ static int linux_userproc_updateregions(struct target *target,
     f = fopen(buf,"r");
     if (!f)
 	return 1;
+
+    /*
+     * Mark all existing regions as dead; then liven up the others.
+     */
+    v_g_list_foreach(space->regions,t1,region) {
+	OBJSDEAD(region,memregion);
+    }
 
     while (1) {
 	errno = 0;
@@ -2588,10 +2608,7 @@ static int linux_userproc_updateregions(struct target *target,
 		    && !(region = addrspace_match_region_start(space,rtype,start)))) {
 		if (!(region = memregion_create(space,rtype,buf)))
 		    goto err;
-		region->new = 1;
-	    }
-	    else {
-		region->exists = 1;
+		OBJSNEW(region);
 	    }
 
 	    prot_flags = 0;
@@ -2608,18 +2625,19 @@ static int linux_userproc_updateregions(struct target *target,
 		if (!(range = memrange_create(region,start,end,offset,0))) {
 		    goto err;
 		}
-		range->new = 1;
+		OBJSNEW(range);
 	    }
 	    else {
 		if (range->end == end 
 		    && range->offset == offset 
-		    && range->prot_flags == prot_flags)
-		    range->same = 1;
+		    && range->prot_flags == prot_flags) {
+		    OBJSLIVE(range,memrange);
+		}
 		else {
 		    range->end = end;
 		    range->offset = offset;
 		    range->prot_flags = prot_flags;
-		    range->updated = 1;
+		    OBJSMOD(range);
 
 		    if (start < region->base_load_addr)
 			region->base_load_addr = start;
@@ -2644,80 +2662,82 @@ static int linux_userproc_updateregions(struct target *target,
      * and we have to purge them.
      */
 
-    list_for_each_entry_safe(region,tregion,&space->regions,region) {
+    v_g_list_foreach_safe(space->regions,t1,t2,region) {
 	exists = 0;
 	updated = 0;
-	list_for_each_entry_safe(range,trange,&region->ranges,range) {
-	    if (range->new) {
+	v_g_list_foreach_safe(region->ranges,t3,t4,range) {
+	    if (OBJNEW(range)) {
 		vdebug(3,LA_TARGET,LF_LUP,
 		       "new range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
 		exists = 1;
-		target_add_state_change(target,TID_GLOBAL,
-					TARGET_STATE_CHANGE_RANGE_NEW,
-					0,range->prot_flags,
-					range->start,range->end,region->name);
+
+		event = target_create_event(target,NULL,
+					    T_EVENT_PROCESS_RANGE_NEW,range);
+		target_broadcast_event(target,event);
 	    }
-	    else if (range->same) {
+	    else if (OBJLIVE(range)) {
 		vdebug(9,LA_TARGET,LF_LUP,
 		       "same range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
 		exists = 1;
 	    }
-	    else if (range->updated) {
+	    else if (OBJMOD(range)) {
 		vdebug(3,LA_TARGET,LF_LUP,
 		       "updated range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
 		exists = 1;
 		updated = 1;
 
-		target_add_state_change(target,TID_GLOBAL,
-					TARGET_STATE_CHANGE_RANGE_MOD,
-					0,range->prot_flags,
-					range->start,range->end,region->name);
+		event = target_create_event(target,NULL,
+					    T_EVENT_PROCESS_RANGE_MOD,range);
+		target_broadcast_event(target,event);
 	    }
 	    else {
 		vdebug(3,LA_TARGET,LF_LUP,
 		       "removing stale range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
-		target_add_state_change(target,TID_GLOBAL,
-					TARGET_STATE_CHANGE_RANGE_DEL,
-					0,range->prot_flags,
-					range->start,range->end,region->name);
-		memrange_free(range);
+
+		event = target_create_event(target,NULL,
+					    T_EVENT_PROCESS_RANGE_DEL,range);
+		target_broadcast_event(target,event);
+
+		memregion_detach_range(region,range);
+		range = NULL;
 	    }
-	    range->new = range->same = range->updated = 0;
 	}
-	if (!exists || list_empty(&region->ranges)) {
+
+	if (!exists || !region->ranges) {
 	    vdebug(3,LA_TARGET,LF_LUP,"removing stale region (%s:%s:%s)\n",
-		   region->space->idstr,region->name,REGION_TYPE(region->type));
-	    target_add_state_change(target,TID_GLOBAL,
-				    TARGET_STATE_CHANGE_REGION_DEL,
-				    0,0,region->base_load_addr,0,region->name);
-	    memregion_free(region);
+		   region->space->name,region->name,REGION_TYPE(region->type));
+
+	    event = target_create_event(target,NULL,
+					T_EVENT_PROCESS_REGION_DEL,region);
+	    target_broadcast_event(target,event);
+
+	    addrspace_detach_region(space,region);
 	}
 	else if (updated) {
-	    target_add_state_change(target,TID_GLOBAL,
-				    TARGET_STATE_CHANGE_REGION_MOD,
-				    0,0,region->base_load_addr,0,region->name);
+	    event = target_create_event(target,NULL,
+					T_EVENT_PROCESS_REGION_MOD,region);
+	    target_broadcast_event(target,event);
 	}
-	else if (region->new) {
-	    region->exists = region->new = 0;
-	    target_add_state_change(target,TID_GLOBAL,
-				    TARGET_STATE_CHANGE_REGION_NEW,
-				    0,0,region->base_load_addr,0,region->name);
+	else if (OBJNEW(region)) {
+	    event = target_create_event(target,NULL,
+					T_EVENT_PROCESS_REGION_NEW,region);
+	    target_broadcast_event(target,event);
 
 	    /*
 	     * Add debugfiles for the region!
 	     */
 	    if (linux_userproc_loaddebugfiles(target,space,region)) {
 		vwarn("could not load debugfile for new region (%s:%s:%s)\n",
-		      region->space->idstr,region->name,
+		      region->space->name,region->name,
 		      REGION_TYPE(region->type));
 	    }
 	}
 	else {
-	    region->exists = region->new = 0;
+	    //region->exists = region->new = 0;
 	}
     }
 
@@ -3203,6 +3223,7 @@ static int linux_userproc_resume(struct target *target) {
 }
 
 static target_status_t linux_userproc_handle_exception(struct target *target,
+						       target_exception_flags_t flags,
 						       int *again,void *priv) {
     struct linux_userproc_state *lstate;
     REG dreg = -1;
@@ -3222,6 +3243,8 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
     struct linux_userproc_exception_handler_state *exst;
     tid_t tid;
     int pstatus;
+    GList *t1;
+    struct target_event *event;
 
     exst = (struct linux_userproc_exception_handler_state *)priv;
     tid = exst->tid;
@@ -3243,8 +3266,6 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 	goto out_err;
     }
     tstate = (struct linux_userproc_thread_state *)tthread->state;
-
-    target_clear_state_changes(target);
 
     if (WIFSTOPPED(pstatus)) {
 	/* Ok, this was a ptrace event; figure out which sig (or if it
@@ -3290,7 +3311,7 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 	}
 
 	//if (!lstate->live_syscall_maps_tracking) {
-	list_for_each_entry(space,&target->spaces,space) {
+	v_g_list_foreach(target->spaces,t1,space) {
 	    linux_userproc_updateregions(target,space);
 	}
 	//}
@@ -3319,8 +3340,8 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 	    //target_set_status(target,TSTATUS_EXITING);
 	    target_thread_set_status(tthread,TSTATUS_EXITING);
 
-	    target_add_state_change(target,tid,TARGET_STATE_CHANGE_EXITING,
-				    0,0,0,0,NULL);
+	    event = target_create_event(target,NULL,T_EVENT_EXITING,target);
+	    target_broadcast_event(target,event);
 
 	    return THREAD_STATUS_EXITING;
 	}
@@ -3555,8 +3576,10 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 	 */
 	target_tid_set_status(target,tid,THREAD_STATUS_DONE);
 
-	target_add_state_change(target,tid,TARGET_STATE_CHANGE_THREAD_EXITED,
-				pstatus,0,0,0,NULL);
+	event = target_create_event_2(target,tthread,
+				      T_EVENT_PROCESS_THREAD_EXITED,
+				      tthread,(void *)(uintptr_t)pstatus);
+	target_broadcast_event(target,event);
 
 	/*
 	 * If we're out of threads (besides the global thread); detach
@@ -3565,8 +3588,8 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 	if (g_hash_table_size(target->threads) == 2) {
 	    target_set_status(target,TSTATUS_DONE);
 
-	    target_add_state_change(target,tid,TARGET_STATE_CHANGE_EXITED,
-				    0,0,0,0,NULL);
+	    event = target_create_event(target,tthread,T_EVENT_EXITED,NULL);
+	    target_broadcast_event(target,event);
 
 	    linux_userproc_detach(target);
 	}
@@ -3665,7 +3688,7 @@ int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
      */
     exst.tid = tid;
     exst.pstatus = status;
-    retval = linux_userproc_handle_exception(target,&again,&exst);
+    retval = linux_userproc_handle_exception(target,0,&again,&exst);
 
     if (THREAD_SPECIFIC_STATUS(retval)) {
 	verror("thread-specific status %d tid %d; bad!\n",retval,tid);
@@ -3949,7 +3972,7 @@ static target_status_t linux_userproc_poll(struct target *target,
 	 */
 	exst.tid = tid;
 	exst.pstatus = status;
-	retval = linux_userproc_handle_exception(target,NULL,&exst);
+	retval = linux_userproc_handle_exception(target,0,NULL,&exst);
 
 	if (THREAD_SPECIFIC_STATUS(retval)) {
 	    vwarn("unhandled thread-specific status %d!\n",retval);
@@ -3990,7 +4013,7 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 
     exst.tid = tid;
     exst.pstatus = pstatus;
-    retval = linux_userproc_handle_exception(target,&again,&exst);
+    retval = linux_userproc_handle_exception(target,0,&again,&exst);
     if (again)
 	goto again;
 
@@ -4272,7 +4295,7 @@ int linux_userproc_write_reg(struct target *target,tid_t tid,REG reg,
     }
 
     /* Flush the registers in target_resume! */
-    tthread->dirty = 1;
+    OBJSDIRTY(tthread);
 
     return 0;
 }

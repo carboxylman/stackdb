@@ -37,7 +37,7 @@
 #include "target_api.h"
 #include "target.h"
 #include "target_linux_userproc.h"
-#ifdef ENABLE_XENSUPPORT
+#ifdef ENABLE_XEN
 #include "target_xen_vm.h"
 #endif
 
@@ -46,7 +46,7 @@
 #include "alist.h"
 
 struct target *t = NULL;
-int ots_len = 0;
+unsigned int ots_len = 0;
 struct target **ots = NULL;
 
 int len = 0;
@@ -84,7 +84,7 @@ struct dt_argp_state {
     int quiet;
     int argc;
     char **argv;
-    int ospecs_len;
+    unsigned int ospecs_len;
     struct overlay_spec **ospecs;
 };
 
@@ -146,13 +146,13 @@ void cleanup() {
 	    if (!ots[j])
 		continue;
 	    target_close(ots[j]);
-	    target_free(ots[j]);
+	    target_finalize(ots[j]);
 	    ots[j] = NULL;
 	}
     }
 
     target_close(t);
-    target_free(t);
+    target_finalize(t);
 
     if (disfuncs)
 	g_hash_table_destroy(disfuncs);
@@ -937,7 +937,7 @@ error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state) {
 	ospec->spec = target_argp_driver_parse(NULL,NULL,
 					       array_list_len(argv_list) - 1,
 					       (char **)argv_list->list,
-					       TARGET_TYPE_PHP | TARGET_TYPE_XEN_PROCESS,0);
+					       TARGET_TYPE_PHP | TARGET_TYPE_OS_PROCESS,0);
 	if (!ospec->spec) {
 	    verror("could not parse overlay spec %d!\n",opts->ospecs_len);
 	    array_list_free(argv_list);
@@ -958,7 +958,8 @@ int main(int argc,char **argv) {
     target_status_t tstat;
     ADDR *addrs = NULL;
     char *word;
-    int i, j;
+    int i;
+    unsigned int j;
     struct probe *probe;
     target_poll_outcome_t poutcome;
     int pstatus;
@@ -1184,7 +1185,7 @@ int main(int argc,char **argv) {
 		}
 		else {
 		    if (ots) {
-			for (j = ots_len - 1; j >= 0; --j) {
+			for (j = ots_len - 1; (j + 1) > 0; --j) {
 			    bsymbol = target_lookup_sym(ots[j],symname,NULL,
 							srcfile,
 							SYMBOL_TYPE_FLAG_NONE);
@@ -1615,7 +1616,7 @@ int main(int argc,char **argv) {
 	    else {
 		whence = PROBEPOINT_EXEC;
 		type = PROBEPOINT_BREAK;
-		rstyle = PROBEPOINT_FASTEST;
+		rstyle = PROBEPOINT_SW;
 		pre = addr_code_pre;
 		if (opts.do_post)
 		    post = addr_code_post;

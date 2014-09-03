@@ -39,10 +39,7 @@ struct gdb_spec {
     unsigned int do_stdio:1,
 	         do_udp:1,
 	         do_unix:1,
-	         no_hw_debug_reg_clear:1,
-	         no_hvm_setcontext:1,
 	         clear_mem_caches_each_exception:1,
-	         use_libvmi:1,
 	         is_qemu:1,
 	         is_kvm:1;
 

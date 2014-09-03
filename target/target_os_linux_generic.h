@@ -166,6 +166,56 @@ struct os_linux_state {
 
     GHashTable *task_struct_addr_to_thread;
 
+    /*
+     * OS Process metadata.
+     */
+
+    /*
+     * One mm_struct per vma list.  These vma caches may be pointed 
+     */
+    GHashTable *mm_addr_to_mm_cache;
+
+    /*
+     * tid_t to struct target_os_process *.
+     */
+    GHashTable *processes;
+
+    /* These are for APF_PROCESS_MEMORY. */
+    struct probe *active_memory_probe_uselib;
+    struct probe *active_memory_probe_munmap;
+    struct probe *active_memory_probe_mmap;
+    struct probe *active_memory_probe_mprotect;
+    struct probe *active_memory_probe_mremap;
+    struct probe *active_memory_probe_mmap_pgoff;
+    struct probe *active_memory_probe_madvise;
+};
+
+/*
+ * This just helps us scan for updates to a task's
+ * task_struct->mm->mmap (vm_area_struct list).
+ *
+ * There is one of these for each target memrange.
+ */
+struct os_linux_vma {
+    struct value *vma;
+    ADDR next_vma_addr;
+    struct os_linux_vma *next;
+    struct memrange *range;
+};
+
+struct os_linux_mm {
+    uint8_t valid:1;
+
+    struct addrspace *space;
+
+    struct value *mm;
+    /* Cache these to determine if range is heap/stack. */
+    ADDR mm_start_brk;
+    ADDR mm_brk;
+    ADDR mm_start_stack;
+
+    struct os_linux_vma *vma_cache;
+    int vma_len;
 };
 
 struct os_linux_thread_state {
@@ -180,7 +230,6 @@ struct os_linux_thread_state {
      */
     /* @task_struct is a "live" value!  it may be value_refresh()'d! */
     struct value *task_struct;
-    num_t tgid;                      /* Read-only; not flushed */
     unum_t task_flags;
     /* The thread_info is always at the bottom of the kernel stack. */
     struct value *thread_info;
@@ -222,6 +271,11 @@ struct os_linux_thread_state {
     uint16_t gs;
     uint32_t eflags;
     ADDR ebp;
+
+    /*
+     * We only use this for loading process's regions.
+     */
+    ADDR last_mm_addr;
 };
 
 struct symbol *os_linux_get_task_struct_type(struct target *target);

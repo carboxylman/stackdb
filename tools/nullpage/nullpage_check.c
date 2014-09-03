@@ -49,7 +49,7 @@ target_status_t cleanup() {
     }
     if (target) {
 	retval = target_close(target);
-	target_free(target);
+	target_finalize(target);
 	target = NULL;
     }
 
@@ -221,7 +221,8 @@ int main(int argc,char **argv) {
     npc.ttctx = 1;
     npc.ttdetail = 0;
 
-    tspec = target_argp_driver_parse(&np_argp,&npc,argc,argv,TARGET_TYPE_XEN,1);
+    tspec = target_argp_driver_parse(&np_argp,&npc,argc,argv,
+				     TARGET_TYPE_XEN | TARGET_TYPE_GDB,1);
 
     if (!tspec) {
 	verror("could not parse target arguments!\n");

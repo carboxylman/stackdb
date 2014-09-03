@@ -75,10 +75,11 @@ static int gdb_loaddebugfiles(struct target *target,struct addrspace *space,
 static int gdb_postloadinit(struct target *target);
 static int gdb_postopened(struct target *target);
 static int gdb_set_active_probing(struct target *target,
-				     active_probe_flags_t flags);
+				  active_probe_flags_t flags);
 
 static target_status_t gdb_handle_exception(struct target *target,
-					       int *again,void *priv);
+					    target_exception_flags_t flags,
+					    int *again,void *priv);
 
 static struct target *
 gdb_instantiate_overlay(struct target *target,
@@ -93,6 +94,7 @@ static int gdb_attach_overlay_thread(struct target *base,struct target *overlay,
 				     tid_t newtid);
 static int gdb_detach_overlay_thread(struct target *base,struct target *overlay,
 				     tid_t tid);
+
 static target_status_t gdb_status(struct target *target);
 static int gdb_pause(struct target *target,int nowait);
 static int __gdb_resume(struct target *target,int detaching);
@@ -132,9 +134,10 @@ static int gdb_flush_current_thread(struct target *target);
 static int gdb_flush_all_threads(struct target *target);
 static int gdb_invalidate_thread(struct target *target,
 				    struct target_thread *tthread);
-static int gdb_thread_snprintf(struct target_thread *tthread,
-				  char *buf,int bufsiz,
-				  int detail,char *sep,char *key_val_sep);
+static int gdb_thread_snprintf(struct target *target,
+			       struct target_thread *tthread,
+			       char *buf,int bufsiz,
+			       int detail,char *sep,char *key_val_sep);
 
 static struct target_memmod *gdb_insert_sw_breakpoint(struct target *target,
 						      tid_t tid,ADDR addr);
@@ -197,23 +200,22 @@ struct target_ops gdb_ops = {
     .loadregions = gdb_loadregions,
     .loaddebugfiles = gdb_loaddebugfiles,
     .postloadinit = gdb_postloadinit,
-/*
     .postopened = gdb_postopened,
     .set_active_probing = gdb_set_active_probing,
-*/
+
     .handle_exception = gdb_handle_exception,
     .handle_break = probepoint_bp_handler,
     .handle_step = probepoint_ss_handler,
 /*
     .handle_interrupted_step = NULL,
 */
-/*
+
     .instantiate_overlay = gdb_instantiate_overlay,
     .lookup_overlay_thread_by_id = gdb_lookup_overlay_thread_by_id,
     .lookup_overlay_thread_by_name = gdb_lookup_overlay_thread_by_name,
     .attach_overlay_thread = gdb_attach_overlay_thread,
     .detach_overlay_thread = gdb_detach_overlay_thread,
-*/
+
     .status = gdb_status,
     .pause = gdb_pause,
     .resume = gdb_resume,
@@ -672,7 +674,7 @@ static struct target *gdb_attach(struct target_spec *spec,
 	    target->state = NULL;
     }
     if (target)
-	target_free(target);
+	target_finalize(target);
 
     return NULL;
 }
@@ -842,19 +844,12 @@ static int gdb_fini(struct target *target) {
  * One is enough for any GDB target, I think.
  */
 static int gdb_loadspaces(struct target *target) {
-    struct addrspace *space;
-
     vdebug(5,LA_TARGET,LF_GDB,"%s\n",target->name);
 
     if (target->personality == TARGET_PERSONALITY_OS)
-	space = addrspace_create(target,"kernel",1);
+	addrspace_create(target,"kernel",1);
     else
-	space = addrspace_create(target,"main",1);
-
-    space->target = target;
-    RHOLD(space,target);
-
-    list_add_tail(&space->space,&target->spaces);
+	addrspace_create(target,"main",1);
 
     return 0;
 }
@@ -916,11 +911,7 @@ static int gdb_loaddebugfiles(struct target *target,struct addrspace *space,
 	goto out;
 
     if (target_associate_debugfile(target,region,debugfile)) {
-	debugfile_release(debugfile);
 	goto out;
-    }
-    else {
-	debugfile_release(debugfile);
     }
 
     /*
@@ -979,9 +970,8 @@ static int gdb_postloadinit(struct target *target) {
 	target->ipregno = REG_X86_EIP;
     }
 
-    rc = target_personality_postloadinit(target);
-    if (rc < 0)
-	return rc;
+    SAFE_PERSONALITY_OP_WARN(init,rc,0,target);
+    SAFE_PERSONALITY_OP_WARN(postloadinit,rc,0,target);
 
     char *start = (char *)g_hash_table_lookup(target->config,
 					      "OS_KERNEL_START_ADDR");
@@ -990,6 +980,167 @@ static int gdb_postloadinit(struct target *target) {
 
     return 0;
 
+    return 0;
+}
+
+static int gdb_postopened(struct target *target) {
+    int rc;
+    SAFE_PERSONALITY_OP_WARN(postopened,rc,0,target);
+    return rc;
+}
+
+static int gdb_set_active_probing(struct target *target,
+				  active_probe_flags_t flags) {
+    int rc;
+    SAFE_PERSONALITY_OP_WARN(set_active_probing,rc,0,target,flags);
+    return rc;
+}
+
+static struct target *
+gdb_instantiate_overlay(struct target *target,
+			struct target_thread *tthread,
+			struct target_spec *spec,
+			struct target_thread **ntthread) {
+    struct target *overlay;
+    REGVAL thip;
+    tid_t ltid;
+    struct target_thread *leader;
+
+    if (spec->target_type != TARGET_TYPE_OS_PROCESS) {
+	errno = EINVAL;
+	return NULL;
+    }
+
+    errno = 0;
+    thip = target_read_reg(target,tthread->tid,target->ipregno);
+    if (errno) {
+	verror("could not read IP for tid %"PRIiTID"!!\n",tthread->tid);
+	return NULL;
+    }
+    if (target_os_thread_is_user(target,tthread->tid) != 1) {
+	errno = EINVAL;
+	verror("tid %"PRIiTID" IP 0x%"PRIxADDR" is not a user thread!\n",
+	       tthread->tid,thip);
+	return NULL;
+    }
+
+    /*
+     * Flip to the group leader if it is not this thread itself.
+     */
+    ltid = target_os_thread_get_leader(target,tthread->tid);
+    leader = target_lookup_thread(target,ltid);
+    if (!leader) {
+	verror("could not load group_leader for thread %d; BUG?!\n",tthread->tid);
+	return NULL;
+    }
+    else if (leader != tthread) {
+	vdebug(5,LA_TARGET,LF_XV,
+	       "using group_leader %d instead of user-supplied overlay thread %d\n",
+	       leader->tid,tthread->tid);
+	*ntthread = leader;
+    }
+
+    /*
+     * All we want to do here is create the overlay target.
+     */
+    overlay = target_create("os_process",spec);
+
+    return overlay;
+}
+
+static struct target_thread *
+gdb_lookup_overlay_thread_by_id(struct target *target,int id) {
+    struct target_thread *retval;
+
+    retval = gdb_load_thread(target,id,0);
+    if (!retval) {
+	if (!errno)
+	    errno = ESRCH;
+	return NULL;
+    }
+
+    if (target_os_thread_is_user(target,retval->tid) == 1) {
+	vdebug(5,LA_TARGET,LF_GDB,
+	       "found overlay thread %d\n",id);
+	return retval;
+    }
+    else {
+	verror("tid %d matched %d, but is a kernel thread!\n",retval->tid,id);
+	errno = EINVAL;
+	return NULL;
+    }
+}
+
+static struct target_thread *
+gdb_lookup_overlay_thread_by_name(struct target *target,char *name) {
+    struct target_thread *retval = NULL;
+    struct target_thread *tthread;
+    int slen;
+    int rc;
+    GHashTableIter iter;
+
+    if ((rc = gdb_load_available_threads(target,0)))
+	vwarn("could not load %d threads; continuing anyway!\n",-rc);
+
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
+	if (tthread == target->global_thread)
+	    continue;
+
+	if (!tthread->name) {
+	    vwarn("tid %d does not have a name; continuing!\n",
+		  tthread->tid);
+	    continue;
+	}
+
+	slen = strlen(tthread->name);
+	vdebug(8,LA_TARGET,LF_GDB,
+	       "checking task with name '%*s' against '%s'\n",
+	       slen,tthread->name,name);
+	if (strncmp(name,tthread->name,slen) == 0) {
+	    retval = tthread;
+	    break;
+	}
+    }
+
+    if (retval) {
+	if (target_os_thread_is_user(target,retval->tid) != 1) {
+	    verror("tid %d matched '%s', but is a kernel thread!\n",
+		   retval->tid,name);
+	    errno = EINVAL;
+	    return NULL;
+	}
+	else {
+	    vdebug(5,LA_TARGET,LF_GDB,
+		   "found overlay thread %"PRIiTID"\n",retval->tid);
+	    return tthread;
+	}
+    }
+    else {
+	errno = ESRCH;
+	return NULL;
+    }
+}
+
+static int gdb_attach_overlay_thread(struct target *base,struct target *overlay,
+				     tid_t newtid) {
+    tid_t cltid,nltid;
+
+    nltid = target_os_thread_get_leader(base,newtid);
+    cltid = target_os_thread_get_leader(base,overlay->base_thread->tid);
+
+    if (nltid == -1 || cltid == -1)
+	return -1;
+
+    if (nltid == cltid)
+	return 0;
+
+    errno = EINVAL;
+    return 1;
+}
+
+static int gdb_detach_overlay_thread(struct target *base,struct target *overlay,
+				     tid_t tid) {
     return 0;
 }
 
@@ -1052,6 +1203,7 @@ static int __gdb_get_cpl(struct target *target,tid_t tid) {
 }
 
 static target_status_t gdb_handle_exception(struct target *target,
+					    target_exception_flags_t flags,
 					    int *again,void *priv) {
     struct gdb_state *gstate = (struct gdb_state *)target->state;
     struct gdb_rsp_stop_status *ss =
@@ -1062,7 +1214,7 @@ static target_status_t gdb_handle_exception(struct target *target,
     tid_t tid;
     struct target_thread *tthread;
     struct probepoint *pp;
-
+    int rc;
 
     tstatus = gdb_status(target);
     if (tstatus == TSTATUS_ERROR) {
@@ -1082,8 +1234,6 @@ static target_status_t gdb_handle_exception(struct target *target,
 	return tstatus;
     }
     else if (tstatus == TSTATUS_PAUSED) {
-	target_clear_state_changes(target);
-
 	vdebug(3,LA_TARGET,LF_GDB,"new debug event\n");
 
 	target->monitorhandling = 1;
@@ -1121,7 +1271,7 @@ static target_status_t gdb_handle_exception(struct target *target,
 	/*
 	 * Give the personality a chance to update its state.
 	 */
-	target_personality_handle_exception(target);
+	SAFE_PERSONALITY_OP_WARN_NORET(handle_exception,rc,0,target,flags);
 
 	/* 
 	 * Give the hops a chance to update.
@@ -1481,7 +1631,7 @@ static target_status_t gdb_monitor(struct target *target) {
 	ret = gdb_rsp_recv(target,0,0,NULL);
 
 	again = 0;
-	retval = gdb_handle_exception(target,&again,NULL);
+	retval = gdb_handle_exception(target,0,&again,NULL);
 	if (retval == TSTATUS_ERROR && again == 0) {
 	    target->needmonitorinterrupt = 0;
 	    return retval;
@@ -1528,7 +1678,7 @@ static int gdb_detach_evloop(struct target *target) {
 tid_t gdb_gettid(struct target *target) {
     struct target_thread *tthread;
 
-    if (target->current_thread && target->current_thread->valid)
+    if (target->current_thread && OBJVALID(target->current_thread))
 	return target->current_thread->tid;
 
     tthread = gdb_load_current_thread(target,0);
@@ -1553,7 +1703,7 @@ static struct target_thread *__gdb_load_cached_thread(struct target *target,
     if (!tthread)
 	return NULL;
 
-    if (!tthread->valid)
+    if (!OBJVALID(tthread))
 	return gdb_load_thread(target,tid,0);
 
     return tthread;
@@ -1577,14 +1727,14 @@ static struct target_thread *__gdb_load_current_thread(struct target *target,
      * wants, and they don't want to force a reload, give them that.
      */
     if (globalonly && !force
-	&& target->global_thread && target->global_thread->valid)
+	&& target->global_thread && OBJVALID(target->global_thread))
 	return target->global_thread;
     /*
      * Otherwise, if the current thread is valid, and we're not forcing
      * a reload, give them the current thread.
      */
     else if (!globalonly && !force
-	     && target->current_thread && target->current_thread->valid)
+	     && target->current_thread && OBJVALID(target->current_thread))
 	return target->current_thread;
 
     if (target_status(target) != TSTATUS_PAUSED) {
@@ -1663,7 +1813,7 @@ static struct target_thread *__gdb_load_current_thread(struct target *target,
     cpl = 0x3 & cs;
 
     /* Keep loading the global thread... */
-    if (!target->global_thread->valid) {
+    if (!OBJVALID(target->global_thread)) {
 	if (__gdb_in_userspace(target,cpl,ipval))
 	    target->global_thread->tidctxt = THREAD_CTXT_USER;
 	else
@@ -1700,7 +1850,7 @@ static struct target_thread *__gdb_load_current_thread(struct target *target,
 	 * technically still loading it, mark it as valid now... it'll
 	 * be fully valid shortly!
 	 */
-	target->global_thread->valid = 1;
+	OBJSVALID(target->global_thread);
 	target_thread_set_status(target->global_thread,THREAD_STATUS_RUNNING);
     }
 
@@ -1727,7 +1877,7 @@ static struct target_thread *__gdb_load_current_thread(struct target *target,
     /*
      * Ask the personality to detect our current thread.
      */
-    tthread = target_personality_load_current_thread(target,force);
+    SAFE_PERSONALITY_OP(load_current_thread,tthread,NULL,target,force);
 
     /*
      * Set the current thread (might be a real thread, or the global
@@ -1772,7 +1922,7 @@ static struct target_thread *__gdb_load_current_thread(struct target *target,
 	   "loaded current thread %d\n",target->current_thread->tid);
 
     /* Mark its state as valid in our cache. */
-    tthread->valid = 1;
+    OBJSVALID(tthread);
 
     return tthread;
 
@@ -1808,7 +1958,7 @@ static struct target_thread *gdb_load_thread(struct target *target,
 	 * current thread if it's not loaded.  So... see
 	 * _load_current_thread for more...
 	 */
-	if (target->global_thread->valid)
+	if (OBJVALID(target->global_thread))
 	    return target->global_thread;
 	else {
 	    gdb_load_current_thread(target,force);
@@ -1832,7 +1982,7 @@ static struct target_thread *gdb_load_thread(struct target *target,
      * valid, or if the thread is in our cache and is valid.
      */
     else if (target->current_thread 
-	     && target->current_thread->valid
+	     && OBJVALID(target->current_thread)
 	     && target->current_thread->tid == tid) {
 	return gdb_load_current_thread(target,force);
     }
@@ -1840,7 +1990,7 @@ static struct target_thread *gdb_load_thread(struct target *target,
      * Otherwise, try to lookup thread @tid.
      */
     else if ((tthread = target_lookup_thread(target,tid))) {
-	if (tthread->valid && !force) {
+	if (OBJVALID(tthread) && !force) {
 	    vdebug(4,LA_TARGET,LF_GDB,
 		   "did not need to load thread; copy is valid\n");
 	    return tthread;
@@ -1856,11 +2006,15 @@ static struct target_thread *gdb_load_thread(struct target *target,
      * This means we must ask the personality to do it, because only the
      * personality can interpret the kernel stack.
      */
-    return target_personality_load_thread(target,tid,force);
+    SAFE_PERSONALITY_OP_WARN_NORET(load_thread,tthread,NULL,target,tid,force);
+
+    return tthread;
 }
 
 static struct array_list *gdb_list_available_tids(struct target *target) {
-    return target_personality_list_available_tids(target);
+    struct array_list *retval;
+    SAFE_PERSONALITY_OP(list_available_tids,retval,NULL,target);
+    return retval;
 }
 
 static int gdb_load_all_threads(struct target *target,int force) {
@@ -1895,6 +2049,8 @@ static int gdb_load_all_threads(struct target *target,int force) {
 }
 
 static int gdb_load_available_threads(struct target *target,int force) {
+    int rc;
+
     /*
      * Load the current thread first to load the global thread.  The
      * current thread will get loaded again in the loop below if @force
@@ -1905,7 +2061,8 @@ static int gdb_load_available_threads(struct target *target,int force) {
 	return -1;
     }
 
-    return target_personality_load_available_threads(target,force);
+    SAFE_PERSONALITY_OP(load_available_threads,rc,0,target,force);
+    return rc;
 }
 
 /*
@@ -1931,10 +2088,10 @@ static int gdb_flush_global_thread(struct target *target,
 
     vdebug(5,LA_TARGET,LF_GDB,"%s tid %"PRIiTID"\n",target->name,tid);
 
-    if (!tthread->valid || !tthread->dirty) {
+    if (!OBJVALID(tthread) || !OBJDIRTY(tthread)) {
 	vdebug(8,LA_TARGET,LF_GDB,
 	       "%s tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
-	       target->name,tid,tthread->valid,tthread->dirty);
+	       target->name,tid,OBJVALID(tthread),OBJDIRTY(tthread));
 	return 0;
     }
 
@@ -1960,7 +2117,7 @@ static int gdb_flush_global_thread(struct target *target,
     }
 
     /* Mark cached copy as clean. */
-    tthread->dirty = 0;
+    OBJSCLEAN(tthread);
 
     return 0;
 }
@@ -1969,6 +2126,7 @@ static int gdb_flush_current_thread(struct target *target) {
     struct gdb_state *xstate = (struct gdb_state *)(target->state);
     struct target_thread *tthread;
     tid_t tid;
+    int rc;
 
     if (!target->current_thread) {
 	verror("current thread not loaded!\n");
@@ -1985,10 +2143,10 @@ static int gdb_flush_current_thread(struct target *target) {
 
     vdebug(5,LA_TARGET,LF_GDB,"%s tid %"PRIiTID"\n",target->name,tid);
 
-    if (!tthread->valid || !tthread->dirty) {
+    if (!OBJVALID(tthread) || !OBJDIRTY(tthread)) {
 	vdebug(8,LA_TARGET,LF_GDB,
 	       "%s tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
-	       target->name,tid,tthread->valid,tthread->dirty);
+	       target->name,tid,OBJVALID(tthread),OBJDIRTY(tthread));
 	return 0;
     }
 
@@ -2012,11 +2170,13 @@ static int gdb_flush_current_thread(struct target *target) {
 	      target->name,tid,tthread->tidctxt);
     }
 
-    return target_personality_flush_current_thread(target);
+    SAFE_PERSONALITY_OP(flush_current_thread,rc,0,target);
+    return rc;
 }
 
 static int gdb_flush_thread(struct target *target,tid_t tid) {
     struct target_thread *tthread;
+    int rc;
 
     vdebug(16,LA_TARGET,LF_GDB,"%s\n",target->name);
 
@@ -2045,7 +2205,7 @@ static int gdb_flush_thread(struct target *target,tid_t tid) {
 	       " tid %"PRIiTID"; exiting, user-mode EIP, or BUG?\n",
 	       tid);
     }
-    else if (!target->current_thread->valid) {
+    else if (!OBJVALID(target->current_thread)) {
 	vdebug(9,LA_TARGET,LF_GDB,
 	       "current thread not valid to compare with"
 	       " tid %"PRIiTID"; exiting, user-mode EIP, or BUG?\n",
@@ -2074,17 +2234,18 @@ static int gdb_flush_thread(struct target *target,tid_t tid) {
     if (tthread == target->current_thread)
 	return gdb_flush_current_thread(target);
 
-    if (!tthread->valid || !tthread->dirty) {
+    if (!OBJVALID(tthread) || !OBJDIRTY(tthread)) {
 	vdebug(8,LA_TARGET,LF_GDB,
 	       "%s tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
-	       target->name,tthread->tid,tthread->valid,tthread->dirty);
+	       target->name,tthread->tid,OBJVALID(tthread),OBJDIRTY(tthread));
 	return 0;
     }
 
-    if (target_personality_flush_thread(target,tid))
+    SAFE_PERSONALITY_OP(flush_thread,rc,0,target,tid);
+    if (rc)
 	goto errout;
 
-    tthread->dirty = 0;
+    OBJSCLEAN(tthread);
 
     return 0;
 
@@ -2124,7 +2285,7 @@ static int gdb_flush_all_threads(struct target *target) {
 	 * its state is valid (whether it is dirty or not!!), we must
 	 * merge.
 	 */
-	if (target->current_thread->valid)
+	if (OBJVALID(target->current_thread))
 	    current_thread = target->current_thread;
 
 	rc = gdb_flush_current_thread(target);
@@ -2168,13 +2329,15 @@ static int gdb_flush_all_threads(struct target *target) {
 
 static int gdb_invalidate_thread(struct target *target,
 				 struct target_thread *tthread) {
-    return target_personality_invalidate_thread(target,tthread);
+    int rc;
+    SAFE_PERSONALITY_OP(invalidate_thread,rc,0,target,tthread);
+    return rc;
 }
 
-static int gdb_thread_snprintf(struct target_thread *tthread,
+static int gdb_thread_snprintf(struct target *target,
+			       struct target_thread *tthread,
 			       char *buf,int bufsiz,
 			       int detail,char *sep,char *kvsep) {
-    struct target *target = tthread->target;
     int rc = 0;
     int nrc;
 
@@ -2185,10 +2348,10 @@ static int gdb_thread_snprintf(struct target_thread *tthread,
 	    return rc;
     }
 
-    nrc = target_personality_thread_snprintf(tthread,
-					     (rc >= bufsiz) ? NULL : buf + rc,
-					     (rc >= bufsiz) ? 0 : bufsiz - rc,
-					     detail,sep,kvsep);
+    SAFE_PERSONALITY_OP(thread_snprintf,nrc,0,target,tthread,
+			(rc >= bufsiz) ? NULL : buf + rc,
+			(rc >= bufsiz) ? 0 : bufsiz - rc,
+			detail,sep,kvsep);
     if (nrc < 0) {
 	verror("could not snprintf personality info for thread %d!\n",
 	       tthread->tid);

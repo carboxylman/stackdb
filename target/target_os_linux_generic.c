@@ -31,6 +31,7 @@
 #include "arch_x86_64.h"
 #include "binfile.h"
 #include "target.h"
+#include "target_event.h"
 #include "target_os.h"
 #include "target_os_linux_generic.h"
 
@@ -43,6 +44,7 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 						   int force);
 static int os_linux_updateregions(struct target *target,
 				  struct addrspace *space);
+static void os_linux_mm_free(struct os_linux_mm *olmm);
 
 /*
  * We don't keep any local storage, so there is nothing to init or free!
@@ -299,11 +301,20 @@ int os_linux_attach(struct target *target) {
     lstate->task_struct_addr_to_thread = 
 	g_hash_table_new(g_direct_hash,g_direct_equal);
 
+    lstate->mm_addr_to_mm_cache =
+	g_hash_table_new(g_direct_hash,g_direct_equal);
+    lstate->processes =
+	g_hash_table_new(g_direct_hash,g_direct_equal);
+
     target->personality = TARGET_PERSONALITY_OS;
 
     return 0;
 
  errout:
+    if (lstate->processes) 
+	g_hash_table_destroy(lstate->processes);
+    if (lstate->mm_addr_to_mm_cache) 
+	g_hash_table_destroy(lstate->mm_addr_to_mm_cache);
     if (lstate->task_struct_addr_to_thread) 
 	g_hash_table_destroy(lstate->task_struct_addr_to_thread);
     if (lstate->kernel_version)
@@ -324,11 +335,39 @@ int os_linux_fini(struct target *target) {
     struct os_linux_state *lstate = \
 	(struct os_linux_state *)target->personality_state;
     REFCNT trefcnt;
+    gpointer vp;
+    GHashTableIter iter;
+    struct target_process *process;
+    struct os_linux_mm *olmm;
+
+    /*
+     * If we have loaded any processes, clear them.
+     */
+    g_hash_table_iter_init(&iter,lstate->processes);
+    while (g_hash_table_iter_next(&iter,NULL,&vp)) {
+	process = (struct target_process *)vp;
+	RPUT(process,target_process,target,trefcnt);
+	g_hash_table_iter_remove(&iter);
+    }
+
+    /*
+     * If we have loaded any process addrspaces, clear them.
+     */
+    g_hash_table_iter_init(&iter,lstate->mm_addr_to_mm_cache);
+    while (g_hash_table_iter_next(&iter,NULL,&vp)) {
+	olmm = (struct os_linux_mm *)vp;
+	os_linux_mm_free(olmm);
+	g_hash_table_iter_remove(&iter);
+    }
 
     if (lstate->task_struct_addr_to_thread) {
 	g_hash_table_destroy(lstate->task_struct_addr_to_thread);
 	lstate->task_struct_addr_to_thread = NULL;
     }
+
+    /*
+     * If we have loaded any processes, clear them.
+     */
 
     if (lstate->init_task)
 	bsymbol_release(lstate->init_task);
@@ -962,8 +1001,9 @@ int os_linux_postloadinit(struct target *target) {
 int os_linux_postopened(struct target *target) {
     struct addrspace *space;
     int rc = 0;
+    GList *t1;
 
-    list_for_each_entry(space,&target->spaces,space) {
+    v_g_list_foreach(target->spaces,t1,space) {
 	rc |= os_linux_updateregions(target,space);
     }
 
@@ -971,7 +1011,16 @@ int os_linux_postopened(struct target *target) {
 }
 
 int os_linux_handle_exception(struct target *target) {
+    struct os_linux_state *lstate;
     struct addrspace *space;
+    GList *t1,*t2;
+    struct target_thread *tthread;
+    struct target_event *event;
+    GHashTableIter iter;
+    gpointer vp;
+    struct os_linux_mm *olmm;
+
+    lstate = (struct os_linux_state *)target->personality_state;
 
     /*
      * If not active probing memory, we kind of want to update our
@@ -980,9 +1029,57 @@ int os_linux_handle_exception(struct target *target) {
      *
      * Active probing memory for the Xen target is a big win.
      */
-    if (!(target->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)) {
-	list_for_each_entry(space,&target->spaces,space) {
+    if (!(target->ap_flags & APF_OS_MEMORY)) {
+	v_g_list_foreach(target->spaces,t1,space) {
 	    os_linux_updateregions(target,space);
+	}
+    }
+
+    /*
+     * If we are tracking thread exits, we have to nuke
+     * "exiting" threads.  See comments near
+     * os_linux_active_thread_exit_handler .
+     */
+    if (target->ap_flags & APF_OS_THREAD_EXIT) {
+	t1 = g_hash_table_get_values(target->threads);
+	v_g_list_foreach(t1,t2,tthread) {
+	    if (!tthread->exiting) 
+		continue;
+
+	    if (tthread == target->current_thread) {
+		vdebug(5,LA_TARGET,LF_XV,
+		       "active-probed exiting thread %"PRIiTID" (%s)"
+		       " is still running; not deleting yet!\n",
+		       tthread->tid,tthread->name);
+	    }
+	    else {
+		vdebug(5,LA_TARGET,LF_XV,
+		       "active-probed exiting thread %"PRIiTID" (%s)"
+		       " can be deleted; doing it\n",
+		       tthread->tid,tthread->name);
+		event = target_create_event(target,tthread,
+					    T_EVENT_OS_THREAD_EXITED,
+					    tthread);
+		target_broadcast_event(target,event);
+		target_detach_thread(target,tthread);
+	    }
+	}
+	g_list_free(t1);
+    }
+
+    /*
+     * If we have loaded any process addrspaces, and if any of their 
+     * addrspaces are stale, clear stale spaces (they are stale if no
+     * one is using them -- if their refcnt is 0, no
+     * target_process->space holds them).
+     */
+    g_hash_table_iter_init(&iter,lstate->mm_addr_to_mm_cache);
+    while (g_hash_table_iter_next(&iter,NULL,&vp)) {
+	olmm = (struct os_linux_mm *)vp;
+
+	if (olmm->space->refcnt == 1) {
+	    os_linux_mm_free(olmm);
+	    g_hash_table_iter_remove(&iter);
 	}
     }
 
@@ -1302,7 +1399,7 @@ int os_linux_signal_enqueue(struct target *target,struct target_thread *tthread,
      * target_resume!
      */
     ltstate->thread_info_flags |= LOCAL_TIF_SIGPENDING;
-    tthread->dirty = 1;
+    OBJSDIRTY(tthread);
 
     return 0;
 }
@@ -2242,34 +2339,6 @@ struct probe *os_linux_syscall_probe_all(struct target *target,tid_t tid,
     return probe;
 }
 
-struct target_os_ops os_linux_generic_os_ops = {
-    /* All this work is done in attach and fini of the personality_ops. */
-    .init = NULL,
-    .fini = NULL,
-
-    .os_type = os_linux_type,
-    .os_version = os_linux_version,
-    .os_version_string = os_linux_version_string,
-    .os_version_cmp = os_linux_version_cmp,
-
-    .thread_get_pgd_phys = os_linux_thread_get_pgd_phys,
-    .thread_is_user = os_linux_thread_is_user,
-    .thread_get_leader = os_linux_thread_get_leader,
-    .signal_enqueue = os_linux_signal_enqueue,
-    .signal_to_name = os_linux_signal_to_name,
-    .signal_from_name = os_linux_signal_from_name,
-
-    .syscall_table_load = os_linux_syscall_table_load,
-    .syscall_table_unload = os_linux_syscall_table_unload,
-    .syscall_table_get = os_linux_syscall_table_get,
-    .syscall_lookup_name = os_linux_syscall_lookup_name,
-    .syscall_lookup_num = os_linux_syscall_lookup_num,
-    .syscall_lookup_addr = os_linux_syscall_lookup_addr,
-    .syscall_probe = os_linux_syscall_probe,
-    .syscall_probe_all = os_linux_syscall_probe_all,
-};
-
-
 num_t os_linux_get_preempt_count(struct target *target) {
     struct target_thread *tthread;
     struct os_linux_thread_state *ltstate;
@@ -2280,7 +2349,7 @@ num_t os_linux_get_preempt_count(struct target *target) {
 	errno = EINVAL;
 	return 0;
     }
-    else if (!tthread->valid) {
+    else if (!OBJVALID(tthread)) {
 	verror("current thread not valid; forgot to load it?\n");
 	errno = EINVAL;
 	return 0;
@@ -3141,8 +3210,8 @@ struct array_list *os_linux_list_available_tids(struct target *target) {
     /*
      * If we are tracking threads, we don't have scan the list!
      */
-    if ((target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)
-	&& (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)) {
+    if (target->ap_flags & APF_OS_THREAD_ENTRY
+	&& target->ap_flags & APF_OS_THREAD_EXIT) {
 	vdebug(8,LA_TARGET,LF_OSLINUX,
 	       "active probing thread entry/exit, so just reloading cache!\n");
 	return target_list_tids(target);
@@ -3202,12 +3271,13 @@ int os_linux_load_available_threads(struct target *target,int force) {
     int i = 0;
     struct array_list *cthreads;
     struct target_thread *tthread;
+    struct target_event *event;
 
     /*
      * If we are tracking threads, we don't have scan the list!
      */
-    if ((target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)
-	&& (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)) {
+    if (target->ap_flags & APF_OS_THREAD_ENTRY
+	&& target->ap_flags & APF_OS_THREAD_EXIT) {
 	vdebug(8,LA_TARGET,LF_OSLINUX,
 	       "active probing thread entry/exit, so just reloading cache!\n");
 	return target_load_all_threads(target,force);
@@ -3226,14 +3296,15 @@ int os_linux_load_available_threads(struct target *target,int force) {
 	cthreads = target_list_threads(target);
 	for (i = 0; i < array_list_len(cthreads); ++i) {
 	    tthread = (struct target_thread *)array_list_item(cthreads,i);
-	    if (!tthread->valid) {
+	    if (!OBJVALID(tthread)) {
 		vdebug(5,LA_TARGET,LF_OSLINUX | LF_THREAD,
 		       "evicting invalid thread %"PRIiTID"; no longer exists\n",
 		       tthread->tid);
-		target_add_state_change(target,tthread->tid,
-					TARGET_STATE_CHANGE_THREAD_EXITED,
-					0,0,0,0,NULL);
-		target_delete_thread(target,tthread,0);
+		event = target_create_event(target,tthread,
+					    T_EVENT_OS_THREAD_EXITED,tthread);
+		target_broadcast_event(target,event);
+		target_detach_thread(target,tthread);
+		event->thread = NULL;
 	    }
 	}
 	array_list_free(cthreads);
@@ -3248,6 +3319,7 @@ struct target_thread *os_linux_load_thread(struct target *target,
     struct os_linux_thread_state *ltstate;
     int taskv_loaded;
     struct value *taskv = NULL;
+    struct target_event *event;
 
     /* 
      * We need to find the task on the kernel's task list that matches
@@ -3272,7 +3344,7 @@ struct target_thread *os_linux_load_thread(struct target *target,
      * and we are tracking EXITs, we don't need to walk the task list.
      */
     if (!tthread 
-	|| !(target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)) {
+	|| !(target->ap_flags & APF_OS_THREAD_EXIT)) {
 	taskv = os_linux_get_task(target,tid);
 	taskv_loaded = 1;
 
@@ -3282,10 +3354,11 @@ struct target_thread *os_linux_load_thread(struct target *target,
 	    if (tthread) {
 		vdebug(3,LA_TARGET,LF_OSLINUX,
 		       "evicting old thread %"PRIiTID"; no longer exists!\n",tid);
-		target_add_state_change(target,tthread->tid,
-					TARGET_STATE_CHANGE_THREAD_EXITED,
-					0,0,0,0,NULL);
-		target_delete_thread(target,tthread,0);
+		event = target_create_event(target,tthread,
+					    T_EVENT_OS_THREAD_EXITED,tthread);
+		target_broadcast_event(target,event);
+		target_detach_thread(target,tthread);
+		event->thread = NULL;
 	    }
 
 	    return NULL;
@@ -3308,10 +3381,11 @@ struct target_thread *os_linux_load_thread(struct target *target,
 		    vdebug(3,LA_TARGET,LF_OSLINUX,
 			   "evicting old thread %"PRIiTID"; no longer exists!\n",
 			   tid);
-		    target_add_state_change(target,tthread->tid,
-					    TARGET_STATE_CHANGE_THREAD_EXITED,
-					    0,0,0,0,NULL);
-		    target_delete_thread(target,tthread,0);
+		    event = target_create_event(target,tthread,
+						T_EVENT_OS_THREAD_EXITED,tthread);
+		    target_broadcast_event(target,event);
+		    target_detach_thread(target,tthread);
+		    event->thread = NULL;
 		}
 
 		return NULL;
@@ -3413,7 +3487,7 @@ __os_linux_load_current_thread_from_userspace(struct target *target,int force) {
     }
     else {
 	/* Reload its value. */
-	if (!tthread->valid) {
+	if (!OBJVALID(tthread)) {
 	    tthread = os_linux_load_thread_from_value(target,
 						      ltstate->task_struct);
 	    if (!tthread) {
@@ -3439,7 +3513,7 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
     int preempt_count;
     unum_t tiflags;
     struct value *taskv = NULL;
-    num_t tgid;
+    tid_t tgid;
     unum_t task_flags = 0;
     ADDR group_leader;
     struct target_thread *tthread = NULL;
@@ -3457,6 +3531,7 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
     int gid = -1;
     struct target_location_ctxt *tlctxt = target_global_tlctxt(target);
     thread_ctxt_t ctidctxt;
+    struct target_event *event;
 
     /*
      * Load EIP for later user-mode check.
@@ -3700,7 +3775,7 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 	    /* errno should be set for us. */
 	    goto errout;
 	}
-	tgid = v_num(v);
+	tgid = (tid_t)v_num(v);
 	value_free(v);
 	v = NULL;
 
@@ -3797,16 +3872,18 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 	 * represent a real system thread.
 	 */
 	if (tid != TID_GLOBAL 
-	    && (ltstate->tgid != tgid 
+	    && (tthread->tgid != tgid 
 		|| (taskv && ltstate->task_struct_addr != value_addr(taskv)))) {
 	    vdebug(5,LA_TARGET,LF_OSLINUX,
 		   "deleting non-matching cached old thread %"PRIiTID
 		   " (thread %p, tpc %p)\n",
 		   tid,tthread,tthread->tpc);
-	    target_add_state_change(target,tthread->tid,
-				    TARGET_STATE_CHANGE_THREAD_EXITED,
-				    0,0,0,0,NULL);
-	    target_delete_thread(target,tthread,0);
+	    event = target_create_event(target,tthread,
+					T_EVENT_OS_THREAD_EXITED,tthread);
+	    target_broadcast_event(target,event);
+	    target_detach_thread(target,tthread);
+	    event->thread = NULL;
+
 	    ltstate = NULL;
 	    tthread = NULL;
 	}
@@ -3824,8 +3901,9 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 	g_hash_table_insert(lstate->task_struct_addr_to_thread,
 			    (gpointer)value_addr(taskv),tthread);
 
-	target_add_state_change(target,tid,TARGET_STATE_CHANGE_THREAD_CREATED,
-				0,0,0,0,NULL);
+	event = target_create_event(target,tthread,
+				    T_EVENT_OS_THREAD_CREATED,tthread);
+	target_broadcast_event(target,event);
 
 	vdebug(5,LA_TARGET,LF_OSLINUX,
 	       "built new thread %"PRIiTID" (thread %p, tpc %p)\n",
@@ -4047,7 +4125,6 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 	}
 	ltstate->task_struct_addr = value_addr(taskv);
 	ltstate->task_struct = taskv;
-	ltstate->tgid = tgid;
 	ltstate->task_flags = task_flags;
 	ltstate->group_leader = group_leader;
     }
@@ -4113,7 +4190,7 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 	gtstate->thread_info_preempt_count = preempt_count;
 
 	if (mm_addr) 
-	    tthread->supported_overlay_types = TARGET_TYPE_XEN_PROCESS;
+	    tthread->supported_overlay_types = TARGET_TYPE_OS_PROCESS;
 	else
 	    tthread->supported_overlay_types = TARGET_TYPE_NONE;
 
@@ -4121,6 +4198,7 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 	    free(tthread->name);
 	tthread->name = comm;
 	tthread->ptid = ptid;
+	tthread->tgid = tgid;
 	tthread->uid = uid;
 	tthread->gid = gid;
 	comm = NULL;
@@ -4196,7 +4274,7 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
     struct os_linux_thread_state *ltstate = NULL;
     tid_t tid;
     tid_t ptid = -1;
-    num_t tgid = 0;
+    tid_t tgid = 0;
     unum_t task_flags = 0;
     ADDR group_leader;
     struct value *threadinfov = NULL;
@@ -4209,11 +4287,11 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
     char *comm = NULL;
     ADDR stack_member_addr;
     int i;
-    int ip_offset;
     int uid;
     int gid;
     struct target_location_ctxt *tlctxt = target_global_tlctxt(target);
     thread_ctxt_t ptregs_tidctxt;
+    struct target_event *event;
 
     vdebug(5,LA_TARGET,LF_OSLINUX,"loading\n");
 
@@ -4327,7 +4405,7 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
 	/* errno should be set for us. */
 	goto errout;
     }
-    tgid = v_num(v);
+    tgid = (tid_t)v_num(v);
     value_free(v);
     v = NULL;
 
@@ -4361,11 +4439,14 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
 	ltstate = (struct os_linux_thread_state *)tthread->personality_state;
 
 	/* Check if this is a cached entry for an old task */
-	if (ltstate->tgid != tgid 
+	if (tthread->tgid != tgid 
 	    || ltstate->task_struct_addr != value_addr(taskv)) {
-	    target_add_state_change(target,tid,TARGET_STATE_CHANGE_THREAD_EXITED,
-				    0,0,0,0,NULL);
-	    target_delete_thread(target,tthread,0);
+	    event = target_create_event(target,tthread,
+					T_EVENT_OS_THREAD_EXITED,tthread);
+	    target_broadcast_event(target,event);
+	    event->thread = NULL;
+	    target_detach_thread(target,tthread);
+
 	    ltstate = NULL;
 	    tthread = NULL;
 	}
@@ -4380,8 +4461,9 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
 	g_hash_table_insert(lstate->task_struct_addr_to_thread,
 			    (gpointer)value_addr(taskv),tthread);
 
-	target_add_state_change(target,tid,TARGET_STATE_CHANGE_THREAD_CREATED,
-				0,0,0,0,NULL);
+	event = target_create_event(target,tthread,
+				    T_EVENT_OS_THREAD_CREATED,tthread);
+	target_broadcast_event(target,event);
     }
     else {
 	/*
@@ -4396,7 +4478,7 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
 	 * running status, and only load from CPU in those cases.
 	 */
 	if (tthread == target->current_thread
-	    && target->current_thread->valid) {
+	    && OBJVALID(target->current_thread)) {
 	    vdebug(8,LA_TARGET,LF_OSLINUX,
 		   "not loading running, valid current thread %"PRIiTID" from"
 		   " task_struct 0x%"PRIxADDR"; loaded from CPU of course\n",
@@ -4469,7 +4551,7 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
     tthread->ptid = ptid;
     tthread->uid = uid;
     tthread->gid = gid;
-    ltstate->tgid = tgid;
+    tthread->tgid = tgid;
     ltstate->task_flags = task_flags;
     ltstate->group_leader = group_leader;
     ltstate->thread_info = threadinfov;
@@ -4551,7 +4633,7 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
     }
     else {
 	target_thread_set_status(tthread,THREAD_STATUS_RETURNING_USER);
-	tthread->supported_overlay_types = TARGET_TYPE_XEN_PROCESS;
+	tthread->supported_overlay_types = TARGET_TYPE_OS_PROCESS;
 
 	tthread->tidctxt = THREAD_CTXT_KERNEL;
 	ptregs_tidctxt = THREAD_CTXT_USER;
@@ -5196,7 +5278,7 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
     if (comm)
 	free(comm);
 
-    tthread->valid = 1;
+    OBJSVALID(tthread);
 
     return tthread;
 
@@ -5237,10 +5319,10 @@ int os_linux_flush_current_thread(struct target *target) {
 
     vdebug(5,LA_TARGET,LF_OSLINUX,"tid %d thid %"PRIiTID"\n",target->id,tid);
 
-    if (!tthread->valid || !tthread->dirty) {
+    if (!OBJVALID(tthread) || !OBJDIRTY(tthread)) {
 	vdebug(8,LA_TARGET,LF_OSLINUX,
 	       "tid %d thid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
-	       target->id,tid,tthread->valid,tthread->dirty);
+	       target->id,tid,OBJVALID(tthread),OBJDIRTY(tthread));
 	return 0;
     }
 
@@ -5275,7 +5357,7 @@ int os_linux_flush_current_thread(struct target *target) {
     }
 
     /* Mark cached copy as clean. */
-    tthread->dirty = 0;
+    OBJSCLEAN(tthread);
 
     return 0;
 }
@@ -5286,7 +5368,6 @@ int os_linux_flush_thread(struct target *target,tid_t tid) {
     struct target_thread *tthread;
     struct os_linux_thread_state *ltstate = NULL;
     struct value *v;
-    int ip_offset;
     int i;
     struct target_location_ctxt *tlctxt = target_global_tlctxt(target);
     REG reg;
@@ -5308,10 +5389,10 @@ int os_linux_flush_thread(struct target *target,tid_t tid) {
 	return -1;
     }
 
-    if (!tthread->valid || !tthread->dirty) {
+    if (!OBJVALID(tthread) || !OBJDIRTY(tthread)) {
 	vdebug(8,LA_TARGET,LF_OSLINUX,
 	       "target %d tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
-	       target->id,tthread->tid,tthread->valid,tthread->dirty);
+	       target->id,tthread->tid,OBJVALID(tthread),OBJDIRTY(tthread));
 	return 0;
     }
 
@@ -5819,7 +5900,7 @@ int os_linux_flush_thread(struct target *target,tid_t tid) {
 	value_free(v);
     }
 
-    tthread->dirty = 0;
+    OBJSCLEAN(tthread);
 
     return 0;
 
@@ -5851,17 +5932,16 @@ int os_linux_invalidate_thread(struct target *target,
 	}
     }
 
-    tthread->valid = 0;
+    OBJSINVALID(tthread);
 
     return 0;
 }
 
-int os_linux_thread_snprintf(struct target_thread *tthread,
+int os_linux_thread_snprintf(struct target *target,struct target_thread *tthread,
 			     char *buf,int bufsiz,
 			     int detail,char *sep,char *kvsep) {
     struct os_linux_thread_state *ltstate;
     int rc = 0;
-    struct target *target = tthread->target;
     int nrc;
     thread_ctxt_t othertidctxt;
 
@@ -5873,14 +5953,14 @@ int os_linux_thread_snprintf(struct target_thread *tthread,
     if (detail >= 0) {
 	rc += snprintf((rc >= bufsiz) ? NULL : buf + rc,
 		       (rc >= bufsiz) ? 0 : bufsiz - rc,
-		       "%stgid%s%"PRIiNUM "%s" "task_flags%s0x%"PRIxNUM "%s"
+		       "%stask_flags%s0x%"PRIxNUM "%s"
 		       "thread_info_flags%s0x%"PRIxNUM "%s"
 		       "preempt_count%s0x%"PRIiNUM "%s"
 		       "task%s0x%"PRIxADDR "%s" 
 		       "stack_base%s0x%"PRIxADDR "%s" 
 		       "pgd%s0x%"PRIx64 "%s" "mm%s0x%"PRIxADDR,
 		       sep,
-		       kvsep,ltstate->tgid,sep,kvsep,ltstate->task_flags,sep,
+		       kvsep,ltstate->task_flags,sep,
 		       kvsep,ltstate->thread_info_flags,sep,
 		       kvsep,ltstate->thread_info_preempt_count,sep,
 		       kvsep,ltstate->task_struct ? value_addr(ltstate->task_struct) : 0x0UL,sep,
@@ -5939,12 +6019,11 @@ int os_linux_thread_snprintf(struct target_thread *tthread,
 #define DRF "lx"
 #endif
 
-int os_linux_thread_snprintf(struct target_thread *tthread,
+int os_linux_thread_snprintf(struct target *target,struct target_thread *tthread,
 			     char *buf,int bufsiz,
 			     int detail,char *sep,char *kvsep) {
     struct os_linux_thread_state *ltstate;
     int rc = 0;
-    struct target *target = tthread->target;
     int nrc;
 
     if (detail < 0)
@@ -5955,13 +6034,13 @@ int os_linux_thread_snprintf(struct target_thread *tthread,
     if (detail >= 0) {
 	rc += snprintf((rc >= bufsiz) ? NULL : buf + rc,
 		       (rc >= bufsiz) ? 0 :bufsiz - rc,
-		       "tgid%s%"PRIiNUM "%s" "task_flags%s0x%"PRIxNUM "%s"
+		       "task_flags%s0x%"PRIxNUM "%s"
 		       "thread_info_flags%s0x%"PRIxNUM "%s"
 		       "preempt_count%s0x%"PRIiNUM "%s"
 		       "task%s0x%"PRIxADDR "%s" 
 		       "stack_base%s0x%"PRIxADDR "%s" 
 		       "pgd%s0x%"PRIx64 "%s" "mm%s0x%"PRIxADDR,
-		       kvsep,ltstate->tgid,sep,kvsep,ltstate->task_flags,sep,
+		       kvsep,ltstate->task_flags,sep,
 		       kvsep,ltstate->thread_info_flags,sep,
 		       kvsep,ltstate->thread_info_preempt_count,sep,
 		       kvsep,ltstate->task_struct ? value_addr(ltstate->task_struct) : 0x0UL,sep,
@@ -6090,7 +6169,7 @@ static int __update_module(struct target *target,struct value *value,void *data)
     unum_t mod_core_size;
     unum_t mod_init_size;
     struct __update_module_data *ud = (struct __update_module_data *)data;
-    struct list_head *pos;
+    GList *t1;
     struct memregion *tregion = NULL;
     struct memrange *range;
     char *modfilename = NULL;
@@ -6099,6 +6178,7 @@ static int __update_module(struct target *target,struct value *value,void *data)
     struct debugfile *debugfile = NULL;
     struct addrspace *space = ud->space;
     struct target_location_ctxt *tlctxt = target_global_tlctxt(target);
+    struct target_event *event;
 
     if (!ud) {
 	errno = EINVAL;
@@ -6167,8 +6247,7 @@ static int __update_module(struct target *target,struct value *value,void *data)
 	}
     }
 
-    list_for_each(pos,&space->regions) {
-	tregion = list_entry(pos,typeof(*tregion),region);
+    v_g_list_foreach(space->regions,t1,tregion) {
 	if (strcmp(tregion->name,
 		   (modfilename) ? modfilename : v_string(mod_name)) == 0) {
 	    if (tregion->base_load_addr == mod_core_addr)
@@ -6177,23 +6256,22 @@ static int __update_module(struct target *target,struct value *value,void *data)
 	tregion = NULL;
     }
 
-    if (tregion) {
-	tregion->exists = 1;
-    }
-    else {
+    if (!tregion) {
 	/*
 	 * Create a new one!  Anything could have happened.
 	 */
 	tregion = memregion_create(ud->space,REGION_TYPE_LIB,
 				   (modfilename) ? strdup(modfilename) \
 				                 : strdup(v_string(mod_name)));
-	tregion->new = 1;
+
+	OBJSNEW(tregion);
 
 	/*
 	 * Create a new range for the region.
 	 */
 	range = memrange_create(tregion,mod_core_addr,
 				mod_core_addr + mod_core_size,0,0);
+	OBJSNEW(range);
 	if (!range) {
 	    verror("could not create range for module addr 0x%"PRIxADDR"!\n",
 		   mod_core_addr);
@@ -6230,6 +6308,11 @@ static int __update_module(struct target *target,struct value *value,void *data)
 	    binfile_instance_release(bfi);
 	    bfi = NULL;
 	}
+
+	event = target_create_event(target,NULL,T_EVENT_OS_REGION_NEW,tregion);
+	target_broadcast_event(target,event);
+	event = target_create_event(target,NULL,T_EVENT_OS_RANGE_NEW,range);
+	target_broadcast_event(target,event);
     }
 
     ud->region = tregion;
@@ -6243,12 +6326,10 @@ static int __update_module(struct target *target,struct value *value,void *data)
  errout:
     if (mod_name)
 	value_free(mod_name);
-    if (debugfile)
-	debugfile_release(debugfile);
     if (bfi)
 	binfile_instance_release(bfi);
     if (tregion)
-	memregion_free(tregion);
+	addrspace_detach_region(space,tregion);
 
     return retval;
 }
@@ -6380,8 +6461,10 @@ static int os_linux_updateregions(struct target *target,
     struct os_linux_state *lstate = \
 	(struct os_linux_state *)target->personality_state;
     struct __update_module_data ud;
-    struct memregion *region,*tregion;
-    struct memrange *range,*trange;
+    struct memregion *region;
+    struct memrange *range;
+    struct target_event *event;
+    GList *t1,*t2,*t3,*t4;
 
     vdebug(5,LA_TARGET,LF_OSLINUX,"target %d\n",target->id);
 
@@ -6413,10 +6496,9 @@ static int os_linux_updateregions(struct target *target,
      *
      * We don't bother checking ranges.  No need.
      */
-    list_for_each_entry(region,&space->regions,region) {
+    v_g_list_foreach(space->regions,t1,region) {
 	if (region->type == REGION_TYPE_LIB) {
-	    region->exists = 0;
-	    region->new = 0;
+	    OBJSDEAD(region,memregion);
 	}
     }
 
@@ -6432,50 +6514,56 @@ static int os_linux_updateregions(struct target *target,
      * and we have to purge them.
      */
 
-    list_for_each_entry_safe(region,tregion,&space->regions,region) {
+    v_g_list_foreach_safe(space->regions,t1,t2,region) {
 	/* Skip anything not a kernel module. */
 	if (region->type != REGION_TYPE_LIB)
 	    continue;
 
-	if (!region->exists && !region->new) {
-	    list_for_each_entry_safe(range,trange,&region->ranges,range) {
+	if (!OBJLIVE(region) && !OBJNEW(region)) {
+	    v_g_list_foreach_safe(region->ranges,t3,t4,range) {
 		vdebug(3,LA_TARGET,LF_OSLINUX,
 		       "removing stale range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
 
-		target_add_state_change(target,TID_GLOBAL,
-					TARGET_STATE_CHANGE_RANGE_DEL,
-					0,range->prot_flags,
-					range->start,range->end,region->name);
-		memrange_free(range);
+		OBJSDEL(range);
+
+		event = target_create_event(target,NULL,
+					    T_EVENT_OS_RANGE_DEL,range);
+		target_broadcast_event(target,event);
+		event->priv = NULL;
+
+		memregion_detach_range(region,range);
 	    }
 
-	    vdebug(3,LA_TARGET,LF_OSLINUX,"removing stale region (%s:%s:%s)\n",
-		   region->space->idstr,region->name,REGION_TYPE(region->type));
+	    vdebug(3,LA_TARGET,LF_OSLINUX,
+		   "removing stale region (%s:0x%"PRIxADDR":%s:%s)\n",
+		   region->space->name,region->space->tag,
+		   region->name,REGION_TYPE(region->type));
 
-	    target_add_state_change(target,TID_GLOBAL,
-				    TARGET_STATE_CHANGE_REGION_DEL,
-				    0,0,region->base_load_addr,0,region->name);
-	    memregion_free(region);
+	    OBJSDEL(region);
+
+	    event = target_create_event(target,NULL,
+					T_EVENT_OS_REGION_DEL,region);
+	    target_broadcast_event(target,event);
+	    event->priv = NULL;
+
+	    addrspace_detach_region(space,region);
 	}
-	else if (region->new) {
-	    list_for_each_entry_safe(range,trange,&region->ranges,range) {
+	else if (OBJNEW(region)) {
+	    v_g_list_foreach_safe(region->ranges,t3,t4,range) {
 		vdebug(3,LA_TARGET,LF_LUP,
 		       "new range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
 
-		target_add_state_change(target,TID_GLOBAL,
-					TARGET_STATE_CHANGE_RANGE_NEW,
-					0,range->prot_flags,
-					range->start,range->end,region->name);
+		event = target_create_event(target,NULL,
+					    T_EVENT_OS_RANGE_NEW,range);
+		target_broadcast_event(target,event);
 	    }
 
-	    target_add_state_change(target,TID_GLOBAL,
-				    TARGET_STATE_CHANGE_REGION_NEW,
-				    0,0,region->base_load_addr,0,region->name);
+	    event = target_create_event(target,NULL,
+					T_EVENT_OS_REGION_NEW,region);
+	    target_broadcast_event(target,event);
 	}
-
-	region->new = region->exists = 0;
     }
 
     return 0;
@@ -6492,17 +6580,20 @@ result_t os_linux_active_memory_handler(struct probe *probe,tid_t tid,
     int state = -1;
     struct __update_module_data ud;
     char *modfilename;
-    struct list_head *pos;
+    GList *t1,*t2;
     struct memregion *region;
-    struct memrange *range,*trange;
+    struct memrange *range;
     char *name;
     struct value *name_value = NULL;
     struct target_location_ctxt *tlctxt;
+    struct target_event *event;
 
     target = probe->target;
     tlctxt = target_global_tlctxt(target);
     lstate = (struct os_linux_state *)target->personality_state;
-    space = list_entry(target->spaces.next,typeof(*space),space);
+
+    /* Only one space... */
+    space = (struct addrspace *)g_list_nth_data(target->spaces,0);
 
     /*
      * For kernels that have do_init_module(), we can simply place a
@@ -6574,20 +6665,19 @@ result_t os_linux_active_memory_handler(struct probe *probe,tid_t tid,
 	__update_module(target,mod,&ud);
 	region = ud.region;
 
-	list_for_each_entry_safe(range,trange,&region->ranges,range) {
+	v_g_list_foreach(region->ranges,t1,range) {
 	    vdebug(3,LA_TARGET,LF_LUP,
 		   "new range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		   range->start,range->end,range->offset);
 
-	    target_add_state_change(target,TID_GLOBAL,
-				    TARGET_STATE_CHANGE_RANGE_NEW,
-				    0,range->prot_flags,
-				    range->start,range->end,region->name);
+	    event = target_create_event(target,NULL,
+					T_EVENT_OS_RANGE_NEW,range);
+	    target_broadcast_event(target,event);
 	}
 
-	target_add_state_change(target,TID_GLOBAL,
-				TARGET_STATE_CHANGE_REGION_NEW,
-				0,0,region->base_load_addr,0,region->name);
+	event = target_create_event(target,NULL,
+				    T_EVENT_OS_REGION_NEW,region);
+	target_broadcast_event(target,event);
     }
     else if (state == lstate->MODULE_STATE_COMING
 	     || state == lstate->MODULE_STATE_GOING) {
@@ -6606,33 +6696,37 @@ result_t os_linux_active_memory_handler(struct probe *probe,tid_t tid,
 	    goto manual_update;
 	}
 
-	list_for_each(pos,&space->regions) {
-	    region = list_entry(pos,typeof(*region),region);
+	v_g_list_foreach(space->regions,t1,region) {
 	    if (strcmp(region->name,modfilename) == 0) 
 		break;
 	    region = NULL;
 	}
 
 	if (region) {
-	    list_for_each_entry_safe(range,trange,&region->ranges,range) {
+	    v_g_list_foreach_safe(region->ranges,t1,t2,range) {
 		vdebug(3,LA_TARGET,LF_OSLINUX,
 		       "removing stale range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
 
-		target_add_state_change(target,TID_GLOBAL,
-					TARGET_STATE_CHANGE_RANGE_DEL,
-					0,range->prot_flags,
-					range->start,range->end,region->name);
-		memrange_free(range);
+		event = target_create_event(target,NULL,
+					    T_EVENT_OS_RANGE_DEL,range);
+		target_broadcast_event(target,event);
+		event->priv = NULL;
+
+		memregion_detach_range(region,range);
 	    }
 
-	    vdebug(3,LA_TARGET,LF_OSLINUX,"removing stale region (%s:%s:%s)\n",
-		   region->space->idstr,region->name,REGION_TYPE(region->type));
+	    vdebug(3,LA_TARGET,LF_OSLINUX,
+		   "removing stale region (%s:0x%"PRIxADDR":%s:%s)\n",
+		   region->space->name,region->space->tag,
+		   region->name,REGION_TYPE(region->type));
 
-	    target_add_state_change(target,TID_GLOBAL,
-				    TARGET_STATE_CHANGE_REGION_DEL,
-				    0,0,region->base_load_addr,0,region->name);
-	    memregion_free(region);
+	    event = target_create_event(target,NULL,
+					T_EVENT_OS_REGION_DEL,region);
+	    target_broadcast_event(target,event);
+	    event->priv = NULL;
+
+	    addrspace_detach_region(space,region);
 	}
 	else {
 	    vdebug(5,LA_TARGET,LF_OSLINUX,
@@ -6855,6 +6949,811 @@ result_t os_linux_active_thread_exit_handler(struct probe *probe,tid_t tid,
     return RESULT_SUCCESS;
 }
 
+static void os_linux_mm_free(struct os_linux_mm *olmm) {
+    struct os_linux_vma *olvma,*olvma_next;
+    REFCNT trefcnt;
+
+    if (olmm->space) {
+	RPUT(olmm->space,addrspace,target,trefcnt);    
+	olmm->space = NULL;
+    }
+
+    olvma = olmm->vma_cache;
+    olvma_next = (olvma) ? olvma->next : NULL;
+    while (olvma) {
+	value_free(olvma->vma);
+	free(olvma);
+	olvma = olvma_next;
+	olvma_next = olvma ? olvma->next : NULL;
+    }
+    olmm->vma_cache = NULL;
+
+    if (olmm->mm) {
+	value_free(olmm->mm);
+	olmm->mm = NULL;
+    }
+    olmm->vma_len = 0;
+
+    return;
+}
+
+/*
+ * This actively updates target_os_process structs's @space member.
+ *
+ * Its performance is (much) better if its values are mmap'd.  Why?
+ * Because we cache vm_area_struct values for each region in the task's
+ * mmap, and we can compare the member values in the mmap'd value direct
+ * with the region-cached values without copying.  If we have to load
+ * the new 
+ */
+static struct addrspace *os_linux_space_load(struct target *target,
+					     struct target_thread *tthread) {
+    struct os_linux_state *lstate;
+    struct os_linux_thread_state *xtstate;
+    tid_t tid;
+    char buf[PATH_MAX];
+    struct memregion *region;
+    struct memrange *range;
+    region_type_t rtype;
+    struct value *vma;
+    struct value *vma_prev;
+    struct os_linux_mm *olmm = NULL;
+    struct os_linux_vma *new_vma,*cached_vma,*cached_vma_prev;
+    struct os_linux_vma *tmp_cached_vma,*tmp_cached_vma_d;
+    ADDR mm_addr;
+    ADDR vma_addr;
+    ADDR vma_next_addr;
+    ADDR start,end,offset;
+    unum_t prot_flags;
+    ADDR file_addr;
+    char *prev_vma_member_name;
+    struct value *file_value;
+    int found;
+    int created = 0;
+    struct target_location_ctxt *tlctxt;
+    struct target_event *event;
+    char nbuf[32];
+
+    lstate = (struct os_linux_state *)target->personality_state;
+    xtstate = \
+	(struct os_linux_thread_state *)tthread->personality_state;
+    tid = tthread->tid;
+
+    vdebug(5,LA_TARGET,LF_OSP,"tid %d scanning\n",tid);
+
+    tlctxt = target_global_tlctxt(target);
+
+    /*
+     * So, what do we have to do?  target_load_thread on the base target
+     * will get us the task_struct; but from there we have to check
+     * everything: first task->mm, then task->mm->mmap, then all the
+     * task->mm->mmap->vm_next pointers that form the list of
+     * vm_area_structs that compose the task's mmap.  Basically, we keep
+     * a list of cached vm_area_struct values that mirrors the kernel's
+     * list; for each vm_area_struct, we cache its value and its last
+     * vm_next addr, and a non-VMI pointer to the next cached vma.
+     *
+     * (This code is written to use the value_refresh() API to quickly
+     * see if a value has changed.  We don't care about the old value.)
+     * 
+     * The kernel maintains a sorted list, so figuring out which ranges
+     * need updating is (somewhat) easier.  We simply run through the
+     * kernel's list, comparing it to our list.  If the vaddr of the
+     * i-th vma *does* match the cached vma's vaddr, we just check to
+     * see if the value has changed.  If it has, we updated accordingly;
+     * otherwise we proceed to the i+1-th entry.  If it *does not*
+     * match, either our cached entry has been deleted; a new entry has
+     * been inserted in the kernel; or both.  If it does not match, we
+     * scan down our cached list until the i-th vma start addr >= our
+     * i+j-th cached vma start addr, and delete all the cached entries
+     * until that point.  At that point, if it does not match the i+j-th
+     * cached vma addr, we insert it as a new mmap entry.  That's it!  :)
+     *
+     * One other note.  Each vm_area_struct gets its own memrange; we
+     * combine memranges into memregions based on the files that back
+     * them.  Only ranges with the same filename get combined into
+     * memregions.
+     */
+
+    /* Grab the base task's mm address to see if it changed. */
+    /* Wait, already have this in xtstate->mm_addr; it should be up-to-date! */
+    //VLV(target,tlctxt,xtstate->task_struct,"mm",LOAD_FLAG_NONE,
+    //    &mm_addr,NULL,err_vmiload);
+
+    if (xtstate->mm_addr == 0 && xtstate->last_mm_addr) {
+	/*
+	 * This should be impossible!  A task's mm should not go away.
+	 */
+	verror("tid %d's task->mm became NULL; impossible -- BUG!!\n",tid);
+
+	return NULL;
+    }
+
+    /* This is the thread's mm_addr; because we assume that the tthread
+     * param is loaded per this current pause/exception.
+     */
+    mm_addr = xtstate->mm_addr;
+
+    /*
+     * Ok, either we have a new mm, or one we already cached.
+     */
+
+    olmm = (struct os_linux_mm *) \
+	g_hash_table_lookup(lstate->mm_addr_to_mm_cache,
+			    (gpointer)(uintptr_t)mm_addr);
+    if (!olmm) {
+	created = 1;
+	olmm = (struct os_linux_mm *)calloc(1,sizeof(*olmm));
+	snprintf(nbuf,sizeof(nbuf),"os_linux_process(%d)",tid);
+	olmm->space = addrspace_create(NULL,nbuf,mm_addr);
+	RHOLD(olmm->space,target);
+	g_hash_table_insert(lstate->mm_addr_to_mm_cache,
+			    (gpointer)(uintptr_t)mm_addr,olmm);
+    }
+
+    /*
+     * Reload the mm struct first, and re-cache its members.  Null
+     * everything out to try to minimize inconsistent state.
+     */
+    olmm->mm_start_brk = 0;
+    olmm->mm_brk = 0;
+    olmm->mm_start_stack = 0;
+
+    if (olmm->mm) {
+	/*
+	 * NB: when value_refresh is implemented, we maybe want to use that
+	 * to reload so we can try not to; for now, just do it manually.
+	 */
+	value_free(olmm->mm);
+	olmm->mm = NULL;
+    }
+    VL(target,tlctxt,xtstate->task_struct,"mm",
+       LOAD_FLAG_AUTO_DEREF,&olmm->mm,err_vmiload);
+    //xtstate->mm_addr = value_addr(olmm->mm);
+    VLV(target,tlctxt,olmm->mm,"start_brk",LOAD_FLAG_NONE,
+	&olmm->mm_start_brk,NULL,err_vmiload);
+    VLV(target,tlctxt,olmm->mm,"brk",LOAD_FLAG_NONE,
+	&olmm->mm_brk,NULL,err_vmiload);
+    VLV(target,tlctxt,olmm->mm,"start_stack",LOAD_FLAG_NONE,
+	&olmm->mm_start_stack,NULL,err_vmiload);
+
+    /*
+     * We used to only free and update the mm_struct value for the first
+     * two cases, I think -- but in reality we should always reload it.
+     * Plus, if the base target has mmap support, the overhead is not so
+     * bad... anyway, this stuff is just debugging now.
+     */
+    if (xtstate->last_mm_addr == 0) {
+	vdebug(5,LA_TARGET,LF_OSP,"tid %d analyzing mmaps anew.\n",tid);
+    }
+    else if (mm_addr && mm_addr != xtstate->last_mm_addr) {
+	vwarn("tid %d's task->mm changed (0x%"PRIxADDR" to 0x%"PRIxADDR");"
+	      " checking cached VMAs like normal!\n",
+	      tid,xtstate->last_mm_addr,mm_addr);
+    }
+    else {
+	vdebug(5,LA_TARGET,LF_OSP,"tid %d checking cached VMAs.\n",tid);
+    }
+    xtstate->last_mm_addr = mm_addr;
+
+    /*
+     * Now that we have loaded or re-cached the mm_struct, we
+     * need to loop through its mmaps, and add/delete/modify as
+     * necessary.
+     */
+
+    /* Now we have a valid task->mm; load the first vm_area_struct pointer. */
+    VLV(target,tlctxt,olmm->mm,"mmap",LOAD_FLAG_NONE,
+	&vma_addr,NULL,err_vmiload);
+    cached_vma = olmm->vma_cache;
+    cached_vma_prev = NULL;
+
+    /* First time through, the value we load the vm_area_struct value
+     * from is the mm_struct; after that, it is the previous
+     * vm_area_struct.  The macros in the loop hide this.
+     */
+    vma_prev = olmm->mm;
+    prev_vma_member_name = "mmap";
+
+    VL(target,tlctxt,vma_prev,prev_vma_member_name,
+       LOAD_FLAG_AUTO_DEREF,&vma,err_vmiload);
+    VLV(target,tlctxt,vma,"vm_start",LOAD_FLAG_NONE,
+	&start,NULL,err_vmiload);
+    value_free(vma);
+
+#warning "generate MOD events!"
+
+    /* If we have either a vma_addr to process, or a cached_vma, keep going. */
+    while (vma_addr || cached_vma) {
+	if (vma_addr && !cached_vma) {
+	    /*
+	     * New entry; load it and add/cache it.
+	     *
+	     * NB: do_new_unmatched comes from lower in the loop, where
+	     * we 
+	     */
+	do_new_unmatched:
+
+	    VL(target,tlctxt,vma_prev,prev_vma_member_name,
+	       LOAD_FLAG_AUTO_DEREF,&vma,err_vmiload);
+	    new_vma = calloc(1,sizeof(*new_vma));
+	    new_vma->vma = vma;
+
+	    /* Load the vma's start,end,offset,prot_flags,file,next addr. */
+	    VLV(target,tlctxt,vma,"vm_start",LOAD_FLAG_NONE,
+		&start,NULL,err_vmiload);
+	    VLV(target,tlctxt,vma,"vm_end",LOAD_FLAG_NONE,
+		&end,NULL,err_vmiload);
+	    VLV(target,tlctxt,vma,"vm_page_prot",LOAD_FLAG_NONE,
+		&prot_flags,NULL,err_vmiload);
+	    VLV(target,tlctxt,vma,"vm_pgoff",LOAD_FLAG_NONE,
+		&offset,NULL,err_vmiload);
+	    VLV(target,tlctxt,vma,"vm_file",LOAD_FLAG_NONE,
+		&file_addr,NULL,err_vmiload);
+	    VLV(target,tlctxt,vma,"vm_next",LOAD_FLAG_NONE,
+		&vma_next_addr,NULL,err_vmiload);
+
+	    /* Figure out the region type. */
+	    rtype = REGION_TYPE_ANON;
+	    region = NULL;
+	    buf[0] = '\0';
+
+	    /* If it has a file, load the path! */
+	    if (file_addr != 0) {
+		file_value = NULL;
+		VL(target,tlctxt,vma,"vm_file",LOAD_FLAG_AUTO_DEREF,
+		   &file_value,err_vmiload);
+		if (!os_linux_file_get_path(target,xtstate->task_struct,file_value,
+					    buf,sizeof(buf))) {
+		    vwarn("could not get filepath for struct file for new range;"
+			  " continuing! (file 0x%"PRIxADDR")\n",file_addr);
+		    file_addr = 0;
+		}
+		else {
+		    /* Find the region this is in, if any. */
+		    region = addrspace_find_region(olmm->space,buf);
+		}
+	    }
+	    else {
+		if (addrspace_find_range_real(olmm->space,start - 1,&region,NULL)
+		    && region->name && *region->name != '\0') {
+		    vdebug(5,LA_TARGET,LF_OSP,
+			   "found contiguous region (%s) for next anon region at start 0x%"PRIxADDR"\n",
+			   region->name,start);
+		}
+		else
+		    region = NULL;
+	    }
+
+	    /* Create the region if we didn't find one. */
+	    if (!region) {
+		if (!file_addr) {
+		    if (start <= olmm->mm_start_brk
+			&& end >= olmm->mm_brk)
+			rtype = REGION_TYPE_HEAP;
+		    else if (start <= olmm->mm_start_stack
+			     && end >= olmm->mm_start_stack)
+			rtype = REGION_TYPE_STACK;
+		    else
+			rtype = REGION_TYPE_VDSO;
+		}
+		else {
+		    /*
+		     * Anything with a filename starts out as a lib; if
+		     * we can't load it, it might become anon; if we can
+		     * load it and it has a main(), we'll convert it to
+		     * MAIN later.
+		     */
+		    rtype = REGION_TYPE_LIB;
+		}
+
+		region = memregion_create(olmm->space,rtype,
+					  (buf[0] == '\0') ? NULL : buf);
+		if (!region) 
+		    goto err;
+
+		vdebug(5,LA_TARGET,LF_OSP,
+		       "created memregion(%s:0x%"PRIxADDR":%s:%s)\n",
+		       region->space->name,region->space->tag,region->name,
+		       REGION_TYPE(region->type));
+
+		event = target_create_event(target,tthread,
+					    T_EVENT_OS_PROCESS_REGION_NEW,
+					    region);
+		target_broadcast_event(target,event);
+	    }
+
+	    /* Create the range. */
+	    if (!(range = memrange_create(region,start,end,offset,prot_flags))) 
+		goto err;
+	    new_vma->range = range;
+
+	    vdebug(5,LA_TARGET,LF_OSP,
+		   "created memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR","
+		   "%"PRIiOFFSET",%u)\n",
+		   range->region->name,REGION_TYPE(range->region->type),
+		   range->start,range->end,range->offset,range->prot_flags);
+
+	    event = target_create_event(target,tthread,
+					T_EVENT_OS_PROCESS_RANGE_NEW,range);
+	    target_broadcast_event(target,event);
+
+	    /*
+	     * Update list/metadata:
+	     *
+	     * Either make it the sole entry on list, or add it at tail.
+	     * Either way, there is still no cached_vma to process; it's
+	     * just that our previous one points to the new tail of the
+	     * list for the next iteration.
+	     */
+	    if (!olmm->vma_cache) 
+		olmm->vma_cache = new_vma;
+	    else {
+		cached_vma_prev->next = new_vma;
+		cached_vma_prev->next_vma_addr = vma_addr;
+	    }
+	    ++olmm->vma_len;
+	    cached_vma_prev = new_vma;
+
+	    new_vma->next = cached_vma;
+
+	    vma_addr = vma_next_addr;
+	    vma_prev = vma;
+
+	    /* After the first iteration, it's always this. */
+	    prev_vma_member_name = "vm_next";
+
+	    continue;
+	}
+	else if (!vma_addr && cached_vma) {
+	    /*
+	     * We don't have any more vm_area_structs from the kernel,
+	     * so any cached entries are stale at this point.
+	     */
+	    tmp_cached_vma_d = cached_vma;
+
+	    /*
+	     * Update list/metadata:
+	     */
+	    if (cached_vma_prev) {
+		cached_vma_prev->next = cached_vma->next;
+		if (cached_vma->next && cached_vma->next->vma) 
+		    cached_vma_prev->next_vma_addr = 
+			value_addr(cached_vma->next->vma);
+		else
+		    cached_vma_prev->next_vma_addr = 0;
+	    }
+	    else {
+		olmm->vma_cache = cached_vma->next;
+		if (cached_vma->next && cached_vma->next->vma) 
+		    olmm->vma_cache->next_vma_addr = 
+			value_addr(cached_vma->next->vma);
+		else
+		    cached_vma_prev->next_vma_addr = 0;
+	    }
+
+	    cached_vma = cached_vma->next;
+	    --olmm->vma_len;
+
+	    vdebug(5,LA_TARGET,LF_OSP,
+		   "removing stale memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR","
+		   "%"PRIiOFFSET",%u)\n",
+		   tmp_cached_vma_d->range->region->name,
+		   REGION_TYPE(tmp_cached_vma_d->range->region->type),
+		   tmp_cached_vma_d->range->start,tmp_cached_vma_d->range->end,
+		   tmp_cached_vma_d->range->offset,
+		   tmp_cached_vma_d->range->prot_flags);
+
+	    /* delete range; delete empty regions when they empty. */
+	    region = tmp_cached_vma_d->range->region;
+	    event = target_create_event(target,tthread,
+					T_EVENT_OS_PROCESS_RANGE_DEL,
+					tmp_cached_vma_d->range);
+	    target_broadcast_event(target,event);
+
+	    memregion_detach_range(region,tmp_cached_vma_d->range);
+
+	    if (!region->ranges) {
+		vdebug(5,LA_TARGET,LF_OSP,
+		       "removing empty memregion(%s:0x%"PRIxADDR":%s:%s)\n",
+		       region->space->name,region->space->tag,region->name,
+		       REGION_TYPE(region->type));
+
+		event = target_create_event(target,tthread,
+					    T_EVENT_OS_PROCESS_REGION_DEL,
+					    region);
+		target_broadcast_event(target,event);
+
+		addrspace_detach_region(region->space,region);
+	    }
+
+	    /* delete cached value stuff */
+	    value_free(tmp_cached_vma_d->vma);
+	    free(tmp_cached_vma_d);
+	    tmp_cached_vma_d = NULL;
+
+	    continue;
+	}
+	    /*
+	     * Need to compare vma_addr with our cached_vma's addr; and...
+	     * 
+	     * If the vaddr of the i-th vma *does* match the cached
+	     * vma's vaddr, we just check to see if the value has
+	     * changed.  If it has, we updated accordingly; otherwise we
+	     * proceed to the i+1-th entry.  If it *does not* match,
+	     * either our cached entry has been deleted; a new entry has
+	     * been inserted in the kernel; or both.  If it does not
+	     * match, we scan down our cached list until the i-th vma
+	     * start addr >= our i+j-th cached vma start addr, and
+	     * delete all the cached entries until that point.  At that
+	     * point, if it does not match the i+j-th cached vma addr,
+	     * we insert it as a new mmap entry.
+	     */
+	else if (vma_addr == value_addr(cached_vma->vma)) {
+	    /*
+	     * Refresh the value; update the range.
+	     */
+	    vdebug(8,LA_TARGET,LF_OSP,
+		   "tid %d refreshing vm_area_struct at 0x%"PRIxADDR"\n",
+		   vma_addr);
+	    value_refresh(cached_vma->vma,0);
+
+	    /* Load the vma's start,end,prot_flags. */
+	    VLV(target,tlctxt,cached_vma->vma,"vm_start",
+		LOAD_FLAG_NONE,&start,NULL,err_vmiload);
+	    VLV(target,tlctxt,cached_vma->vma,"vm_end",
+		LOAD_FLAG_NONE,&end,NULL,err_vmiload);
+	    VLV(target,tlctxt,cached_vma->vma,"vm_page_prot",
+		LOAD_FLAG_NONE,&prot_flags,NULL,err_vmiload);
+	    VLV(target,tlctxt,cached_vma->vma,"vm_pgoff",
+		LOAD_FLAG_NONE,&offset,NULL,err_vmiload);
+	    VLV(target,tlctxt,cached_vma->vma,"vm_next",
+		LOAD_FLAG_NONE,&vma_next_addr,NULL,err_vmiload);
+
+	    if (cached_vma->range->end == end 
+		&& cached_vma->range->offset == offset 
+		&& cached_vma->range->prot_flags == (unsigned int)prot_flags) {
+		OBJSLIVE(cached_vma->range,memrange);
+
+		vdebug(5,LA_TARGET,LF_OSP,
+		       "no change to memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR","
+		       "%"PRIiOFFSET",%u)\n",
+		       cached_vma->range->region->name,
+		       REGION_TYPE(cached_vma->range->region->type),
+		       cached_vma->range->start,cached_vma->range->end,
+		       cached_vma->range->offset,cached_vma->range->prot_flags);
+	    }
+	    else {
+		cached_vma->range->end = end;
+		cached_vma->range->offset = offset;
+		cached_vma->range->prot_flags = prot_flags;
+
+		OBJSMOD(cached_vma->range);
+
+		if (start < cached_vma->range->region->base_load_addr)
+		    cached_vma->range->region->base_load_addr = start;
+
+		vdebug(5,LA_TARGET,LF_OSP,
+		       "update to memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR","
+		       "%"PRIiOFFSET",%u)\n",
+		       cached_vma->range->region->name,
+		       REGION_TYPE(cached_vma->range->region->type),
+		       cached_vma->range->start,cached_vma->range->end,
+		       cached_vma->range->offset,cached_vma->range->prot_flags);
+
+		event = target_create_event(target,tthread,
+					    T_EVENT_OS_PROCESS_RANGE_MOD,
+					    cached_vma->range);
+		target_broadcast_event(target,event);
+	    }
+
+	    /*
+	     * Update list/metadata for next iteration:
+	     */
+	    cached_vma_prev = cached_vma;
+	    cached_vma = cached_vma->next;
+
+	    vma_addr = vma_next_addr;
+	    vma_prev = cached_vma_prev->vma;
+
+	    /* After the first iteration, it's always this. */
+	    prev_vma_member_name = "vm_next";
+
+	    continue;
+	}
+	else {
+	    /*
+	     * Load the next one enough to get its start addr, so we can
+	     * do the comparison.  The load is not wasted; we goto
+	     * (ugh, ugh, ugh) wherever we need after loading it.
+	     */
+
+	    /*
+	     * Since we haven't loaded the vm_area_struct corresponding
+	     * to vma_addr yet, the best we can do is look through the
+	     * rest of our cached list, and see if we get a match on
+	     * vma_addr and value_addr(tmp_cached_vma->vma).  If we do,
+	     * *then* feel safe enough to delete the intervening
+	     * entries.  If we do not -- we can only add a new entry,
+	     * then continue to process the rest of our list -- so goto
+	     * the top of the loop where we add new entries -- ugh!!!
+	     */
+	    tmp_cached_vma = cached_vma;
+
+	    found = 0;
+	    while (tmp_cached_vma) {
+		if (vma_addr == value_addr(tmp_cached_vma->vma)) {
+		    found = 1;
+		    break;
+		}
+		tmp_cached_vma = tmp_cached_vma->next;
+	    }
+
+	    if (!found) {
+		/* XXX: teleport! */
+		goto do_new_unmatched;
+	    }
+
+	    /* Otherwise, proceed to delete the intermediate ones. */
+
+	    tmp_cached_vma = cached_vma;
+
+	    while (tmp_cached_vma && vma_addr != value_addr(tmp_cached_vma->vma)) {
+		/*
+		 * Update list/metadata:
+		 */
+		if (cached_vma_prev) {
+		    cached_vma_prev->next = tmp_cached_vma->next;
+		    if (tmp_cached_vma->next && tmp_cached_vma->next->vma) 
+			cached_vma_prev->next_vma_addr = 
+			    value_addr(tmp_cached_vma->next->vma);
+		    else
+			cached_vma_prev->next_vma_addr = 0;
+		}
+		else {
+		    olmm->vma_cache = tmp_cached_vma->next;
+		    if (tmp_cached_vma->next && tmp_cached_vma->next->vma) 
+			olmm->vma_cache->next_vma_addr = 
+			    value_addr(tmp_cached_vma->next->vma);
+		    else
+			cached_vma_prev->next_vma_addr = 0;
+		}
+
+		tmp_cached_vma_d = tmp_cached_vma;
+
+		tmp_cached_vma = tmp_cached_vma->next;
+		--olmm->vma_len;
+
+		vdebug(5,LA_TARGET,LF_OSP,
+		       "removing stale memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR","
+		       "%"PRIiOFFSET",%u)\n",
+		       tmp_cached_vma_d->range->region->name,
+		       REGION_TYPE(tmp_cached_vma_d->range->region->type),
+		       tmp_cached_vma_d->range->start,
+		       tmp_cached_vma_d->range->end,
+		       tmp_cached_vma_d->range->offset,
+		       tmp_cached_vma_d->range->prot_flags);
+
+		/* delete range; delete empty regions when they empty. */
+		region = tmp_cached_vma_d->range->region;
+
+		event = target_create_event(target,tthread,
+					    T_EVENT_OS_PROCESS_RANGE_DEL,
+					    tmp_cached_vma_d->range);
+		target_broadcast_event(target,event);
+
+		memregion_detach_range(region,tmp_cached_vma_d->range);
+		if (!region->ranges)
+		    addrspace_detach_region(region->space,region);
+
+		/* delete cached value stuff */
+		value_free(tmp_cached_vma_d->vma);
+		free(tmp_cached_vma_d);
+		tmp_cached_vma_d = NULL;
+	    }
+
+	    cached_vma = tmp_cached_vma;
+
+	    /*
+	     * Now that we deleted any stale/dead mmaps, check if we
+	     * still have a cached vma.  If we do, and it is ==
+	     * vma_addr, just continue the outer loop; handled by third
+	     * case of outer loop.
+	     */
+	    if (cached_vma && vma_addr == value_addr(cached_vma->vma)) {
+		vdebug(5,LA_TARGET,LF_OSP,
+		       "continuing loop; cached_vma matches vma_addr (0x%"PRIxADDR");"
+		       " memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR","
+		       "%"PRIiOFFSET",%u)\n",
+		       vma_addr,cached_vma->range->region->name,
+		       REGION_TYPE(cached_vma->range->region->type),
+		       cached_vma->range->start,cached_vma->range->end,
+		       cached_vma->range->offset,cached_vma->range->prot_flags);
+		continue;
+	    }
+	    /*
+	     * Otherwise, we need to add a new one (handled by first
+	     * case of main loop).
+	     */
+	    else if (cached_vma) {
+		vdebug(5,LA_TARGET,LF_OSP,
+		       "continuing loop; cached_vma does not match vma_addr (0x%"PRIxADDR");"
+		       " cached_vma memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR","
+		       "%"PRIiOFFSET",%u)\n",
+		       vma_addr,cached_vma->range->region->name,
+		       REGION_TYPE(cached_vma->range->region->type),
+		       cached_vma->range->start,cached_vma->range->end,
+		       cached_vma->range->offset,cached_vma->range->prot_flags);
+		continue;
+	    }
+	    else {
+		vdebug(5,LA_TARGET,LF_OSP,
+		       "continuing loop; no more cached_vmas; all others will"
+		       " be new!\n");
+		continue;
+	    }
+	}
+    }
+
+    /*
+     * Clear the new/existing/same/updated bits no matter what.
+     */
+
+    //zzz
+
+    return olmm->space;
+
+ err:
+    // XXX cleanup the regions we added/modified??
+    return NULL;
+
+ err_vmiload:
+    return NULL;
+}
+
+GHashTable *os_linux_processes_load(struct target *target) {
+    return ((struct os_linux_state *)target->state)->processes;
+}
+
+struct target_process *os_linux_process_load(struct target *target,
+						struct target_thread *tthread) {
+    struct target_location_ctxt *tlctxt;
+    struct os_linux_state *lstate;
+    struct os_linux_thread_state *ltstate;
+    struct target_process *process;
+    int created = 0;
+    struct target_thread *othread;
+    struct addrspace *space;
+
+    lstate = (struct os_linux_state *)target->personality_state;
+    tlctxt = target_global_tlctxt(target);
+
+    process = (struct target_process *) \
+	g_hash_table_lookup(lstate->processes,(gpointer)(uintptr_t)tthread->tgid);
+    if (process && OBJVALID(process))
+	return process;
+
+    othread = tthread;
+
+    /* Make sure we have a valid thread, since we got a struct. */
+    if (!OBJVALID(tthread))
+	tthread = target_load_thread(target,tthread->tid,0);
+    if (!tthread) {
+	verror("thread %d no longer exists!\n",othread->tid);
+	errno = EINVAL;
+	return NULL;
+    }
+
+    /* Make sure we have the group leader. */
+    if (tthread->tid != tthread->tgid)
+	tthread = target_load_thread(target,tthread->tgid,0);
+
+    ltstate = (struct os_linux_thread_state *)tthread->personality_state;
+
+    /* First, if this is not a userspace thread, don't call it a process. */
+    if (ltstate->mm_addr == 0) {
+	errno = 0;
+	return NULL;
+    }
+
+    if (!process) {
+	space = os_linux_space_load(target,tthread);
+	process = target_process_create(target,tthread,space);
+	created = 1;
+	if (!process) {
+	    verror("could not associate thread %d with process!\n",tthread->tid);
+	    errno = EFAULT;
+	    return NULL;
+	}
+    }
+    else {
+	/* If the process has changed mm, catch that. */
+	space = os_linux_space_load(target,tthread);
+	if (space != process->space) {
+	    REFCNT trefcnt;
+	    RPUT(space,addrspace,process,trefcnt);
+
+	    process->space = space;
+	    RHOLD(space,process);
+	}
+    }
+
+    if (created) {
+	g_hash_table_insert(lstate->processes,
+			    (gpointer)(uintptr_t)tthread->tgid,process);
+	RHOLD(process,target);
+    }
+
+    goto out;
+
+ errout:
+    if (process && created) {
+	/* It's not yet held; just free it. */
+	target_process_free(process,1);
+    }
+    return NULL;
+
+ out:
+    OBJSVALID(process);
+
+    /*
+     * Autofill the threads in the process.  If we just created this
+     * process, we have to bootstrap it; otherwise, if thread tracking
+     * is on, we can skip it.
+     *
+     * NB: this must come *after* the process is in the hashtable!
+     * Otherwise this will loop infinitely.
+     */
+    if (created || !(target->ap_flags & APF_OS_THREAD_ENTRY
+		     && target->ap_flags & APF_OS_THREAD_EXIT)) {
+	target_os_update_process_threads_generic(process,0);
+    }
+
+    return process;
+}
+
+static result_t os_linux_active_process_memory_post_handler(struct probe *probe,
+							    tid_t tid,
+							    void *handler_data,
+							    struct probe *trigger,
+							    struct probe *base) {
+    struct target *target = (struct target *)handler_data;
+    struct os_linux_state *lstate = (struct os_linux_state *)target->state;
+    struct target_thread *tthread;
+    struct target_process *process;
+    struct addrspace *space;
+
+    tthread = target_load_thread(target,tid,0);
+
+    /*
+     * Find or load the process for this thread...
+     */
+    process = (struct target_process *) \
+	g_hash_table_lookup(lstate->processes,(gpointer)(uintptr_t)tthread->tgid);
+
+    if (!process) {
+	process = os_linux_process_load(target,tthread);
+	if (!process) {
+	    verror("could not associate thread %d with process!\n",tthread->tid);
+	    return -1;
+	}
+    }
+    else {
+	space = os_linux_space_load(target,tthread);
+
+	/* If the process has changed mm, catch that. */
+	if (space != process->space) {
+	    REFCNT trefcnt;
+	    RPUT(space,addrspace,process,trefcnt);
+
+	    process->space = space;
+	    RHOLD(space,process);
+	}
+    }
+
+    return RESULT_SUCCESS;
+}
+
 int os_linux_set_active_probing(struct target *target,
 				active_probe_flags_t flags) {
     struct os_linux_state *lstate = \
@@ -6863,10 +7762,27 @@ int os_linux_set_active_probing(struct target *target,
     char *name;
     int forced_load = 0;
     int retval = 0;
+    struct bsymbol *bs;
 
-    if ((flags & ACTIVE_PROBE_FLAG_MEMORY) 
-	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)) {
-	if (flags & ACTIVE_PROBE_FLAG_MEMORY) {
+    /*
+     * Filter out the default flags according to our personality.
+     */
+    if (flags & APF_THREAD_ENTRY) {
+	flags &= ~APF_THREAD_ENTRY;
+	flags |= APF_OS_THREAD_ENTRY;
+    }
+    if (flags & APF_THREAD_EXIT) {
+	flags &= ~APF_THREAD_EXIT;
+	flags |= APF_OS_THREAD_EXIT;
+    }
+    if (flags & APF_MEMORY) {
+	flags &= ~APF_MEMORY;
+	flags |= APF_OS_MEMORY;
+    }
+
+    if ((flags & APF_OS_MEMORY) 
+	!= (target->ap_flags & APF_OS_MEMORY)) {
+	if (flags & APF_OS_MEMORY) {
 	    probe = probe_create(target,TID_GLOBAL,NULL,
 				 bsymbol_get_name(lstate->module_free_symbol),
 				 os_linux_active_memory_handler,NULL,NULL,0,1);
@@ -6880,13 +7796,13 @@ int os_linux_set_active_probing(struct target *target,
 		      " active memory updates!\n");
 
 		lstate->active_memory_probe = NULL;
-		target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_MEMORY;
+		target->ap_flags &= ~APF_OS_MEMORY;
 
 		--retval;
 	    }
 	    else {
 		lstate->active_memory_probe = probe;
-		target->active_probe_flags |= ACTIVE_PROBE_FLAG_MEMORY;
+		target->ap_flags |= APF_OS_MEMORY;
 	    }
 	}
 	else {
@@ -6894,13 +7810,13 @@ int os_linux_set_active_probing(struct target *target,
 		probe_free(lstate->active_memory_probe,0);
 		lstate->active_memory_probe = NULL;
 	    }
-	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_MEMORY;
+	    target->ap_flags &= ~APF_OS_MEMORY;
 	}
     }
 
-    if ((flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) 
-	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)) {
-	if (flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) {
+    if ((flags & APF_OS_THREAD_ENTRY) 
+	!= (target->ap_flags & APF_OS_THREAD_ENTRY)) {
+	if (flags & APF_OS_THREAD_ENTRY) {
 #ifdef ENABLE_DISTORM
 	    /*
 	     * Make sure all threads loaded first!
@@ -6927,13 +7843,13 @@ int os_linux_set_active_probing(struct target *target,
 		      " active thread entry updates!\n",name);
 
 		lstate->active_thread_entry_probe = NULL;
-		target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_ENTRY;
+		target->ap_flags &= ~APF_OS_THREAD_ENTRY;
 
 		--retval;
 	    }
 	    else {
 		lstate->active_thread_entry_probe = probe;
-		target->active_probe_flags |= ACTIVE_PROBE_FLAG_THREAD_ENTRY;
+		target->ap_flags |= APF_OS_THREAD_ENTRY;
 	    }
 #else
 	    verror("cannot enable active thread_entry probes; distorm (disasm)"
@@ -6946,13 +7862,13 @@ int os_linux_set_active_probing(struct target *target,
 		probe_free(lstate->active_thread_entry_probe,0);
 		lstate->active_thread_entry_probe = NULL;
 	    }
-	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_ENTRY;
+	    target->ap_flags &= ~APF_OS_THREAD_ENTRY;
 	}
     }
 
-    if ((flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) 
-	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)) {
-	if (flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) {
+    if ((flags & APF_OS_THREAD_EXIT) 
+	!= (target->ap_flags & APF_OS_THREAD_EXIT)) {
+	if (flags & APF_OS_THREAD_EXIT) {
 	    /*
 	     * Make sure all threads loaded first!
 	     */
@@ -6976,13 +7892,13 @@ int os_linux_set_active_probing(struct target *target,
 		      " active thread exit updates!\n",name);
 
 		lstate->active_thread_exit_probe = NULL;
-		target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_EXIT;
+		target->ap_flags &= ~APF_OS_THREAD_EXIT;
 
 		--retval;
 	    }
 	    else {
 		lstate->active_thread_exit_probe = probe;
-		target->active_probe_flags |= ACTIVE_PROBE_FLAG_THREAD_EXIT;
+		target->ap_flags |= APF_OS_THREAD_EXIT;
 	    }
 	}
 	else {
@@ -6990,7 +7906,199 @@ int os_linux_set_active_probing(struct target *target,
 		probe_free(lstate->active_thread_exit_probe,0);
 		lstate->active_thread_exit_probe = NULL;
 	    }
-	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_EXIT;
+	    target->ap_flags &= ~APF_OS_THREAD_EXIT;
+	}
+    }
+
+    if ((flags & APF_PROCESS_MEMORY)
+	!= (target->ap_flags & APF_PROCESS_MEMORY)) {
+	if (flags & APF_PROCESS_MEMORY) {
+	    /*
+	    if (!(lstate->active_memory_probe_mmap = 
+		  linux_syscall_probe(target->base,target->tid,
+				      "sys_mmap",NULL,
+				      os_linux_active_process_memory_post_handler,
+				      target))) {
+		if (errno != ENOSYS) {
+		    verror("could not register syscall probe on mmap;!\n");
+		    --retval;
+		}
+	    }
+	    */
+
+	    /* mmap */
+	    bs = target_lookup_sym(target->base,"sys_mmap",NULL,NULL,
+				   SYMBOL_TYPE_FLAG_NONE);
+	    if (!bs)
+		goto unprobe;
+	    probe = probe_create(target->base,TID_GLOBAL,NULL,
+				 bsymbol_get_name(bs),
+				 NULL,os_linux_active_process_memory_post_handler,
+				 target,0,1);
+	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,bs,
+					    0,1,1)) {
+		verror("could not register function entry/exit probe on %s;"
+		       " aborting!\n",bsymbol_get_name(bs));
+		probe_free(probe,0);
+		probe = NULL;
+		goto unprobe;
+	    }
+	    lstate->active_memory_probe_mmap = probe;
+
+	    /* munmap */
+	    bs = target_lookup_sym(target->base,"sys_munmap",NULL,NULL,
+				   SYMBOL_TYPE_FLAG_NONE);
+	    if (!bs)
+		goto unprobe;
+	    probe = probe_create(target->base,TID_GLOBAL,NULL,
+				 bsymbol_get_name(bs),
+				 NULL,os_linux_active_process_memory_post_handler,
+				 target,0,1);
+	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,bs,
+					    0,1,1)) {
+		verror("could not register function entry/exit probe on %s;"
+		       " aborting!\n",bsymbol_get_name(bs));
+		probe_free(probe,0);
+		probe = NULL;
+		goto unprobe;
+	    }
+	    bsymbol_release(bs);
+	    lstate->active_memory_probe_munmap = probe;
+
+	    /* uselib */
+	    bs = target_lookup_sym(target->base,"sys_uselib",NULL,NULL,
+				   SYMBOL_TYPE_FLAG_NONE);
+	    if (!bs)
+		goto unprobe;
+	    probe = probe_create(target->base,TID_GLOBAL,NULL,
+				 bsymbol_get_name(bs),
+				 NULL,os_linux_active_process_memory_post_handler,
+				 target,0,1);
+	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,bs,
+					    0,1,1)) {
+		verror("could not register function entry/exit probe on %s;"
+		       " aborting!\n",bsymbol_get_name(bs));
+		probe_free(probe,0);
+		probe = NULL;
+		goto unprobe;
+	    }
+	    bsymbol_release(bs);
+	    lstate->active_memory_probe_uselib = probe;
+
+	    /* mprotect */
+	    bs = target_lookup_sym(target->base,"sys_mprotect",NULL,NULL,
+				   SYMBOL_TYPE_FLAG_NONE);
+	    if (!bs)
+		goto unprobe;
+	    probe = probe_create(target->base,TID_GLOBAL,NULL,
+				 bsymbol_get_name(bs),
+				 NULL,os_linux_active_process_memory_post_handler,
+				 target,0,1);
+	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,bs,
+					    0,1,1)) {
+		verror("could not register function entry/exit probe on %s;"
+		       " aborting!\n",bsymbol_get_name(bs));
+		probe_free(probe,0);
+		probe = NULL;
+		goto unprobe;
+	    }
+	    bsymbol_release(bs);
+	    lstate->active_memory_probe_mprotect = probe;
+
+	    /* mremap */
+	    bs = target_lookup_sym(target->base,"sys_mremap",NULL,NULL,
+				   SYMBOL_TYPE_FLAG_NONE);
+	    if (!bs)
+		goto unprobe;
+	    probe = probe_create(target->base,TID_GLOBAL,NULL,
+				 bsymbol_get_name(bs),
+				 NULL,os_linux_active_process_memory_post_handler,
+				 target,0,1);
+	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,bs,
+					    0,1,1)) {
+		verror("could not register function entry/exit probe on %s;"
+		       " aborting!\n",bsymbol_get_name(bs));
+		probe_free(probe,0);
+		probe = NULL;
+		goto unprobe;
+	    }
+	    bsymbol_release(bs);
+	    lstate->active_memory_probe_mremap = probe;
+
+	    /* mmap_pgoff */
+	    bs = target_lookup_sym(target->base,"sys_mmap_pgoff",NULL,NULL,
+				   SYMBOL_TYPE_FLAG_NONE);
+	    if (!bs)
+		goto unprobe;
+	    probe = probe_create(target->base,TID_GLOBAL,NULL,
+				 bsymbol_get_name(bs),
+				 NULL,os_linux_active_process_memory_post_handler,
+				 target,0,1);
+	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,bs,
+					    0,1,1)) {
+		verror("could not register function entry/exit probe on %s;"
+		       " aborting!\n",bsymbol_get_name(bs));
+		probe_free(probe,0);
+		probe = NULL;
+		goto unprobe;
+	    }
+	    bsymbol_release(bs);
+	    lstate->active_memory_probe_mmap_pgoff = probe;
+
+	    /* madvise */
+	    bs = target_lookup_sym(target->base,"sys_madvise",NULL,NULL,
+				   SYMBOL_TYPE_FLAG_NONE);
+	    if (!bs)
+		goto unprobe;
+	    probe = probe_create(target->base,TID_GLOBAL,NULL,
+				 bsymbol_get_name(bs),
+				 NULL,os_linux_active_process_memory_post_handler,
+				 target,0,1);
+	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,bs,
+					    0,1,1)) {
+		verror("could not register function entry/exit probe on %s;"
+		       " aborting!\n",bsymbol_get_name(bs));
+		probe_free(probe,0);
+		probe = NULL;
+		goto unprobe;
+	    }
+	    bsymbol_release(bs);
+	    lstate->active_memory_probe_madvise = probe;
+
+	    target->ap_flags |= APF_PROCESS_MEMORY;
+	}
+	else {
+	unprobe:
+	    if (lstate->active_memory_probe_uselib) {
+		probe_free(lstate->active_memory_probe_uselib,0);
+		lstate->active_memory_probe_uselib = NULL;
+	    }
+	    if (lstate->active_memory_probe_munmap) {
+		probe_free(lstate->active_memory_probe_munmap,0);
+		lstate->active_memory_probe_munmap = NULL;
+	    }
+	    if (lstate->active_memory_probe_mmap) {
+		probe_free(lstate->active_memory_probe_mmap,0);
+		lstate->active_memory_probe_mmap = NULL;
+	    }
+	    if (lstate->active_memory_probe_mprotect) {
+		probe_free(lstate->active_memory_probe_mprotect,0);
+		lstate->active_memory_probe_mprotect = NULL;
+	    }
+	    if (lstate->active_memory_probe_mremap) {
+		probe_free(lstate->active_memory_probe_mremap,0);
+		lstate->active_memory_probe_mremap = NULL;
+	    }
+	    if (lstate->active_memory_probe_mmap_pgoff) {
+		probe_free(lstate->active_memory_probe_mmap_pgoff,0);
+		lstate->active_memory_probe_mmap_pgoff = NULL;
+	    }
+	    if (lstate->active_memory_probe_madvise) {
+		probe_free(lstate->active_memory_probe_madvise,0);
+		lstate->active_memory_probe_madvise = NULL;
+	    }
+
+	    target->ap_flags &= ~APF_PROCESS_MEMORY;
 	}
     }
 
@@ -7023,6 +8131,37 @@ struct target_personality_ops os_linux_generic_personality_ops = {
     .copy_registers = target_regcache_copy_registers,
     .readreg_tidctxt = target_regcache_readreg_tidctxt,
     .writereg_tidctxt = target_regcache_writereg_tidctxt,
+};
+
+struct target_os_ops os_linux_generic_os_ops = {
+    /* All this work is done in attach and fini of the personality_ops. */
+    .init = NULL,
+    .fini = NULL,
+
+    .os_type = os_linux_type,
+    .os_version = os_linux_version,
+    .os_version_string = os_linux_version_string,
+    .os_version_cmp = os_linux_version_cmp,
+
+    .thread_get_pgd_phys = os_linux_thread_get_pgd_phys,
+    .thread_is_user = os_linux_thread_is_user,
+    .thread_get_leader = os_linux_thread_get_leader,
+
+    .processes_get = os_linux_processes_load,
+    .process_get = os_linux_process_load,
+
+    .signal_enqueue = os_linux_signal_enqueue,
+    .signal_to_name = os_linux_signal_to_name,
+    .signal_from_name = os_linux_signal_from_name,
+
+    .syscall_table_load = os_linux_syscall_table_load,
+    .syscall_table_unload = os_linux_syscall_table_unload,
+    .syscall_table_get = os_linux_syscall_table_get,
+    .syscall_lookup_name = os_linux_syscall_lookup_name,
+    .syscall_lookup_num = os_linux_syscall_lookup_num,
+    .syscall_lookup_addr = os_linux_syscall_lookup_addr,
+    .syscall_probe = os_linux_syscall_probe,
+    .syscall_probe_all = os_linux_syscall_probe_all,
 };
 
 void os_linux_generic_register(void) {

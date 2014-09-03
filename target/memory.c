@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -16,10 +16,11 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
-#include <assert.h>
-
+#include "common.h"
+#include "glib_wrapper.h"
 #include "target.h"
 #include "binfile.h"
+#include <assert.h>
 
 /*
  * Address spaces.
@@ -38,58 +39,39 @@
  * pid (0 means kernel; > 0 means a userspace process in the guest).
  */
 struct addrspace *addrspace_create(struct target *target,
-				   char *name,int id) {
+				   char *name,ADDR tag) {
     struct addrspace *retval;
-    struct addrspace *lpc;
-    char *idstr;
-    int idstrlen;
 
     assert(name);
-
-    /* make sure this space doesn't already exist: */
-    if (target) {
-	list_for_each_entry(lpc,&target->spaces,space) {
-	    if (((name && strcmp(name,lpc->name) == 0)
-		 || (name == NULL && lpc->name == NULL))
-		&& id == lpc->id) {
-		return lpc;
-	    }
-	}
-    }
-
-    idstrlen = strlen(name) + 1 + 64;
-    idstr = (char *)malloc(idstrlen);
-    if (!idstr) {
-	errno = ENOMEM;
-	return NULL;
-    }
-    snprintf(idstr,idstrlen,"%s:%d",name,id);
 
     retval = (struct addrspace *)malloc(sizeof(struct addrspace));
     if (!retval) {
 	errno = ENOMEM;
-	free(idstr);
 	return NULL;
     }
 
     memset(retval,0,sizeof(*retval));
 
-    retval->idstr = idstr;
     retval->name = strdup(name);
-    retval->id = id;
-    retval->refcnt = 0;
+    retval->tag = tag;
 
-    INIT_LIST_HEAD(&retval->regions);
+    if (target) {
+	target_attach_space(target,retval);
+	retval->target = target;
+	RHOLDW(target,retval);
+    }
 
-    vdebug(5,LA_TARGET,LF_SPACE,"built addrspace(%s)\n",idstr);
+    vdebug(5,LA_TARGET,LF_SPACE,"built addrspace(%s:0x%"PRIxADDR")\n",name,tag);
 
     return retval;
 }
 
 struct memregion *addrspace_find_region(struct addrspace *space,char *name) {
+    GList *tmp;
     struct memregion *region;
 
-    list_for_each_entry(region,&space->regions,region) {
+    tmp = NULL;
+    v_g_list_foreach(space->regions,tmp,region) {
 	if (region->name && strcmp(name,region->name) == 0)
 	    goto out;
     }
@@ -98,11 +80,41 @@ struct memregion *addrspace_find_region(struct addrspace *space,char *name) {
     return region;
 }
 
+int addrspace_attach_region(struct addrspace *space,struct memregion *region) {
+    RHOLD(region,space);
+    space->regions = g_list_append(space->regions,region);
+    return 0;
+}
+
+int addrspace_detach_region(struct addrspace *space,struct memregion *region) {
+    GList *t1;
+    REFCNT trefcnt;
+
+    if (region->space != space) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    t1 = g_list_find(space->regions,region);
+    if (!t1) {
+	errno = ESRCH;
+	return -1;
+    }
+
+    space->regions = g_list_remove_link(space->regions,t1);
+
+    RPUT(region,memregion,space,trefcnt);
+
+    return 0;
+}
+
 struct memregion *addrspace_match_region_name(struct addrspace *space,
 					      region_type_t rtype,char *name) {
+    GList *tmp;
     struct memregion *region;
 
-    list_for_each_entry(region,&space->regions,region) {
+    tmp = NULL;
+    v_g_list_foreach(space->regions,tmp,region) {
 	if (region->type == rtype && strcmp(name,region->name) == 0)
 	    goto out;
     }
@@ -113,9 +125,11 @@ struct memregion *addrspace_match_region_name(struct addrspace *space,
 
 struct memregion *addrspace_match_region_start(struct addrspace *space,
 					       region_type_t rtype,ADDR start) {
+    GList *tmp;
     struct memregion *region;
 
-    list_for_each_entry(region,&space->regions,region) {
+    tmp = NULL;
+    v_g_list_foreach(space->regions,tmp,region) {
 	if (region->type == rtype && region->base_load_addr == start)
 	    goto out;
     }
@@ -127,10 +141,11 @@ struct memregion *addrspace_match_region_start(struct addrspace *space,
 int addrspace_find_range_real(struct addrspace *space,ADDR addr,
 			      struct memregion **region_saveptr,
 			      struct memrange **range_saveptr) {
+    GList *tmp;
     struct memregion *region;
     struct memrange *range;
 
-    list_for_each_entry(region,&space->regions,region) {
+    v_g_list_foreach(space->regions,tmp,region) {
 	if ((range = memregion_find_range_real(region,addr))) {
 	    if (region_saveptr)
 		*region_saveptr = region;
@@ -144,36 +159,78 @@ int addrspace_find_range_real(struct addrspace *space,ADDR addr,
     return 1;
 }
 
-REFCNT addrspace_free(struct addrspace *space,int force) {
-    struct memregion *lpc;
-    struct memregion *tmp;
-    REFCNT retval = space->refcnt;
+void addrspace_obj_flags_propagate(struct addrspace *space,
+				   obj_flags_t orf,obj_flags_t nandf) {
+    struct memregion *region;
+    GList *t1;
 
-    if (space->refcnt) {
-	if (!force) {
-	    verror("cannot free (%d refs) space(%s)",
-		   space->refcnt,space->idstr);
-	    return space->refcnt;
-	}
-	else {
-	    vwarn("forced free (%d refs) space(%s)",
-		  space->refcnt,space->idstr);
-	}
+    /* Ranges have no children, so stop here. */
+    v_g_list_foreach(space->regions,t1,region) {
+	region->obj_flags |= orf;
+	region->obj_flags &= ~nandf;
+	memregion_obj_flags_propagate(region,orf,nandf);
     }
+}
+
+REFCNT addrspace_free(struct addrspace *space,int force) {
+    GList *t1,*t2;
+    struct memregion *lpc;
+    REFCNT retval = space->refcnt;
+    REFCNT trefcnt;
 
     assert(space);
 
-    vdebug(5,LA_TARGET,LF_SPACE,"freeing addrspace(%s)\n",space->idstr);
-
-    /* cleanup */
-    list_del(&space->space);
-
-    list_for_each_entry_safe(lpc,tmp,&space->regions,region) {
-	memregion_free(lpc);
+    if (space->refcnt) {
+	if (!force) {
+	    verror("cannot free (%d refs) space(%s:0x%"PRIxADDR")\n",
+		   space->refcnt,space->name,space->tag);
+	    return space->refcnt;
+	}
+	else {
+	    vwarn("forced free (%d refs) space(%s:0x%"PRIxADDR")\n",
+		  space->refcnt,space->name,space->tag);
+	}
     }
 
+    /* NB: take a temp ref so that any RPUTWs don't double-call; see common.h */
+    RWGUARD(space);
+
+    vdebug(5,LA_TARGET,LF_SPACE,
+	   "freeing space(%s:0x%"PRIxADDR")\n",space->name,space->tag);
+
+    v_g_list_foreach_safe(space->regions,t1,t2,lpc) {
+	RPUT(lpc,memregion,space,trefcnt);
+	if (trefcnt == 0) {
+	    v_g_list_foreach_remove(space->regions,t1,t2);
+	}
+    }
+
+    if (space->refcntw) {
+	if (!force) {
+	    verror("cannot free (%d wrefs) space(%s:0x%"PRIxADDR")\n",
+		   space->refcntw,space->name,space->tag);
+	    return space->refcntw;
+	}
+	else {
+	    vwarn("forced free (%d wrefs) space(%s:0x%"PRIxADDR")\n",
+		  space->refcntw,space->name,space->tag);
+
+	    v_g_list_foreach_safe(space->regions,t1,t2,lpc) {
+		lpc->space = NULL;
+	    }
+	}
+
+	if (retval <= 0)
+	    retval = space->refcntw;
+    }
+
+    if (space->target) {
+	RPUTW(space->target,target,space,trefcnt);
+    }
+
+    g_list_free(space->regions);
+    space->regions = NULL;
     free(space->name);
-    free(space->idstr);
     free(space);
 
     return retval;
@@ -192,8 +249,6 @@ struct memregion *memregion_create(struct addrspace *space,
 
     memset(retval,0,sizeof(*retval));
 
-    retval->space = space;
-
     if (name) 
 	retval->name = strdup(name);
     retval->type = type;
@@ -207,9 +262,11 @@ struct memregion *memregion_create(struct addrspace *space,
 	return NULL;
     }
 
-    list_add_tail(&retval->region,&space->regions);
-
-    INIT_LIST_HEAD(&retval->ranges);
+    if (space) {
+	addrspace_attach_region(space,retval);
+	retval->space = space;
+	RHOLDW(space,retval);
+    }
 
     /* Set this to ADDRMAX so when we add ranges, we can find the lowest
      * range start addr.
@@ -221,38 +278,70 @@ struct memregion *memregion_create(struct addrspace *space,
     retval->base_phys_addr = 0;
     retval->base_virt_addr = 0;
 
-    vdebug(5,LA_TARGET,LF_REGION,"built memregion(%s:%s:%s)\n",
-	   space->idstr,retval->name,REGION_TYPE(retval->type));
+    vdebug(5,LA_TARGET,LF_REGION,"built memregion(%s:0x%"PRIxADDR":%s:%s)\n",
+	   space->name,space->tag,retval->name,REGION_TYPE(retval->type));
 
     return retval;
 }
 
-struct target *memregion_target(struct memregion *region) {
-    return (region->space) ? region->space->target : NULL;
+int memregion_attach_range(struct memregion *region,struct memrange *range) {
+    RHOLD(range,region);
+    region->ranges = g_list_append(region->ranges,range);
+    return 0;
+}
+
+int memregion_detach_range(struct memregion *region,struct memrange *range) {
+    GList *t1;
+    REFCNT trefcnt;
+
+    if (range->region != region) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    t1 = g_list_find(region->ranges,range);
+    if (!t1) {
+	errno = ESRCH;
+	return -1;
+    }
+
+    region->ranges = g_list_remove_link(region->ranges,t1);
+
+    RPUT(range,memrange,region,trefcnt);
+
+    return 0;
 }
 
 struct memrange *memregion_match_range(struct memregion *region,ADDR start) {
+    GList *t1;
     struct memrange *range;
-    list_for_each_entry(range,&region->ranges,range) {
+
+    v_g_list_foreach(region->ranges,t1,range) {
 	if (range->start == start)
 	    return range;
     }
+
     return NULL;
 }
 
 int memregion_contains_real(struct memregion *region,ADDR addr) {
+    GList *t1;
     struct memrange *range;
-    list_for_each_entry(range,&region->ranges,range) {
+
+    v_g_list_foreach(region->ranges,t1,range) {
 	if (memrange_contains_real(range,addr))
 	    return 1;
     }
+
     return 0;
 }
 
 struct memrange *memregion_find_range_real(struct memregion *region,
 					   ADDR real_addr) {
+    GList *t1;
     struct memrange *range;
-    list_for_each_entry(range,&region->ranges,range) {
+
+    v_g_list_foreach(region->ranges,t1,range) {
 	if (memrange_contains_real(range,real_addr)) {
 	    vdebug(9,LA_TARGET,LF_REGION,"lookup real(0x%"PRIxADDR") found memrange"
 		   " (%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
@@ -261,13 +350,16 @@ struct memrange *memregion_find_range_real(struct memregion *region,
 	    return range;
 	}
     }
+
     return NULL;
 }
 
 struct memrange *memregion_find_range_obj(struct memregion *region,
 					  ADDR obj_addr) {
+    GList *t1;
     struct memrange *range;
-    list_for_each_entry(range,&region->ranges,range) {
+
+    v_g_list_foreach(region->ranges,t1,range) {
 	if (memrange_contains_obj(range,obj_addr)) {
 	    vdebug(9,LA_TARGET,LF_REGION,"lookup obj(0x%"PRIxADDR") found memrange"
 		   " (%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
@@ -276,13 +368,16 @@ struct memrange *memregion_find_range_obj(struct memregion *region,
 	    return range;
 	}
     }
+
     return NULL;
 }
 
 ADDR memregion_relocate(struct memregion *region,ADDR obj_addr,
 			struct memrange **range_saveptr) {
+    GList *t1;
     struct memrange *range;
-    list_for_each_entry(range,&region->ranges,range) {
+
+    v_g_list_foreach(region->ranges,t1,range) {
 	if (memrange_contains_obj(range,obj_addr)) {
 	    vdebug(9,LA_TARGET,LF_REGION,"relocate obj(0x%"PRIxADDR") found memrange"
 		   " (%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
@@ -299,14 +394,17 @@ ADDR memregion_relocate(struct memregion *region,ADDR obj_addr,
 		   range->start,range->end,range->offset,range->prot_flags);
 	}
     }
+
     errno = ESRCH;
     return 0;
 }
 
 ADDR memregion_unrelocate(struct memregion *region,ADDR real_addr,
 			  struct memrange **range_saveptr) {
+    GList *t1;
     struct memrange *range;
-    list_for_each_entry(range,&region->ranges,range) {
+
+    v_g_list_foreach(region->ranges,t1,range) {
 	if (memrange_contains_real(range,real_addr)) {
 	    vdebug(9,LA_TARGET,LF_REGION,"unrelocate real(0x%"PRIxADDR") found memrange"
 		   " (%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
@@ -332,23 +430,77 @@ void memregion_dump(struct memregion *region,struct dump_info *ud) {
 	    ud->prefix,REGION_TYPE(region->type),region->name);
 }
 
-void memregion_free(struct memregion *region) {
+void memregion_obj_flags_propagate(struct memregion *region,
+				   obj_flags_t orf,obj_flags_t nandf) {
     struct memrange *range;
-    struct memrange *tmp;
+    GList *t1;
+
+    /* Ranges have no children, so stop here. */
+    v_g_list_foreach(region->ranges,t1,range) {
+	range->obj_flags |= orf;
+	range->obj_flags &= ~nandf;
+    }
+}
+
+REFCNT memregion_free(struct memregion *region,int force) {
+    struct memrange *range;
     GHashTableIter iter;
     gpointer key;
     struct debugfile *debugfile;
     REFCNT trefcnt;
+    REFCNT retval = region->refcnt;
+    GList *t1,*t2;
 
-    vdebug(5,LA_TARGET,LF_REGION,"freeing memregion(%s:%s:%s)\n",
-	   region->space->idstr,
-	   region->name,REGION_TYPE(region->type));
+    assert(region);
 
-    list_for_each_entry_safe(range,tmp,&region->ranges,range) {
-	memrange_free(range);
+    if (region->refcnt) {
+	if (!force) {
+	    verror("cannot free (%d refs) memregion(%s:0x%"PRIxADDR":%s:%s)\n",
+		   region->refcnt,region->space->name,region->space->tag,
+		   region->name,REGION_TYPE(region->type));
+	    return region->refcnt;
+	}
+	else {
+	    vwarn("forced free (%d refs) memregion(%s:0x%"PRIxADDR":%s:%s)\n",
+		  region->refcnt,region->space->name,region->space->tag,
+		  region->name,REGION_TYPE(region->type));
+	}
     }
 
-    list_del(&region->region);
+    /* NB: take a temp ref so that any RPUTWs don't double-call; see common.h */
+    RWGUARD(region);
+
+    vdebug(5,LA_TARGET,LF_REGION,"freeing memregion(%s:0x%"PRIxADDR":%s:%s)\n",
+	   region->space->name,region->space->tag,
+	   region->name,REGION_TYPE(region->type));
+
+    v_g_list_foreach_safe(region->ranges,t1,t2,range) {
+	RPUT(range,memrange,region,trefcnt);
+	if (trefcnt == 0) {
+	    v_g_list_foreach_remove(region->ranges,t1,t2);
+	}
+    }
+
+    if (region->refcntw) {
+	if (!force) {
+	    verror("cannot free (%d wrefs) memregion(%s:0x%"PRIxADDR":%s:%s)\n",
+		   region->refcntw,region->space->name,region->space->tag,
+		   region->name,REGION_TYPE(region->type));
+	    return region->refcntw;
+	}
+	else {
+	    vwarn("forced free (%d wrefs) memregion(%s:0x%"PRIxADDR":%s:%s)\n",
+		  region->refcntw,region->space->name,region->space->tag,
+		  region->name,REGION_TYPE(region->type));
+
+	    v_g_list_foreach_safe(region->ranges,t1,t2,range) {
+		range->region = NULL;
+	    }
+	}
+
+	if (retval <= 0)
+	    retval = region->refcntw;
+    }
 
     if (region->binfile) {
 	RPUT(region->binfile,binfile,region,trefcnt);
@@ -366,10 +518,21 @@ void memregion_free(struct memregion *region) {
 	    //free(key);
 	}
 	g_hash_table_destroy(region->debugfiles);
+	region->debugfiles = NULL;
     }
-    if (region->name)
+
+    if (region->space) {
+	RPUTW(region->space,addrspace,region,trefcnt);
+	region->space = NULL;
+    }
+
+    if (region->name) {
 	free(region->name);
+	region->name = NULL;
+    }
     free(region);
+
+    return retval;
 }
 
 struct memrange *memrange_create(struct memregion *region,
@@ -383,7 +546,6 @@ struct memrange *memrange_create(struct memregion *region,
 
     memset(retval,0,sizeof(*retval));
 
-    retval->region = region;
     retval->start = start;
     retval->end = end;
     retval->offset = offset;
@@ -392,7 +554,11 @@ struct memrange *memrange_create(struct memregion *region,
     if (start < region->base_load_addr)
 	region->base_load_addr = start;
 
-    list_add_tail(&retval->range,&region->ranges);
+    if (region) {
+	memregion_attach_range(region,retval);
+	RHOLDW(region,retval);
+	retval->region = region;
+    }
 
     vdebug(5,LA_TARGET,LF_REGION,
 	   "built memregion(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
@@ -437,13 +603,51 @@ ADDR memrange_relocate(struct memrange *range,ADDR obj) {
     return obj + range->region->phys_offset;
 }
 
-void memrange_free(struct memrange *range) {
+void memrange_obj_flags_propagate(struct memrange *range,
+				  obj_flags_t orf,obj_flags_t nandf) {
+    /* We have no children. */
+    return;
+}
+
+REFCNT memrange_free(struct memrange *range,int force) {
+    REFCNT retval = range->refcnt;
+    REFCNT trefcnt;
+
+    assert(range);
+
+    if (range->refcnt) {
+	if (!force) {
+	    verror("cannot free (%d refs) memrange(%s:%s:0x%"PRIxADDR","
+		   "0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
+		   range->refcnt,range->region->name,
+		   REGION_TYPE(range->region->type),range->start,range->end,
+		   range->offset,range->prot_flags);
+	    return range->refcnt;
+	}
+	else {
+	    vwarn("forced free (%d refs) memrange(%s:%s:0x%"PRIxADDR","
+		  "0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
+		  range->refcnt,range->region->name,
+		  REGION_TYPE(range->region->type),range->start,range->end,
+		  range->offset,range->prot_flags);
+	}
+    }
+
+    /* NB: take a temp ref so that any RPUTWs don't double-call; see common.h */
+    RWGUARD(range);
+
     vdebug(5,LA_TARGET,LF_REGION,
 	   "freeing memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
 	   range->region->name,REGION_TYPE(range->region->type),
 	   range->start,range->end,range->offset,range->prot_flags);
 
-    list_del(&range->range);
+    if (range->region) {
+	RPUTW(range->region,memregion,range,trefcnt);
+    }
+
+    retval = range->refcnt;
 
     free(range);
+
+    return retval;
 }

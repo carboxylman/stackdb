@@ -25,7 +25,9 @@
       <xs:enumeration value="none"/>
       <xs:enumeration value="ptrace"/>
       <xs:enumeration value="xen"/>
-      <xs:enumeration value="xenProcess"/>
+      <xs:enumeration value="gdb"/>
+      <xs:enumeration value="osProcess"/>
+      <xs:enumeration value="php"/>
     </xs:restriction>
   </xs:simpleType>
   <xs:simpleType name="TargetModeT">
@@ -84,7 +86,9 @@
       <xs:choice>
         <xs:element ref="vmi1:targetXenSpec"/>
         <xs:element ref="vmi1:targetPtraceSpec"/>
-        <xs:element ref="vmi1:targetXenProcessSpec"/>
+        <xs:element ref="vmi1:targetGdbSpec"/>
+        <xs:element ref="vmi1:targetOsProcessSpec"/>
+        <xs:element ref="vmi1:targetPhpSpec"/>
       </xs:choice>
     </xs:complexType>
   </xs:element>
@@ -120,6 +124,38 @@
   <xs:element name="useLibVMI" type="xs:boolean"/>
   <xs:element name="dominfoTimeout" type="xs:int"/>
   <xs:element name="targetXenSpec" type="vmi1:TargetXenSpecT"/>
+  <xs:complexType name="TargetGdbSpecT">
+    <xs:sequence>
+      <xs:choice>
+        <xs:sequence>
+          <xs:element minOccurs="0" ref="vmi1:gdbHostname"/>
+          <xs:element minOccurs="0" ref="vmi1:gdbPort"/>
+        </xs:sequence>
+        <xs:element minOccurs="0" ref="vmi1:gdbSockfile"/>
+      </xs:choice>
+      <xs:element minOccurs="0" ref="vmi1:doUdp"/>
+      <xs:element minOccurs="0" ref="vmi1:isQemu"/>
+      <xs:element minOccurs="0" ref="vmi1:isKvm"/>
+      <xs:element minOccurs="0" ref="vmi1:qemuQmpHostname"/>
+      <xs:element minOccurs="0" ref="vmi1:qemuQmpPort"/>
+      <xs:element minOccurs="0" ref="vmi1:qemuMemPath"/>
+      <xs:element minOccurs="0" ref="vmi1:mainFilename"/>
+      <xs:element minOccurs="0" ref="vmi1:clearMemCachesEachException"/>
+      <xs:element minOccurs="0" ref="vmi1:memcacheMmapSize"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:element name="gdbHostname" type="xs:string"/>
+  <xs:element name="gdbPort" type="xs:int"/>
+  <xs:element name="gdbSockfile" type="xs:string"/>
+  <xs:element name="doUdp" type="xs:boolean"/>
+  <xs:element name="isQemu" type="xs:boolean"/>
+  <xs:element name="isKvm" type="xs:boolean"/>
+  <xs:element name="qemuQmpHostname" type="xs:string"/>
+  <xs:element name="qemuQmpPort" type="xs:int"/>
+  <xs:element name="qemuMemPath" type="xs:string"/>
+  <xs:element name="mainFilename" type="xs:string"/>
+  <xs:element name="memcacheMmapSize" type="xs:unsignedInt"/>
+  <xs:element name="targetGdbSpec" type="vmi1:TargetGdbSpecT"/>
   <xs:complexType name="TargetPtraceSpecT">
     <xs:choice>
       <xs:element name="pid" type="xs:int"/>
@@ -148,7 +184,10 @@
   </xs:element>
   <xs:element name="envvar" type="xs:string"/>
   <xs:element name="targetPtraceSpec" type="vmi1:TargetPtraceSpecT"/>
-  <xs:element name="targetXenProcessSpec">
+  <xs:element name="targetOsProcessSpec">
+    <xs:complexType/>
+  </xs:element>
+  <xs:element name="targetPhpSpec">
     <xs:complexType/>
   </xs:element>
   <xs:simpleType name="ThreadStatusT">
@@ -210,10 +249,6 @@
       <xs:element ref="vmi1:tid"/>
       <xs:element ref="vmi1:thid"/>
       <xs:element ref="vmi1:targetStatus"/>
-      <xs:element minOccurs="0" ref="vmi1:eventCode"/>
-      <xs:element minOccurs="0" ref="vmi1:eventData"/>
-      <xs:element minOccurs="0" ref="vmi1:eventStartAddr"/>
-      <xs:element minOccurs="0" ref="vmi1:eventEndAddr"/>
       <xs:element minOccurs="0" ref="vmi1:eventMsg"/>
     </xs:sequence>
   </xs:complexType>
@@ -223,22 +258,45 @@
         <xs:enumeration value="exiting"/>
         <xs:enumeration value="exited"/>
         <xs:enumeration value="error"/>
-        <xs:enumeration value="threadCreated"/>
-        <xs:enumeration value="threadExiting"/>
-        <xs:enumeration value="threadExited"/>
-        <xs:enumeration value="regionNew"/>
-        <xs:enumeration value="regionMod"/>
-        <xs:enumeration value="regionDel"/>
-        <xs:enumeration value="rangeNew"/>
-        <xs:enumeration value="rangeMod"/>
-        <xs:enumeration value="rangeDel"/>
+        <xs:enumeration value="osThreadCreated"/>
+        <xs:enumeration value="osThreadExiting"/>
+        <xs:enumeration value="osThreadExited"/>
+        <xs:enumeration value="osSpaceNew"/>
+        <xs:enumeration value="osSpaceMod"/>
+        <xs:enumeration value="osSpaceDel"/>
+        <xs:enumeration value="osRegionNew"/>
+        <xs:enumeration value="osRegionMod"/>
+        <xs:enumeration value="osRegionDel"/>
+        <xs:enumeration value="osRangeNew"/>
+        <xs:enumeration value="osRangeMod"/>
+        <xs:enumeration value="osRangeDel"/>
+        <xs:enumeration value="osProcessThreadCreated"/>
+        <xs:enumeration value="osProcessThreadExiting"/>
+        <xs:enumeration value="osProcessThreadExited"/>
+        <xs:enumeration value="osProcessSpaceNew"/>
+        <xs:enumeration value="osProcessSpaceMod"/>
+        <xs:enumeration value="osProcessSpaceDel"/>
+        <xs:enumeration value="osProcessRegionNew"/>
+        <xs:enumeration value="osProcessRegionMod"/>
+        <xs:enumeration value="osProcessRegionDel"/>
+        <xs:enumeration value="osProcessRangeNew"/>
+        <xs:enumeration value="osProcessRangeMod"/>
+        <xs:enumeration value="osProcessRangeDel"/>
+        <xs:enumeration value="processThreadCreated"/>
+        <xs:enumeration value="processThreadExiting"/>
+        <xs:enumeration value="processThreadExited"/>
+        <xs:enumeration value="processSpaceNew"/>
+        <xs:enumeration value="processSpaceMod"/>
+        <xs:enumeration value="processSpaceDel"/>
+        <xs:enumeration value="processRegionNew"/>
+        <xs:enumeration value="processRegionMod"/>
+        <xs:enumeration value="processRegionDel"/>
+        <xs:enumeration value="processRangeNew"/>
+        <xs:enumeration value="processRangeMod"/>
+        <xs:enumeration value="processRangeDel"/>
       </xs:restriction>
     </xs:simpleType>
   </xs:element>
-  <xs:element name="eventCode" type="xs:unsignedLong"/>
-  <xs:element name="eventData" type="xs:unsignedLong"/>
-  <xs:element name="eventStartAddr" type="vmi1:ADDR"/>
-  <xs:element name="eventEndAddr" type="vmi1:ADDR"/>
   <xs:element name="eventMsg" type="xs:string"/>
   <xs:element name="targetEvent" type="vmi1:TargetEventT"/>
   <xs:complexType name="AddrSpaceT">

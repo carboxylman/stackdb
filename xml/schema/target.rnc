@@ -20,7 +20,7 @@ default namespace vmi1 = "http://anathema.flux.utah.edu/schema/vmi/1"
 
 include "common.rnc"
 
-TargetTypeT = "none" | "ptrace" | "xen" | "xenProcess"
+TargetTypeT = "none" | "ptrace" | "xen" | "gdb" | "osProcess" | "php"
 TargetModeT = "none" | "live" | "replay" | "record"
 ThreadBPModeT = "strict" | "semiStrict" | "loose"
 
@@ -44,7 +44,8 @@ TargetSpecT =
     element activeProbeOther { xsd:boolean }?,
 
     element backendSpec {
-        (TargetXenSpec | TargetPtraceSpec | TargetXenProcessSpec)
+        (TargetXenSpec | TargetPtraceSpec | TargetGdbSpec
+	 | TargetOsProcessSpec | TargetPhpSpec)
     }
 
 TargetSpec = element targetSpec { TargetSpecT }
@@ -64,6 +65,22 @@ TargetXenSpecT =
 
 TargetXenSpec = element targetXenSpec { TargetXenSpecT }
 
+TargetGdbSpecT = 
+    ((element gdbHostname { text }?,
+      element gdbPort { xsd:int }?)
+     | element gdbSockfile { text }?),
+    element doUdp { xsd:boolean }?,
+    element isQemu { xsd:boolean }?,
+    element isKvm { xsd:boolean }?,
+    element qemuQmpHostname { text }?,
+    element qemuQmpPort { xsd:int }?,
+    element qemuMemPath { text }?,
+    element mainFilename { text }?,
+    element clearMemCachesEachException { xsd:boolean }?,
+    element memcacheMmapSize { xsd:unsignedInt }?
+
+TargetGdbSpec = element targetGdbSpec { TargetGdbSpecT }
+
 TargetPtraceSpecT = 
     (element pid { xsd:int }
     | (element program { text },
@@ -76,9 +93,13 @@ TargetPtraceSpecT =
 
 TargetPtraceSpec = element targetPtraceSpec { TargetPtraceSpecT }
 
-TargetXenProcessSpecT = empty
+TargetOsProcessSpecT = empty
 
-TargetXenProcessSpec = element targetXenProcessSpec { TargetXenProcessSpecT }
+TargetOsProcessSpec = element targetOsProcessSpec { TargetOsProcessSpecT }
+
+TargetPhpSpecT = empty
+
+TargetPhpSpec = element targetPhpSpec { TargetPhpSpecT }
 
 ThreadStatusT = 
     "unknown" | "running" | "stopped" | "sleeping" | "zombie" | "dead" 
@@ -112,16 +133,23 @@ Target = element target { TargetT }
 
 TargetEventT = 
     element targetEventType { "exiting" | "exited" | "error" 
-    	    		      | "threadCreated" | "threadExiting" | "threadExited" 
-			      | "regionNew" | "regionMod" | "regionDel"
-			      | "rangeNew" | "rangeMod" | "rangeDel" },
+    	    		      | "osThreadCreated" | "osThreadExiting" | "osThreadExited" 
+			      | "osSpaceNew" | "osSpaceMod" | "osSpaceDel"
+			      | "osRegionNew" | "osRegionMod" | "osRegionDel"
+			      | "osRangeNew" | "osRangeMod" | "osRangeDel"
+    	    		      | "osProcessThreadCreated" | "osProcessThreadExiting" | "osProcessThreadExited" 
+			      | "osProcessSpaceNew" | "osProcessSpaceMod" | "osProcessSpaceDel"
+			      | "osProcessRegionNew" | "osProcessRegionMod" | "osProcessRegionDel"
+			      | "osProcessRangeNew" | "osProcessRangeMod" | "osProcessRangeDel"
+    	    		      | "processThreadCreated" | "processThreadExiting" | "processThreadExited" 
+			      | "processSpaceNew" | "processSpaceMod" | "processSpaceDel"
+			      | "processRegionNew" | "processRegionMod" | "processRegionDel"
+			      | "processRangeNew" | "processRangeMod" | "processRangeDel" },
+
+
     element tid { TargetIdT },
     element thid { ThreadIdT },
     TargetStatus,
-    element eventCode { xsd:unsignedLong }?,
-    element eventData { xsd:unsignedLong }?,
-    element eventStartAddr { ADDR }?,
-    element eventEndAddr { ADDR }?,
     element eventMsg { text }?
 TargetEvent = element targetEvent { TargetEventT }
 

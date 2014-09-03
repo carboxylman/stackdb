@@ -46,32 +46,58 @@ typedef enum {
 	}								\
     } while (0);
 
-struct target_process_syscall {
-    int num;
-    ADDR addr;
-    struct bsymbol *bsymbol;
-};
+struct target_process {
+    struct target *target;
+    /*
+     * The primary thread.
+     */
+    struct target_thread *thread;
+    tid_t tid;
 
-struct target_process_signal {
-    int num;
-    char *name;
+    obj_flags_t obj_flags;
+    REFCNT refcnt;
+    REFCNT refcntw;
+
+    /*
+     * A hashtable of tid_t to struct target_thread *.
+     */
+    GHashTable *threads;
+
+    /*
+     * A hashtable of tid_t to struct target_thread *.
+     */
+    GHashTable *children;
+
+    /*
+     * An addrspace containing regions.  This isn't very good, because
+     * individual threads in the process might have their own address
+     * spaces.  However, we don't tend to see this much in practice, so
+     * for now it's good enough.
+     */
+    struct addrspace *space;
+
+    struct target_process *parent;
 };
 
 /*
- * The intent here is to provide a generic interface to common OS-level
- * abstractions.
+ * Helper functions for backend builders.
+ */
+
+struct target_process *target_process_create(struct target *target,
+					     struct target_thread *tthread,
+					     struct addrspace *space);
+REFCNT target_process_free(struct target_process *process,int force);
+
+/*
+ * The intent here is to provide a generic interface to common
+ * process-level abstractions.
  */
 struct target_process_ops {
     int (*init)(struct target *target);
     int (*fini)(struct target *target);
 
-    /*
-     * Version info.
-     */
-    target_process_type_t (*process_type)(struct target *target);
-    uint64_t (*os_version)(struct target *target);
-    char *(*os_version_string)(struct target *target);
-    int (*os_version_cmp)(struct target *target,uint64_t vers);
+    target_process_type_t (*type)(struct target *target);
+
 };
 
 #endif /* __TARGET_PROCESS_H__ */

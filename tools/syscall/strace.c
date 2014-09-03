@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -64,7 +64,7 @@ void cleanup() {
 
     if (t) {
 	target_close(t);
-	target_free(t);
+	target_finalize(t);
 	t = NULL;
     }
 
@@ -220,7 +220,7 @@ int main(int argc,char **argv) {
     struct probe *p;
 
     tspec = target_argp_driver_parse(&strace_argp,&opts,argc,argv,
-				     TARGET_TYPE_XEN,1);
+				     TARGET_TYPE_XEN | TARGET_TYPE_GDB,1);
 
     if (!tspec) {
 	verror("could not parse target arguments!\n");
@@ -255,7 +255,7 @@ int main(int argc,char **argv) {
 
     /*
      * Make a permanent copy so we can print useful messages after
-     * target_free.
+     * target_finalize.
      */
     targetstr = target_name(t);
     if (!targetstr) 

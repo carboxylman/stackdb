@@ -50,14 +50,6 @@
 #define DWDEBUG_DEF_DELIM "."
 
 /**
- ** Library users must call these to initialize global library state.
- ** They may be called as many times as necessary; but are NOT thread
- ** safe.
- **/
-void dwdebug_init(void);
-void dwdebug_fini(void);
-
-/**
  ** Some forward declarations.
  **/
 
@@ -82,6 +74,17 @@ struct lsymbol;
  ** Invisible things.
  **/
 struct symdict;
+
+/**
+ ** Library users must call these to initialize global library state.
+ ** They may be called as many times as necessary; but are NOT thread
+ ** safe.
+ **/
+void dwdebug_init(void);
+void dwdebug_fini(void);
+
+void dwdebug_evict(struct debugfile *debugfile);
+void dwdebug_evict_all(void);
 
 /*
  * Our default load strategy is to always load the basic info for each
@@ -349,7 +352,7 @@ int debugfile_filename_info(char *filename,char **realfilename,
 void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
 		    int types,int globals,int symtabs,int elfsymtab,
 		    int doranges);
-REFCNT debugfile_release(struct debugfile *debugfile);
+//REFCNT debugfile_release(struct debugfile *debugfile);
 
 /**
  ** Symbols.

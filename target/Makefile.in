@@ -74,15 +74,15 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h $(TOP_SRCDIR)/dwdebug/dwdebug_priv.h 
 
 OBJECTS := target.lo target_api.lo target_generic.lo memory.lo location.lo \
 	symbol.lo value.lo probe.lo probe_lib.lo probe_value.lo probe_filter.lo \
-	target_nv_filter.lo \
+	target_nv_filter.lo target_event.lo \
 	target_os.lo target_process.lo target_os_linux_generic.lo \
 	target_arch_x86.lo memcache.lo
 OBJECTS += target_linux_userproc.lo target_php.lo \
 	target_gdb_rsp.lo target_gdb.lo target_gdb_helper_builtin.lo \
-	 target_gdb_helper_qemu.lo
+		target_gdb_helper_qemu.lo \
+	target_os_process.lo
 ifeq ($(ENABLE_XENSUPPORT),"1")
-	OBJECTS += target_xen_vm.lo target_xen_vm_mem_builtin.lo \
-		target_xen_vm_process.lo
+	OBJECTS += target_xen_vm.lo target_xen_vm_mem_builtin.lo
 endif
 ifeq ($(ENABLE_XENACCESS),"1")
 	OBJECTS += target_xen_vm_mem_xenaccess.lo

@@ -57,7 +57,7 @@ void cleanup() {
     cleaning = 1;
     if (t) {
 	target_close(t);
-	target_free(t);
+	target_finalize(t);
 	t = NULL;
     }
     cleaning = 0;
@@ -136,7 +136,8 @@ int main(int argc,char **argv) {
     memset(&opts,0,sizeof(opts));
 
     tspec = target_argp_driver_parse(&dt_argp,&opts,argc,argv,
-				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN,1);
+				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN
+				         | TARGET_TYPE_GDB,1);
 
     if (!tspec) {
 	verror("could not parse target arguments!\n");

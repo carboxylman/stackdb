@@ -22,6 +22,7 @@
 #include <glib.h>
 
 #include "target_api.h"
+#include "target_process.h"
 
 typedef enum {
     TARGET_OS_TYPE_NONE  = 0,
@@ -30,9 +31,6 @@ typedef enum {
 
 #define THREAD_CTXT_KERNEL 0
 #define THREAD_CTXT_USER   1
-
-//extern struct target_personality_ops os_linux_personality_ops;
-//extern struct target_os_ops os_linux_os_ops;
 
 struct target_os_syscall {
     /*
@@ -111,6 +109,9 @@ int target_os_thread_get_pgd_phys(struct target *target,tid_t tid,ADDR *pgdp);
 int target_os_thread_is_user(struct target *target,tid_t tid);
 tid_t target_os_thread_get_leader(struct target *target,tid_t tid);
 
+GHashTable *target_os_process_table_get(struct target *target);
+struct target_process *target_os_process_get(struct target *target,tid_t tid);
+
 int target_os_signal_enqueue(struct target *target,tid_t tid,
 			     int signo,void *data);
 const char *target_os_signal_to_name(struct target *target,int signo);
@@ -169,6 +170,13 @@ struct target_os_ops {
     int (*thread_is_user)(struct target *target,struct target_thread *tthread);
     struct target_thread *(*thread_get_leader)(struct target *target,
 					       struct target_thread *tthread);
+
+    /*
+     * Processes.
+     */
+    GHashTable *(*processes_get)(struct target *target);
+    struct target_process *(*process_get)(struct target *target,
+					  struct target_thread *tthread);
 
     /*
      * Signals.
@@ -250,6 +258,10 @@ extern struct probe_ops target_os_syscall_ret_probe_ops;
 /*
  * Helper functions for backend builders.
  */
+
+int target_os_update_process_threads_generic(struct target_process *process,
+					     int no_event_send);
+
 struct target_os_syscall_state *
 target_os_syscall_record_entry(struct target *target,tid_t tid,
 			       struct target_os_syscall *syscall);
