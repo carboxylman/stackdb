@@ -1047,13 +1047,13 @@ int os_linux_handle_exception(struct target *target) {
 		continue;
 
 	    if (tthread == target->current_thread) {
-		vdebug(5,LA_TARGET,LF_XV,
+		vdebug(5,LA_TARGET,LF_OSLINUX,
 		       "active-probed exiting thread %"PRIiTID" (%s)"
 		       " is still running; not deleting yet!\n",
 		       tthread->tid,tthread->name);
 	    }
 	    else {
-		vdebug(5,LA_TARGET,LF_XV,
+		vdebug(5,LA_TARGET,LF_OSLINUX,
 		       "active-probed exiting thread %"PRIiTID" (%s)"
 		       " can be deleted; doing it\n",
 		       tthread->tid,tthread->name);
@@ -3948,6 +3948,26 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 	    goto errout;
 	}
 
+	if (vdebug_is_on(13,LA_TARGET,LF_OSLINUX)) {
+           char *pp;
+           vdebug(8,LA_TARGET,LF_OSLINUX,"  current stack:\n");
+           pp = v->buf + v->bufsiz - target->arch->wordsize;
+           while (pp > v->buf) {
+               if (target->arch->wordsize == 8) {
+                   vdebug(13,LA_TARGET,LF_OSLINUX,
+			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+                          value_addr(v) + (pp - v->buf),*(uint64_t *)pp);
+               }
+               else {
+                   vdebug(13,LA_TARGET,LF_OSLINUX,
+			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+                          value_addr(v) + (pp - v->buf),*(uint32_t *)pp);
+               }
+               pp -= target->arch->wordsize;
+           }
+           vdebug(13,LA_TARGET,LF_OSLINUX,"\n");
+       }
+
 	/* Copy the first range. */
 	if (target->arch->wordsize == 8) {
 	    target_regcache_init_reg_tidctxt(target,tthread,THREAD_CTXT_USER,
@@ -4907,6 +4927,26 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
 	    goto errout;
 	}
 
+	if (vdebug_is_on(13,LA_TARGET,LF_OSLINUX)) {
+           char *pp;
+           vdebug(8,LA_TARGET,LF_OSLINUX,"  current stack:\n");
+           pp = v->buf + v->bufsiz - target->arch->wordsize;
+           while (pp > v->buf) {
+               if (target->arch->wordsize == 8) {
+                   vdebug(13,LA_TARGET,LF_OSLINUX,
+			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+                          value_addr(v) + (pp - v->buf),*(uint64_t *)pp);
+               }
+               else {
+                   vdebug(13,LA_TARGET,LF_OSLINUX,
+			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+                          value_addr(v) + (pp - v->buf),*(uint32_t *)pp);
+               }
+               pp -= target->arch->wordsize;
+           }
+           vdebug(13,LA_TARGET,LF_OSLINUX,"\n");
+       }
+
 	/* Copy the first range. */
 	if (target->arch->wordsize == 8) {
 	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
@@ -5069,6 +5109,27 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
 	/* eflags and ebp are on the stack. */
 	v = target_load_addr_real(target,ltstate->esp,LOAD_FLAG_NONE,
 				  target->arch->wordsize * 2);
+
+	if (vdebug_is_on(13,LA_TARGET,LF_OSLINUX)) {
+           char *pp;
+           vdebug(8,LA_TARGET,LF_OSLINUX,"  current stack (ptregs addr 0x0):\n");
+           pp = v->buf + v->bufsiz - target->arch->wordsize;
+           while (pp > v->buf) {
+               if (target->arch->wordsize == 8) {
+                   vdebug(13,LA_TARGET,LF_OSLINUX,
+			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+                          value_addr(v) + (pp - v->buf),*(uint64_t *)pp);
+               }
+               else {
+                   vdebug(13,LA_TARGET,LF_OSLINUX,
+			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+                          value_addr(v) + (pp - v->buf),*(uint32_t *)pp);
+               }
+               pp -= target->arch->wordsize;
+           }
+           vdebug(13,LA_TARGET,LF_OSLINUX,"\n");
+       }
+
 	if (target->arch->wordsize == 8) {
 	    ltstate->eflags = ((uint64_t *)v->buf)[1];
 	    ltstate->ebp = ((uint64_t *)v->buf)[0];
@@ -5222,55 +5283,6 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
     }
     else {
 	vwarn("could not load debugreg for tid %d; no debuginfo!\n",tid);
-    }
-
-    if (vdebug_is_on(4,LA_TARGET,LF_OSLINUX)) {
-	REGVAL drs[8];
-	if (target->arch->type == ARCH_X86_64) {
-	    drs[0] = target_regcache_readreg_tidctxt(target,tthread->tid,
-						     ptregs_tidctxt,
-						     REG_X86_64_DR0);
-	    drs[1] = target_regcache_readreg_tidctxt(target,tthread->tid,
-						     ptregs_tidctxt,
-						     REG_X86_64_DR1);
-	    drs[2] = target_regcache_readreg_tidctxt(target,tthread->tid,
-						     ptregs_tidctxt,
-						     REG_X86_64_DR2);
-	    drs[3] = target_regcache_readreg_tidctxt(target,tthread->tid,
-						     ptregs_tidctxt,
-						     REG_X86_64_DR3);
-	    drs[6] = target_regcache_readreg_tidctxt(target,tthread->tid,
-						     ptregs_tidctxt,
-						     REG_X86_64_DR6);
-	    drs[7] = target_regcache_readreg_tidctxt(target,tthread->tid,
-						     ptregs_tidctxt,
-						     REG_X86_64_DR7);
-	}
-	else {
-	    drs[0] = target_regcache_readreg_tidctxt(target,tthread->tid,
-						     ptregs_tidctxt,
-						     REG_X86_DR0);
-	    drs[1] = target_regcache_readreg_tidctxt(target,tthread->tid,
-						     ptregs_tidctxt,
-						     REG_X86_DR1);
-	    drs[2] = target_regcache_readreg_tidctxt(target,tthread->tid,
-						     ptregs_tidctxt,
-						     REG_X86_DR2);
-	    drs[3] = target_regcache_readreg_tidctxt(target,tthread->tid,
-						     ptregs_tidctxt,
-						     REG_X86_DR3);
-	    drs[6] = target_regcache_readreg_tidctxt(target,tthread->tid,
-						     ptregs_tidctxt,
-						     REG_X86_DR6);
-	    drs[7] = target_regcache_readreg_tidctxt(target,tthread->tid,
-						     ptregs_tidctxt,
-						     REG_X86_DR7);
-	}
-
-	vdebug(4,LA_TARGET,LF_OSLINUX,
-	       "debug registers (context %d): 0x%"PRIxADDR",0x%"PRIxADDR
-	       ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
-	       ptregs_tidctxt,drs[0],drs[1],drs[2],drs[3],drs[6],drs[7]);
     }
 
     if (v) 
@@ -5541,6 +5553,26 @@ int os_linux_flush_thread(struct target *target,tid_t tid) {
 		   tid);
 	    goto errout;
 	}
+
+	if (vdebug_is_on(13,LA_TARGET,LF_OSLINUX)) {
+           char *pp;
+           vdebug(8,LA_TARGET,LF_OSLINUX,"  current stack:\n");
+           pp = v->buf + v->bufsiz - target->arch->wordsize;
+           while (pp > v->buf) {
+               if (target->arch->wordsize == 8) {
+                   vdebug(13,LA_TARGET,LF_OSLINUX,
+			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+                          value_addr(v) + (pp - v->buf),*(uint64_t *)pp);
+               }
+               else {
+                   vdebug(13,LA_TARGET,LF_OSLINUX,
+			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+                          value_addr(v) + (pp - v->buf),*(uint32_t *)pp);
+               }
+               pp -= target->arch->wordsize;
+           }
+           vdebug(13,LA_TARGET,LF_OSLINUX,"\n");
+       }
 
 	/* Copy the first range. */
 	if (target->arch->type == ARCH_X86_64) {
