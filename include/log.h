@@ -156,7 +156,7 @@ typedef enum log_flag_bits_target {
     LFB_OS            = 16,
     LFB_PROCESS       = 17,
     LFB_APPLICATION   = 18,
-    LFB_OSLINUX       = 20,
+    LFB_OSLINUX       = 19,
 } log_flag_bits_target_t;
 typedef enum log_flags_target {
     LF_TARGET         = 1 << LFB_TARGET,
