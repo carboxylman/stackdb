@@ -5018,7 +5018,7 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
 	    rv = ((uint64_t *)(v->buf + ip_offset))[2];
 	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
 					     REG_X86_64_RFLAGS,rv);
-	    //ssp = rv = ((uint64_t *)(v->buf + ip_offset))[3];
+	    rv = ((uint64_t *)(v->buf + ip_offset))[3];
 	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
 					     REG_X86_64_RSP,rv);
 	    rv = ((uint64_t *)(v->buf + ip_offset))[4];
@@ -5036,7 +5036,7 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
 	    rv = ((uint32_t *)(v->buf + ip_offset))[2];
 	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
 					     REG_X86_EFLAGS,rv);
-	    //ssp = rv = ((uint32_t *)(v->buf + ip_offset))[3];
+	    rv = ((uint32_t *)(v->buf + ip_offset))[3];
 	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
 					     REG_X86_ESP,rv);
 	    rv = ((uint32_t *)(v->buf + ip_offset))[4];
