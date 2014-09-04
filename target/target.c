@@ -4693,7 +4693,7 @@ int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
 	}
 
 	if (j > 0) {
-	    retval = snprintf(buf + rc,buflen - rc,"%s",frame_sep);
+	    retval = snprintf(buf + rc,((buflen - rc) > 0) ? buflen - rc : 0,"%s",frame_sep);
 	    if (retval < 0) {
 		vwarnopt(3,LA_TARGET,LF_TARGET,
 			 "snprintf(frame_sep %d): %s\n",
@@ -4717,15 +4717,15 @@ int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
 	    name = "";
 
 	if (fstyle == TARGET_UNWIND_STYLE_GDB)
-	    retval = snprintf(buf + rc,buflen - rc,
+	    retval = snprintf(buf + rc,((buflen - rc) > 0) ? buflen - rc : 0,
 			      "#%d 0x%"PRIxFULLADDR" in %s (",
 			      j,ipval,name);
 	else if (fstyle == TARGET_UNWIND_STYLE_PROG_KEYS)
-	    retval = snprintf(buf + rc,buflen - rc,
+	    retval = snprintf(buf + rc,((buflen - rc) > 0) ? buflen - rc : 0,
 			      "frame=%d%sip=0x%"PRIxFULLADDR"%sfunction=%s%sargs=(",
 			      j,ksep,ipval,ksep,name,ksep);
 	else
-	    retval = snprintf(buf + rc,buflen - rc,
+	    retval = snprintf(buf + rc,((buflen - rc) > 0) ? buflen - rc : 0,
 			      "%d%s0x%"PRIxFULLADDR"%s%s%s(",
 			      j,ksep,ipval,ksep,name,ksep);
 	if (retval < 0) {
@@ -4745,7 +4745,7 @@ int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
 						     argsym);
 
 		if (i > 0) {
-		    retval = snprintf(buf + rc,buflen - rc,"%s",ksep);
+		    retval = snprintf(buf + rc,((buflen - rc) > 0) ? buflen - rc : 0,"%s",ksep);
 		    if (retval < 0) {
 			vwarnopt(3,LA_TARGET,LF_TARGET,
 				 "snprintf(ksep %d): %s\n",
@@ -4789,9 +4789,9 @@ int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
 
 		if (fstyle == TARGET_UNWIND_STYLE_GDB
 		    || fstyle == TARGET_UNWIND_STYLE_PROG_KEYS)
-		    retval = snprintf(buf + rc,buflen - rc,"%s=%s",name,vbuf);
+		    retval = snprintf(buf + rc,((buflen - rc) > 0) ? buflen - rc : 0,"%s=%s",name,vbuf);
 		else
-		    retval = snprintf(buf + rc,buflen - rc,"%s",vbuf);
+		    retval = snprintf(buf + rc,((buflen - rc) > 0) ? buflen - rc : 0,"%s",vbuf);
 		if (retval < 0) {
 		    vwarnopt(3,LA_TARGET,LF_TARGET,"snprintf(arg %d): %s\n",
 			     i,strerror(errno));
@@ -4812,14 +4812,14 @@ int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
 	}
 
 	if (fstyle == TARGET_UNWIND_STYLE_GDB)
-	    retval = snprintf(buf + rc, buflen - rc,
+	    retval = snprintf(buf + rc, ((buflen - rc) > 0) ? buflen - rc : 0,
 			      ") at %s:%d",srcfile,srcline);
 	else if (fstyle == TARGET_UNWIND_STYLE_PROG_KEYS)
-	    retval = snprintf(buf + rc, buflen - rc,
+	    retval = snprintf(buf + rc, ((buflen - rc) > 0) ? buflen - rc : 0,
 			      ")%ssrcfile=%s%ssrcline=%d",
 			      ksep,srcfile,ksep,srcline);
 	else
-	    retval = snprintf(buf + rc, buflen - rc,
+	    retval = snprintf(buf + rc, ((buflen - rc) > 0) ? buflen - rc : 0,
 			      ")%s%s%s%d",
 			      ksep,srcfile,ksep,srcline);
 	if (retval < 0) {
