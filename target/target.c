@@ -5006,7 +5006,7 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
     }
 
     retaddr = 0;
-    if (tlctxtf->bsymbol) {
+    if (tlctxtf->bsymbol || tlctxtf->alt_bsymbol) {
 	rc = location_ctxt_read_retaddr(tlctxt->lctxt,&retaddr);
 	if (rc) {
 	    vwarnopt(5,LA_TARGET,LF_TUNW,

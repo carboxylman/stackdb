@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -50,6 +50,8 @@ int __target_location_ops_setcurrentframe(struct location_ctxt *lctxt,
 
     if (tlctxtf->bsymbol)
 	tlctxt->region = tlctxtf->bsymbol->region;
+    else if (tlctxtf->alt_bsymbol)
+	tlctxt->region = tlctxtf->alt_bsymbol->region;
     lctxt->current_frame = frame;
     return 0;
 }
@@ -60,10 +62,12 @@ struct symbol *__target_location_ops_getsymbol(struct location_ctxt *lctxt) {
     struct target_location_ctxt_frame *tlctxtf = 
 	target_location_ctxt_current_frame(tlctxt);
 
-    if (!tlctxtf->bsymbol)
+    if (tlctxtf->bsymbol)
+	return bsymbol_get_symbol(tlctxtf->bsymbol);
+    else if (tlctxtf->alt_bsymbol)
+	return bsymbol_get_symbol(tlctxtf->alt_bsymbol);
+    else
 	return NULL;
-
-    return bsymbol_get_symbol(tlctxtf->bsymbol);
 }
 
 int __target_location_ops_getaddrsize(struct location_ctxt *lctxt) {
