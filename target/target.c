@@ -4541,7 +4541,8 @@ struct target_location_ctxt *target_unwind(struct target *target,tid_t tid) {
 
     /* Ok, we have enough info to start unwinding. */
 
-    tlctxt = target_location_ctxt_create_from_bsymbol(target,tid,bsymbol);
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,tid,
+						      bsymbol ? bsymbol : alt_bsymbol);
     tlctxt->frames = array_list_create(8);
 
     /*
