@@ -3952,7 +3952,7 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
            char *pp;
            vdebug(8,LA_TARGET,LF_OSLINUX,"  current stack:\n");
            pp = v->buf + v->bufsiz - target->arch->wordsize;
-           while (pp > v->buf) {
+           while (pp >= v->buf) {
                if (target->arch->wordsize == 8) {
                    vdebug(13,LA_TARGET,LF_OSLINUX,
 			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
@@ -4931,7 +4931,7 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
            char *pp;
            vdebug(8,LA_TARGET,LF_OSLINUX,"  current stack:\n");
            pp = v->buf + v->bufsiz - target->arch->wordsize;
-           while (pp > v->buf) {
+           while (pp >= v->buf) {
                if (target->arch->wordsize == 8) {
                    vdebug(13,LA_TARGET,LF_OSLINUX,
 			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
@@ -5114,7 +5114,7 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
            char *pp;
            vdebug(8,LA_TARGET,LF_OSLINUX,"  current stack (ptregs addr 0x0):\n");
            pp = v->buf + v->bufsiz - target->arch->wordsize;
-           while (pp > v->buf) {
+           while (pp >= v->buf) {
                if (target->arch->wordsize == 8) {
                    vdebug(13,LA_TARGET,LF_OSLINUX,
 			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
@@ -5558,7 +5558,7 @@ int os_linux_flush_thread(struct target *target,tid_t tid) {
            char *pp;
            vdebug(8,LA_TARGET,LF_OSLINUX,"  current stack:\n");
            pp = v->buf + v->bufsiz - target->arch->wordsize;
-           while (pp > v->buf) {
+           while (pp >= v->buf) {
                if (target->arch->wordsize == 8) {
                    vdebug(13,LA_TARGET,LF_OSLINUX,
 			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
