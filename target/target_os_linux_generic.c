@@ -151,7 +151,7 @@ int os_linux_attach(struct target *target) {
      */
     g_hash_table_insert(target->config,strdup("OS_KERNEL_FILENAME"),
 			strdup(lstate->kernel_elf_filename));
-    lstate->kernel_filename = lstate->kernel_elf_filename;
+    lstate->kernel_filename = strdup(lstate->kernel_elf_filename);
 
     /*
      * Figure out where the System.map file is.  We look in two
