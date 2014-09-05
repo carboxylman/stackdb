@@ -5077,7 +5077,16 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
 	value_free(v);
 	v = NULL;
     }
-    else {
+
+    if (!ltstate->ptregs_stack_addr
+	|| (!iskernel && ptregs_tidctxt == THREAD_CTXT_USER)) {
+	thread_ctxt_t otidctxt;
+
+	if (!ltstate->ptregs_stack_addr)
+	    otidctxt = ptregs_tidctxt;
+	else
+	    otidctxt = THREAD_CTXT_KERNEL;
+
 	/*
 	 * Either we could not load pt_regs due to lack of type info; or
 	 * this thread was just context-switched out, not interrupted
@@ -5086,23 +5095,23 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
 	 */
 
 	if (target->arch->type == ARCH_X86) {
-	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
+	    target_regcache_init_reg_tidctxt(target,tthread,otidctxt,
 					     REG_X86_EIP,ltstate->eip);
-	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
+	    target_regcache_init_reg_tidctxt(target,tthread,otidctxt,
 					     REG_X86_ESP,ltstate->esp);
-	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
+	    target_regcache_init_reg_tidctxt(target,tthread,otidctxt,
 					     REG_X86_FS,ltstate->fs);
-	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
+	    target_regcache_init_reg_tidctxt(target,tthread,otidctxt,
 					     REG_X86_GS,ltstate->gs);
 	}
 	else {
-	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
+	    target_regcache_init_reg_tidctxt(target,tthread,otidctxt,
 					     REG_X86_64_RIP,ltstate->eip);
-	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
+	    target_regcache_init_reg_tidctxt(target,tthread,otidctxt,
 					     REG_X86_64_RSP,ltstate->esp);
-	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
+	    target_regcache_init_reg_tidctxt(target,tthread,otidctxt,
 					     REG_X86_64_FS,ltstate->fs);
-	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
+	    target_regcache_init_reg_tidctxt(target,tthread,otidctxt,
 					     REG_X86_64_GS,ltstate->gs);
 	}
 
@@ -5142,15 +5151,15 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
 	v = NULL;
 
 	if (target->arch->type == ARCH_X86) {
-	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
+	    target_regcache_init_reg_tidctxt(target,tthread,otidctxt,
 					     REG_X86_EFLAGS,ltstate->eflags);
-	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
+	    target_regcache_init_reg_tidctxt(target,tthread,otidctxt,
 					     REG_X86_EBP,ltstate->ebp);
 	}
 	else {
-	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
+	    target_regcache_init_reg_tidctxt(target,tthread,otidctxt,
 					     REG_X86_64_RFLAGS,ltstate->eflags);
-	    target_regcache_init_reg_tidctxt(target,tthread,ptregs_tidctxt,
+	    target_regcache_init_reg_tidctxt(target,tthread,otidctxt,
 					     REG_X86_64_RBP,ltstate->ebp);
 	}
     }
