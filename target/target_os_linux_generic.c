@@ -260,10 +260,43 @@ int os_linux_attach(struct target *target) {
     }
 
     /*
-     * Load the config file.  We look only in /boot .
+     * Load the config file.  We look in three places:
+     *   <prefix>/lib/modules/<kernel_version>/config-<kernel_version>
+     *   <prefix>/boot/config-<kernel_version>/
+     *   /boot/config-<kernel_version>
+     *   <kernel_filename_dir>/config-<kernel_version>
      */
-    snprintf(pbuf,sizeof(pbuf),"/boot/config-%s",lstate->kernel_version);
-    if (access(pbuf,R_OK) == 0) {
+    pbuf[0] = '\0';
+    if (pbuf[0] == '\0') {
+	snprintf(pbuf,sizeof(pbuf),"%s/lib/modules/%s/config-%s",
+		 (target->spec->debugfile_root_prefix)		\
+		 ? target->spec->debugfile_root_prefix : "",
+		 lstate->kernel_version,lstate->kernel_version);
+	if (access(pbuf,R_OK))
+	    pbuf[0] = '\0';
+    }
+    if (pbuf[0] == '\0') {
+	snprintf(pbuf,sizeof(pbuf),"%s/boot/config-%s",
+		 (target->spec->debugfile_root_prefix)		\
+		 ? target->spec->debugfile_root_prefix : "",
+		 lstate->kernel_version);
+	if (access(pbuf,R_OK))
+	    pbuf[0] = '\0';
+    }
+    if (pbuf[0] == '\0') {
+	snprintf(pbuf,sizeof(pbuf),"/boot/config-%s",
+		 lstate->kernel_version);
+	if (access(pbuf,R_OK))
+	    pbuf[0] = '\0';
+    }
+    if (pbuf[0] == '\0') {
+	snprintf(pbuf,sizeof(pbuf),"%s/config-%s",
+		 kdir,lstate->kernel_version);
+	if (access(pbuf,R_OK))
+	    pbuf[0] = '\0';
+    }
+
+    if (pbuf[0] != '\0') {
 	cf = fopen(pbuf,"r");
 	if (!cf) 
 	    verror("fopen(%s): %s\n",pbuf,strerror(errno));
