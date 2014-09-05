@@ -60,6 +60,8 @@ int os_linux_attach(struct target *target) {
     char *k,*v;
     FILE *cf;
     char *tmp;
+    char *kdir = NULL;
+    int ksize;
 
     lstate = (struct os_linux_state *)calloc(1,sizeof(*lstate));
     target->personality_state = lstate;
@@ -91,13 +93,25 @@ int os_linux_attach(struct target *target) {
 	goto errout;
     }
 
+    kdir = rindex(lstate->kernel_filename,'/');
+    if (!kdir)
+	kdir = strdup("./");
+    else {
+	ksize = kdir - lstate->kernel_filename + 1;
+	kdir = malloc(ksize + 1);
+	strncpy(kdir,lstate->kernel_filename,ksize);
+	kdir[ksize] = '\0';
+    }
+
     /*
-     * Figure out where the real ELF file is.  We look in four
+     * Figure out where the real ELF file is.  We look in six
      * places:
      *   /usr/lib/debug/lib/modules/<kernel_version>/vmlinux
      *   /usr/lib/debug/boot/vmlinux-<kernel_version>
      *   /boot/vmlinux-<kernel_version>
      *   /boot/vmlinux-syms-<kernel_version> (old A3 style)
+     *   <kernel_filename_dir>/vmlinux-<kernel_version>
+     *   <kernel_filename_dir>/vmlinux-syms-<kernel_version>
      */
     lstate->kernel_elf_filename = malloc(PATH_MAX);
     lstate->kernel_elf_filename[0] = '\0';
@@ -138,6 +152,20 @@ int os_linux_attach(struct target *target) {
 	if (access(lstate->kernel_elf_filename,R_OK))
 	    lstate->kernel_elf_filename[0] = '\0';
     }
+    if (lstate->kernel_elf_filename[0] == '\0') {
+	snprintf(lstate->kernel_elf_filename,PATH_MAX,
+		 "%s/vmlinux-%s",
+		 kdir,lstate->kernel_version);
+	if (access(lstate->kernel_elf_filename,R_OK))
+	    lstate->kernel_elf_filename[0] = '\0';
+    }
+    if (lstate->kernel_elf_filename[0] == '\0') {
+	snprintf(lstate->kernel_elf_filename,PATH_MAX,
+		 "%s/vmlinux-syms-%s",
+		 kdir,lstate->kernel_version);
+	if (access(lstate->kernel_elf_filename,R_OK))
+	    lstate->kernel_elf_filename[0] = '\0';
+    }
 
     if (lstate->kernel_elf_filename[0] == '\0') {
 	verror("could not find vmlinux binary for %s!\n",
@@ -154,10 +182,11 @@ int os_linux_attach(struct target *target) {
     lstate->kernel_filename = strdup(lstate->kernel_elf_filename);
 
     /*
-     * Figure out where the System.map file is.  We look in two
+     * Figure out where the System.map file is.  We look in three
      * places:
      *   /lib/modules/<kernel_version>/System.map 
      *   /boot/System.map-<kernel_version>
+     *   <kernel_filename_dir>/System.map-<kernel_version>
      */
     lstate->kernel_sysmap_filename = malloc(PATH_MAX);
     lstate->kernel_sysmap_filename[0] = '\0';
@@ -177,6 +206,13 @@ int os_linux_attach(struct target *target) {
 		 (target->spec->debugfile_root_prefix)			\
 		 ? target->spec->debugfile_root_prefix : "",
 		 lstate->kernel_version);
+	if (access(lstate->kernel_sysmap_filename,R_OK))
+	    lstate->kernel_sysmap_filename[0] = '\0';
+    }
+    if (lstate->kernel_sysmap_filename[0] == '\0') {
+	snprintf(lstate->kernel_sysmap_filename,PATH_MAX,
+		 "%s/System.map-%s",
+		 kdir,lstate->kernel_version);
 	if (access(lstate->kernel_sysmap_filename,R_OK))
 	    lstate->kernel_sysmap_filename[0] = '\0';
     }
@@ -308,9 +344,14 @@ int os_linux_attach(struct target *target) {
 
     target->personality = TARGET_PERSONALITY_OS;
 
+    if (kdir)
+	free(kdir);
+
     return 0;
 
  errout:
+    if (kdir)
+	free(kdir);
     if (lstate->processes) 
 	g_hash_table_destroy(lstate->processes);
     if (lstate->mm_addr_to_mm_cache) 
