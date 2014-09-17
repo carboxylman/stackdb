@@ -28,7 +28,7 @@ static char *url_encode(char *str);
 static int usesyslog;
 static int localreports;
 static struct sockaddr_in a3_hc_sock;
-static char *role, *server;
+static char *role, *server, *domname;
 
 int
 a3_hc_init(char *domid, char *server, int syslog)
@@ -50,6 +50,7 @@ a3_hc_init(char *domid, char *server, int syslog)
 	logmsg(LOG_INFO, "do not recognize domain '%s'", domid);
 	return 1;
     }
+    domname = domid;
 
     if (strcmp(server, "SYSLOG") == 0) {
 	localreports = 1;
@@ -300,9 +301,9 @@ a3_hc_sendevent(int enforce, char *msg)
     }
 
     snprintf(sendbuf, sendlen, "GET /index.html?"
-	     "origin=ASM&op=pub&type=event&eventtype=%s&vmid=%s%s&ts=%llu&"
+	     "origin=ASM&op=pub&type=event&eventtype=%s&vmid=%s&ts=%llu&"
 	     "event=%s HTTP/1.1\nHost: a3\n\n",
-	     etype, "", role, (unsigned long long)ts, estr);
+	     etype, domname, (unsigned long long)ts, estr);
     free(estr);
 
     rv = a3_hc_send(sendbuf, strlen(sendbuf) + 1);
@@ -345,9 +346,9 @@ a3_hc_sendkv(char *key, int val)
     }
 
     snprintf(sendbuf, sendlen, "GET /index.html?"
-	     "origin=ASM&op=pub&type=dstat&eventtype=%s&vmid=%s%s&ts=%llu&"
+	     "origin=ASM&op=pub&type=dstat&eventtype=%s&vmid=%s&ts=%llu&"
 	     "key=%s&value=%d HTTP/1.1\nHost: a3\n\n",
-	     etype, "", role, (unsigned long long)ts, estr, val);
+	     etype, domname, (unsigned long long)ts, estr, val);
     free(estr);
 
     rv = a3_hc_send(sendbuf, strlen(sendbuf) + 1);
