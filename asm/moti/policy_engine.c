@@ -770,7 +770,7 @@ int main( int argc, char** argv) {
 	/* Load previous cpu utilization state */
 	result = LoadFacts("state_information/cpu_state_info.fac");
 	if(!result) {
-	   fprintf(stderr,"ERROR: Failed to load the tcp_state_info file.\n");
+	   fprintf(stderr,"ERROR: Failed to load the cpu_state_info file.\n");
 	   exit(0);
 	}
 #ifdef MEMUSESTATS
@@ -786,7 +786,7 @@ int main( int argc, char** argv) {
 	if (opts.dump_debug)
 	    fprintf(stdout,"INFO : %d application rules were fired\n",result);
 	/* At this time the anomaly facts are generated. Now load the
-	 * state information from the previos iteration.
+	 * state information from the previous iteration.
 	 */
 	
 #ifdef ENABLE_A3
