@@ -111,6 +111,8 @@ the syntax.
     tid      The thread id
     ptid     The thread's parent thread id (-1 if target does not support
              thread parents)
+    tgid     The thread's group id (-1 if target does not support
+             thread groups) (on Linux, the thread group id the process id)
     tidhier  A common-separated list of tids starting with the
              current tid, and then moving up the hierarchy to the root.
     name     The thread's name (the empty string if the target does not
