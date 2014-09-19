@@ -115,6 +115,17 @@ struct os_linux_state {
     const char *thread_ip_member_name;
 
     /*
+     * On x86_64 systems, figuring out the saved IP for a sleeping
+     * thread is difficult, because the kernel's context switch
+     * functions are written so that they swap context by swapping the
+     * old and new %rsp.  See the (much) more detailed comments in
+     * target_os_linux_generic.c ...
+     */
+    ADDR schedule_addr;
+    ADDR schedule_swap_new_rsp_addr;
+    ADDR ret_from_fork_addr;
+
+    /*
      * Newer kernels store uid/gid info in task->[real_]cred->(uid|gid);
      * older ones just in task->(uid|gid).
      */

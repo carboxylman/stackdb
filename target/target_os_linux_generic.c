@@ -1139,6 +1139,106 @@ int os_linux_postopened(struct target *target) {
 	((struct os_linux_thread_state *)target->current_thread->personality_state)->pgd = lstate->pgd_addr;
     }
 
+    /*
+     * If this is an x86_64 system, find the magic location in
+     * __schedule() or schedule() where the new %rsp is swapped in
+     * during context switch.  See other comments when we load threads
+     * below.
+     */
+    if (target->arch->wordsize == 8) {
+	ADDR end = 0;
+	lstate->schedule_addr = 0;
+	lstate->schedule_swap_new_rsp_addr = 0;
+	tmpbs = target_lookup_sym(target,"__schedule",NULL,NULL,
+				  SYMBOL_TYPE_FLAG_NONE);
+	if (tmpbs) {
+	    if (target_symbol_resolve_bounds(target,tlctxt,
+					     bsymbol_get_symbol(tmpbs),
+					     &lstate->schedule_addr,&end,
+					     NULL,NULL,NULL)) {
+		vwarnopt(5,LA_TARGET,LF_OSLINUX,
+			 "could not resolve bounds of __schedule!\n");
+	    }
+	    bsymbol_release(tmpbs);
+	    tmpbs = NULL;
+	}
+	if (lstate->schedule_addr == 0) {
+	    tmpbs = target_lookup_sym(target,"schedule",NULL,NULL,
+				      SYMBOL_TYPE_FLAG_NONE);
+	    if (tmpbs) {
+		if (target_symbol_resolve_bounds(target,tlctxt,
+						 bsymbol_get_symbol(tmpbs),
+						 &lstate->schedule_addr,
+						 &end,NULL,NULL,NULL)) {
+		    vwarnopt(5,LA_TARGET,LF_OSLINUX,
+			     "could not resolve bounds of schedule!\n");
+		}
+		bsymbol_release(tmpbs);
+		tmpbs = NULL;
+	    }
+	}
+	if (lstate->schedule_addr && end) {
+	    int len = end - lstate->schedule_addr;
+	    int caller_should_free = 0;
+	    unsigned char *cbuf;
+
+	    cbuf = target_load_code(target,lstate->schedule_addr,len,0,0,
+				    &caller_should_free);
+	    if (!cbuf) {
+		vwarnopt(5,LA_TARGET,LF_OSLINUX,
+			 "could not load code of __schedule/schedule();"
+			 " will not be able to load IP for sleeping threads!\n");
+	    }
+	    else {
+		/*
+		 * Look for the 48 8b a6 instruction sub-part, which
+		 * moves something at x(%rsi) to %rsp .  Fortunately
+		 * this always the way this instruction is!
+		 */
+		int i = 0;
+		while (i < len) {
+		    if (cbuf[i] == 0x48
+			&& (i + 1) < len && cbuf[i + 1] == 0x8b
+			&& (i + 2) < len && cbuf[i + 2] == 0xa6)
+			break;
+		    ++i;
+		}
+		if (i < len) {
+		    lstate->schedule_swap_new_rsp_addr =
+			lstate->schedule_addr + i;
+
+		    vdebug(2,LA_TARGET,LF_OSLINUX,
+			   "found x86_64 schedule swap %%rsp instruction"
+			   " at 0x%"PRIxADDR"!\n",
+			   lstate->schedule_swap_new_rsp_addr);
+		}
+	    }
+	    if (caller_should_free) {
+		free(cbuf);
+	    }
+	}
+    }
+
+    /*
+     * If this is an x86_64 system, find ret_from_fork -- it is used for
+     * the IP for newly created threads that are sleeping and haven't
+     * been run yet.
+     */
+    if (target->arch->wordsize == 8) {
+	tmpbs = target_lookup_sym(target,"ret_from_fork",NULL,NULL,
+				  SYMBOL_TYPE_FLAG_NONE);
+	if (tmpbs) {
+	    if (target_bsymbol_resolve_base(target,tlctxt,tmpbs,
+					    &lstate->ret_from_fork_addr,NULL)) {
+		vwarn("could not resolve addr of ret_from_fork;"
+		      " will not be able to load IP for newly forked"
+		      " sleeping threads!\n");
+	    }
+	    bsymbol_release(tmpbs);
+	    tmpbs = NULL;
+	}
+    }
+
     v_g_list_foreach(target->spaces,t1,space) {
 	rc |= os_linux_updateregions(target,space);
     }
@@ -4944,15 +5044,35 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
 	}
     }
     else {
-	v = target_load_addr_real(target,ltstate->esp + 3 * target->arch->wordsize,
-				  LOAD_FLAG_NONE,target->arch->wordsize);
-	if (!v) 
-	    vwarn("could not 64-bit IP (thread.ip) for task %"PRIiTID"!\n",
-		  tid);
+	/*
+	 * Check thread_info->flags & TIF_FORK; if that is set, we're
+	 * returning at ret_from_fork .  Otherwise, we're at the point
+	 * in the scheduler where the new rsp is about to be changed.
+	 * Exactly where that is is somewhat debatable.  To make CFA
+	 * make the most sense, we want the old rsp (which is the one in
+	 * the thread struct, for the thread that is sleeping in the
+	 * scheduler) to actually be the one still in %rsp.  That means
+	 * we are stopped right at the instruction that moves the new
+	 * rsp into %rsp.  On x86_64, the instruction prefix that
+	 * accomplishes that is 48 8b a6 (from kernels from 2.6.18 to
+	 * 3.8.x), and that instruction is followed by the call to
+	 * __switch_to .  So we're lucky -- and we look for this prefix
+	 * in __schedule() (contains the %rsp swap in modern kernels) or
+	 * in schedule() if __schedule() does not exist (like in
+	 * 2.6.18).  We do this above in postloadinit().
+	 */
+
+	if (tiflags & 0x40000) {
+	    if (!lstate->ret_from_fork_addr)
+		ltstate->eip = 0;
+	    else
+		ltstate->eip = lstate->ret_from_fork_addr;
+	}
 	else {
-	    ltstate->eip = v_addr(v);
-	    value_free(v);
-	    v = NULL;
+	    if (!lstate->schedule_swap_new_rsp_addr)
+		ltstate->eip = 0;
+	    else
+		ltstate->eip = lstate->schedule_swap_new_rsp_addr;
 	}
     }
 
@@ -5592,6 +5712,11 @@ int os_linux_flush_thread(struct target *target,tid_t tid) {
      * comments there.
      */
 
+    /*
+     * Changing the IP for a non-current thread is probably a very, very
+     * bad idea -- but it could be done on x86_32 -- but keep reading
+     * for why it can't be done on x86_64.
+     */
     if (lstate->thread_ip_member_name) {
 	v = target_load_value_member(target,tlctxt,
 				     ltstate->thread_struct,
@@ -5608,17 +5733,22 @@ int os_linux_flush_thread(struct target *target,tid_t tid) {
 	}
     }
     else {
-	v = target_load_addr_real(target,ltstate->esp + 3 * target->arch->wordsize,
-				  LOAD_FLAG_NONE,target->arch->wordsize);
-	if (!v) 
-	    vwarn("could not store 64-bit IP (thread.ip) for task %"PRIiTID"!\n",
-		  tid);
-	else {
-	    value_update(v,(const char *)&ltstate->eip,v->bufsiz);
-	    target_store_value(target,v);
-	    value_free(v);
-	    v = NULL;
-	}
+	/*
+	 * NB: we cannot do anything about this!  In this case, x86_64
+	 * context switch does not save the IP.  Either the thread
+	 * called schedule(), and its stack was swapped with another new
+	 * thread that will then run -- or it is a new thread that
+	 * starts execution at ret_from_fork .  We cannot change the IP
+	 * for a sleeping x86_64 thread without deep, black magic.
+	 * Deeper than whatever else is already in here.  It doesn't
+	 * even make sense to do this.  The best we could do is catch
+	 * the rsp swap, and then change IP.  But that will corrupt the
+	 * world and panic the kernel shortly, because the rest of the
+	 * context switch won't happen correctly.  I guess then the best
+	 * we could do is catch the return from __schedule() or
+	 * schedule() (which depends on kernel version, etc), and change
+	 * it then.
+	 */
     }
 
     /*
