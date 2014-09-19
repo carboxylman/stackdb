@@ -84,6 +84,11 @@ struct xen_vm_spec {
 
 struct xen_vm_thread_state {
     /*
+     * This is invalidated after each exception and resolved again.
+     */
+    ADDR pgd_phys;
+
+    /*
      * Either this came directly from the CPU for the currently-running
      * thread; or we populated it based on the last saved CPU state for
      * the thread.

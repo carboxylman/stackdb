@@ -704,26 +704,6 @@ int os_linux_postloadinit(struct target *target) {
     }
 
     /*
-     * Find swapper_pg_dir.
-     */
-    tmpbs = target_lookup_sym(target,"swapper_pg_dir",NULL,NULL,
-			      SYMBOL_TYPE_FLAG_NONE);
-    if (!tmpbs) 
-	vwarn("could not find 'swapper_pg_dir'; userspace vm access will fail!\n");
-    else {
-	if (target_bsymbol_resolve_base(target,tlctxt,tmpbs,&lstate->pgd_addr,NULL)) {
-	    vwarn("could not resolve addr of swapper_pg_dir!\n");
-	}
-	else {
-	    snprintf(buf,sizeof(buf),"0x%"PRIxADDR,lstate->pgd_addr);
-	    g_hash_table_insert(target->config,
-				strdup("OS_KERNEL_PGD_ADDR"),strdup(buf));
-	}
-	bsymbol_release(tmpbs);
-	tmpbs = NULL;
-    }
-
-    /*
      * For x86_64, current_thread_ptr depends on this value -- so just
      * load it once and keep it around forever.
      * target_xen_vm_util::current_thread_ptr refreshes it as needed.
@@ -1100,6 +1080,64 @@ int os_linux_postopened(struct target *target) {
     struct addrspace *space;
     int rc = 0;
     GList *t1;
+    struct os_linux_state *lstate = \
+	(struct os_linux_state *)target->personality_state;
+    struct bsymbol *tmpbs;
+    char buf[128];
+    struct target_location_ctxt *tlctxt = target_global_tlctxt(target);
+    struct value *v;
+
+    /*
+     * Find swapper_pg_dir.
+     */
+    tmpbs = target_lookup_sym(target,"swapper_pg_dir",NULL,NULL,
+			      SYMBOL_TYPE_FLAG_NONE);
+    if (tmpbs) {
+	if (target_bsymbol_resolve_base(target,tlctxt,tmpbs,&lstate->pgd_addr,NULL)) {
+	    vwarn("could not resolve addr of swapper_pg_dir!\n");
+	}
+	else {
+	    snprintf(buf,sizeof(buf),"0x%"PRIxADDR,lstate->pgd_addr);
+	    g_hash_table_insert(target->config,
+				strdup("OS_KERNEL_PGD_ADDR"),strdup(buf));
+	}
+	bsymbol_release(tmpbs);
+	tmpbs = NULL;
+    }
+    else {
+	tmpbs = target_lookup_sym(target,"init_mm.pgd",NULL,NULL,
+				  SYMBOL_TYPE_FLAG_NONE);
+	if (tmpbs) {
+	    v = target_load_symbol(target,tlctxt,tmpbs,LOAD_FLAG_NONE);
+
+	    if (v) {
+		lstate->pgd_addr = v_addr(v);
+		vdebug(3,LA_TARGET,LF_OSLINUX,
+		       "kernel pgd = 0x%"PRIxADDR"\n",lstate->pgd_addr);
+		value_free(v);
+		snprintf(buf,sizeof(buf),"0x%"PRIxADDR,lstate->pgd_addr);
+		g_hash_table_insert(target->config,
+				    strdup("OS_KERNEL_PGD_ADDR"),strdup(buf));
+	    }
+	    else {
+		lstate->pgd_addr = 0xffffffff81c0d000;
+	    }
+
+	    bsymbol_release(tmpbs);
+	}
+    }
+
+    if (!tmpbs) 
+	vwarn("could not find 'swapper_pg_dir' nor 'init_mm.pgd';"
+	      " kernel v2p may fail!\n");
+
+    /*
+     * Propagate the pgd to the current thread!  We loaded the current
+     * thread in target_open(), but we haven't filled in pgd yet!
+     */
+    if (target->current_thread && target->current_thread->personality_state) {
+	((struct os_linux_thread_state *)target->current_thread->personality_state)->pgd = lstate->pgd_addr;
+    }
 
     v_g_list_foreach(target->spaces,t1,space) {
 	rc |= os_linux_updateregions(target,space);
@@ -3762,6 +3800,8 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 	vdebug(5,LA_TARGET,LF_OSLINUX,
 	       "loading global thread cause in hard/soft irq (0x%"PRIx64")\n",
 	       preempt_count);
+
+	pgd = lstate->pgd_addr;
     }
     else {
 	/* Now, load the current task_struct. */
@@ -3961,6 +4001,8 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 		v = NULL;
 	    }
 	}
+	else
+	    pgd = lstate->pgd_addr;
     }
 
     v = target_load_value_member(target,tlctxt,
@@ -4743,6 +4785,8 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
 	    v = NULL;
 	}
     }
+    else
+	ltstate->pgd = lstate->pgd_addr;
 
     /*
      * In our world, a Linux thread will not be executing an interrupt

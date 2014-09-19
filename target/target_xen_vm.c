@@ -3494,8 +3494,15 @@ static int xen_vm_thread_snprintf(struct target_thread *tthread,
 
 static int xen_vm_invalidate_thread(struct target *target,
 				    struct target_thread *tthread) {
+    struct xen_vm_thread_state *xtstate;
     int rc;
+
+    xtstate = (struct xen_vm_thread_state *)tthread->state;
+    if (xtstate)
+	xtstate->pgd_phys = 0;
+
     SAFE_PERSONALITY_OP(invalidate_thread,rc,0,target,tthread);
+
     return rc;
 }
 
@@ -4549,6 +4556,18 @@ static int __xen_vm_pgd(struct target *target,tid_t tid,uint64_t *pgd) {
 	}
 	xtstate = (struct xen_vm_thread_state *)tthread->state;
 
+	/*
+	 * Use cached pgd if possible.
+	 */
+	if (OBJVALID(tthread) && xtstate->pgd_phys > 0) {
+	    *pgd = xtstate->pgd_phys;
+
+	    vdebug(12,LA_TARGET,LF_XV,
+		   "tid %"PRIiTID" pgd (phys) = 0x%"PRIx64" (cached)\n",tid,*pgd);
+
+	    return 0;
+	}
+
 	if (xtstate->context.vm_assist & (1 << VMASST_TYPE_pae_extended_cr3)) {
 	    *pgd = ((uint64_t)xen_cr3_to_pfn(xtstate->context.ctrlreg[3])) \
 		       << XC_PAGE_SHIFT;
@@ -4588,6 +4607,10 @@ static int __xen_vm_pgd(struct target *target,tid_t tid,uint64_t *pgd) {
 	    }
 	}
 
+	/* Also quickly set the V2P_PV flag if this domain is paravirt. */
+	if (!xstate->hvm)
+	    xstate->v2p_flags |= ARCH_X86_V2P_PV;
+
 	if (vdebug_is_on(8,LA_TARGET,LF_XV)) {
 	    char buf[256];
 	    buf[0] = '\0';
@@ -4596,9 +4619,7 @@ static int __xen_vm_pgd(struct target *target,tid_t tid,uint64_t *pgd) {
 	    vdebug(8,LA_TARGET,LF_TARGET,"v2p_flags = %s\n",buf);
 	}
 
-	/* Also quickly set the V2P_PV flag if this domain is paravirt. */
-	if (!xstate->hvm)
-	    xstate->v2p_flags |= ARCH_X86_V2P_PV;
+	xtstate->pgd_phys = *pgd;
     }
     else {
 	tthread = xen_vm_load_thread(target,tid,0);
@@ -4607,6 +4628,22 @@ static int __xen_vm_pgd(struct target *target,tid_t tid,uint64_t *pgd) {
 	    return -1;
 	}
 	xtstate = (struct xen_vm_thread_state *)tthread->state;
+	if (!xtstate) {
+	    xtstate = (struct xen_vm_thread_state *)calloc(1,sizeof(*xtstate));
+	    tthread->state = xtstate;
+	}
+
+	/*
+	 * Use cached pgd if possible.
+	 */
+	if (OBJVALID(tthread) && xtstate->pgd_phys > 0) {
+	    *pgd = xtstate->pgd_phys;
+
+	    vdebug(12,LA_TARGET,LF_XV,
+		   "tid %"PRIiTID" pgd (phys) = 0x%"PRIx64" (cached)\n",tid,*pgd);
+
+	    return 0;
+	}
 
 	/*
 	if (target->wordsize == 8) {
@@ -4629,6 +4666,8 @@ static int __xen_vm_pgd(struct target *target,tid_t tid,uint64_t *pgd) {
 		   tid,strerror(errno));
 	    return -1;
 	}
+
+	xtstate->pgd_phys = *pgd;
     }
 
     vdebug(12,LA_TARGET,LF_XV,
