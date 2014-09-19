@@ -580,14 +580,38 @@ int os_linux_postloadinit(struct target *target) {
 	    lstate->kernel_start_addr = 0xFFFFFFFF81000000ULL;
 #endif
     }
-    else {
-	snprintf(buf,sizeof(buf),"0x%"PRIxADDR,lstate->kernel_start_addr);
-	g_hash_table_insert(target->config,
-			    strdup("OS_KERNEL_START_ADDR"),strdup(buf));
-    }
+
+    snprintf(buf,sizeof(buf),"0x%"PRIxADDR,lstate->kernel_start_addr);
+    g_hash_table_insert(target->config,
+			strdup("OS_KERNEL_START_ADDR"),strdup(buf));
 
     vdebug(3,LA_TARGET,LF_OSLINUX,"kernel start addr is 0x%"PRIxREGVAL"\n",
 	   lstate->kernel_start_addr);
+
+    /*
+     * See if we have a hypercall_page...
+     */
+    lstate->hypercall_page = 0;
+    tmpbs = target_lookup_sym(target,"hypercall_page",NULL,NULL,
+			      SYMBOL_TYPE_FLAG_FUNC);
+    if (tmpbs) {
+	if (target_bsymbol_resolve_base(target,tlctxt,tmpbs,
+					&lstate->hypercall_page,NULL)) {
+	    vdebug(2,LA_TARGET,LF_OSLINUX,
+		   "could not resolve addr of hypercall_page!\n");
+	}
+	else {
+	    snprintf(buf,sizeof(buf),"0x%"PRIxADDR,lstate->hypercall_page);
+	    g_hash_table_insert(target->config,
+				strdup("OS_KERNEL_HYPERCALL_PAGE"),strdup(buf));
+	}
+	bsymbol_release(tmpbs);
+	tmpbs = NULL;
+    }
+    else {
+	vdebug(2,LA_TARGET,LF_OSLINUX,
+	       "could not find symbol hypercall_page!\n");
+    }
 
     /*
      * Find init_task.
@@ -3606,6 +3630,7 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
     struct target_location_ctxt *tlctxt = target_global_tlctxt(target);
     thread_ctxt_t ctidctxt;
     struct target_event *event;
+    int in_hypercall = 0;
 
     /*
      * Load EIP for later user-mode check.
@@ -3670,6 +3695,18 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 	       ipval,kernel_esp);
     }
 
+    /*
+     * If we're a PV guest Linux, and we're on the hypercall page, we
+     * might not be able to load the current task; in this case (and
+     * if we're not in interrupt context), use init_task!
+     */
+    if (lstate->hypercall_page != 0
+	&& (ipval & lstate->hypercall_page) == lstate->hypercall_page) {
+	vdebug(5,LA_TARGET,LF_XV,"on hypercall page; might load init_task!\n");
+
+	in_hypercall = 1;
+    }
+
     /* We need to load in the current task_struct, AND if it's already
      * in target->threads, CHECK if it really matches one of our cached
      * threads.  If not, and there is an old thread in the cache, nuke
@@ -3731,6 +3768,14 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 	taskv = target_load_value_member(target,tlctxt,
 					 threadinfov,"task",NULL,
 					 LOAD_FLAG_AUTO_DEREF);
+
+	if (!taskv && in_hypercall && lstate->init_task) {
+	    /*
+	     * Just load init_task.
+	     */
+	    taskv = target_load_symbol(target,tlctxt,lstate->init_task,
+				       LOAD_FLAG_AUTO_DEREF);
+	}
 
 	if (!taskv) {
 	    verror("could not load current task!  cannot get current TID!\n");

@@ -120,6 +120,8 @@ struct xen_vm_state {
     /* If we have an OS personality, try to load this from it. */
     ADDR kernel_start_addr;
 
+    ADDR hypercall_page;
+
     shared_info_t *live_shinfo;
     xc_dominfo_t dominfo;
     vcpu_info_t vcpuinfo; /* Also part of loading dominfo. */

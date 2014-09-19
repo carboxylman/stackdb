@@ -2645,6 +2645,11 @@ static int xen_vm_postloadinit(struct target *target) {
     if (start)
 	xstate->kernel_start_addr = strtoul(start,NULL,0);
 
+    char *hpage = (char *)g_hash_table_lookup(target->config,
+					      "OS_KERNEL_HYPERCALL_PAGE");
+    if (hpage)
+	xstate->hypercall_page = strtoul(hpage,NULL,0);
+
     return 0;
 }
 

@@ -127,6 +127,7 @@ struct os_linux_state {
     char *kernel_elf_filename;
     char *kernel_module_dir;
     ADDR kernel_start_addr;
+    ADDR hypercall_page;
 
     /*
      * On x86_64, current_thread_ptr is determined by looking at this
