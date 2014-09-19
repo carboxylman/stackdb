@@ -291,7 +291,7 @@ unsigned char *xen_vm_mem_builtin_read_phys_str(struct target *target,
 	}
 	else {
 	    mmap = __xen_vm_mem_builtin_mmap_phys(target,paddr,mlen,PROT_WRITE,
-						  NULL,NULL,NULL);
+						  &pbase,NULL,&plength);
 	    if (!mmap) {
 		verror("could not mmap p 0x%"PRIxADDR" (start p 0x%"PRIxADDR")!\n",
 		       paddr,addr);
@@ -602,7 +602,7 @@ unsigned char *xen_vm_mem_builtin_read_v_str(struct target *target,
 	}
 	else {
 	    mmap = __xen_vm_mem_builtin_mmap_phys(target,paddr,mlen,PROT_WRITE,
-						  NULL,NULL,&plength);
+						  &pbase,NULL,&plength);
 	    if (!mmap) {
 		verror("could not mmap p 0x%"PRIxADDR" (after translating"
 		       " v 0x%"PRIxADDR"; start v 0x%"PRIxADDR")!\n",
