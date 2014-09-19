@@ -2120,6 +2120,9 @@ static int linux_userproc_init(struct target *target) {
     target->current_thread = tthread;
     lstate->current_tid = tthread->tid;
 
+    target->global_tlctxt =
+	target_location_ctxt_create(target,TID_GLOBAL,NULL);
+
     if (target->evloop)
 	linux_userproc_evloop_add_tid(target,tthread->tid);
 
