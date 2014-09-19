@@ -1024,7 +1024,7 @@ int os_linux_postloadinit(struct target *target) {
 	}
     }
 
-#ifdef ENABLE_DISTORM
+#ifdef APF_TE_COPY_PROCESS
     if (!(lstate->thread_entry_f_symbol = 
 	      target_lookup_sym(target,"copy_process",NULL,NULL,
 				SYMBOL_TYPE_NONE))) {
@@ -1042,6 +1042,22 @@ int os_linux_postloadinit(struct target *target) {
 	      " active thread entry updates might not function!\n");
     }
     */
+#else
+    if (!(lstate->thread_entry_f_symbol =
+	      target_lookup_sym(target,"wake_up_new_task",NULL,NULL,
+				SYMBOL_TYPE_NONE))) {
+	vwarn("could not lookup wake_up_new_task;"
+	      " active thread entry updates cannot function!\n");
+    }
+    else if (!(lstate->thread_entry_v_symbol =
+	           target_lookup_sym(target,"wake_up_new_task.p",NULL,NULL,
+				     SYMBOL_TYPE_NONE))) {
+	bsymbol_release(lstate->thread_entry_f_symbol);
+	lstate->thread_entry_f_symbol = NULL;
+
+	vwarn("could not lookup wake_up_new_task.p;"
+	      " active thread entry updates might not function!\n");
+    }
 #endif
 
     if (!(lstate->thread_exit_f_symbol = 
@@ -5403,24 +5419,24 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
 				  target->arch->wordsize * 2);
 
 	if (vdebug_is_on(13,LA_TARGET,LF_OSLINUX)) {
-           char *pp;
-           vdebug(8,LA_TARGET,LF_OSLINUX,"  current stack (ptregs addr 0x0):\n");
-           pp = v->buf + v->bufsiz - target->arch->wordsize;
-           while (pp >= v->buf) {
-               if (target->arch->wordsize == 8) {
-                   vdebug(13,LA_TARGET,LF_OSLINUX,
-			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
-                          value_addr(v) + (pp - v->buf),*(uint64_t *)pp);
-               }
-               else {
-                   vdebug(13,LA_TARGET,LF_OSLINUX,
-			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
-                          value_addr(v) + (pp - v->buf),*(uint32_t *)pp);
-               }
-               pp -= target->arch->wordsize;
-           }
-           vdebug(13,LA_TARGET,LF_OSLINUX,"\n");
-       }
+	    char *pp;
+	    vdebug(8,LA_TARGET,LF_OSLINUX,"  current stack (otidctxt):\n");
+	    pp = v->buf + v->bufsiz - target->arch->wordsize;
+	    while (pp >= v->buf) {
+		if (target->arch->wordsize == 8) {
+		    vdebug(13,LA_TARGET,LF_OSLINUX,
+			   "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+			   value_addr(v) + (pp - v->buf),*(uint64_t *)pp);
+		}
+		else {
+		    vdebug(13,LA_TARGET,LF_OSLINUX,
+			   "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+			   value_addr(v) + (pp - v->buf),*(uint32_t *)pp);
+		}
+		pp -= target->arch->wordsize;
+	    }
+	    vdebug(13,LA_TARGET,LF_OSLINUX,"\n");
+	}
 
 	if (target->arch->wordsize == 8) {
 	    ltstate->eflags = ((uint64_t *)v->buf)[1];
@@ -5857,24 +5873,24 @@ int os_linux_flush_thread(struct target *target,tid_t tid) {
 	}
 
 	if (vdebug_is_on(13,LA_TARGET,LF_OSLINUX)) {
-           char *pp;
-           vdebug(8,LA_TARGET,LF_OSLINUX,"  current stack:\n");
-           pp = v->buf + v->bufsiz - target->arch->wordsize;
-           while (pp >= v->buf) {
-               if (target->arch->wordsize == 8) {
-                   vdebug(13,LA_TARGET,LF_OSLINUX,
-			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
-                          value_addr(v) + (pp - v->buf),*(uint64_t *)pp);
-               }
-               else {
-                   vdebug(13,LA_TARGET,LF_OSLINUX,
-			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
-                          value_addr(v) + (pp - v->buf),*(uint32_t *)pp);
-               }
-               pp -= target->arch->wordsize;
-           }
-           vdebug(13,LA_TARGET,LF_OSLINUX,"\n");
-       }
+	    char *pp;
+	    vdebug(8,LA_TARGET,LF_OSLINUX,"  current stack:\n");
+	    pp = v->buf + v->bufsiz - target->arch->wordsize;
+	    while (pp >= v->buf) {
+		if (target->arch->wordsize == 8) {
+		    vdebug(13,LA_TARGET,LF_OSLINUX,
+			   "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+			   value_addr(v) + (pp - v->buf),*(uint64_t *)pp);
+		}
+		else {
+		    vdebug(13,LA_TARGET,LF_OSLINUX,
+			   "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+			   value_addr(v) + (pp - v->buf),*(uint32_t *)pp);
+		}
+		pp -= target->arch->wordsize;
+	    }
+	    vdebug(13,LA_TARGET,LF_OSLINUX,"\n");
+	}
 
 	/* Copy the first range. */
 	if (target->arch->type == ARCH_X86_64) {
@@ -7157,7 +7173,9 @@ result_t os_linux_active_thread_entry_handler(struct probe *probe,tid_t tid,
     struct target_thread *tthread;
     REGVAL ax;
     struct value *value;
+    struct target_location_ctxt *tlctxt = target_global_tlctxt(target);
 
+#ifdef APF_TE_COPY_PROCESS
     /*
      * Load task from retval in %ax
      */
@@ -7187,6 +7205,20 @@ result_t os_linux_active_thread_entry_handler(struct probe *probe,tid_t tid,
 	      bsymbol_get_name(lstate->thread_entry_f_symbol));
 	return RESULT_SUCCESS;
     }
+#else
+    value = target_load_symbol(target,tlctxt,lstate->thread_entry_v_symbol,
+			       LOAD_FLAG_AUTO_DEREF);
+    if (!value) {
+	/*
+	 * We need avoid stale threads for overlay targets; we need to
+	 * know when a overlay thread disappears.
+	 */
+	vwarn("could not load %s in %s; ignoring new thread!\n",
+	      bsymbol_get_name(lstate->thread_exit_v_symbol),
+	      bsymbol_get_name(lstate->thread_exit_f_symbol));
+	return RESULT_SUCCESS;
+    }
+#endif
 
     if (!(tthread = os_linux_load_thread_from_value(target,value))) {
 	verror("could not load thread from task value; BUG?\n");
@@ -8151,7 +8183,6 @@ int os_linux_set_active_probing(struct target *target,
     if ((flags & APF_OS_THREAD_ENTRY) 
 	!= (target->ap_flags & APF_OS_THREAD_ENTRY)) {
 	if (flags & APF_OS_THREAD_ENTRY) {
-#ifdef ENABLE_DISTORM
 	    /*
 	     * Make sure all threads loaded first!
 	     */
@@ -8168,6 +8199,7 @@ int os_linux_set_active_probing(struct target *target,
 	    probe = probe_create(target,TID_GLOBAL,NULL,name,
 				 NULL,os_linux_active_thread_entry_handler,
 				 NULL,0,1);
+#ifdef APF_TE_COPY_PROCESS
 	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,
 					    lstate->thread_entry_f_symbol,0,0,1)) {
 		probe_free(probe,1);
@@ -8181,15 +8213,25 @@ int os_linux_set_active_probing(struct target *target,
 
 		--retval;
 	    }
+#else
+	    if (!probe_register_symbol(probe,lstate->thread_entry_f_symbol,
+				       PROBEPOINT_SW,0,0)) {
+		probe_free(probe,1);
+		probe = NULL;
+
+		vwarn("could not probe %s entry; not enabling"
+		      " active thread entry updates!\n",name);
+
+		lstate->active_thread_entry_probe = NULL;
+		target->ap_flags &= ~APF_OS_THREAD_ENTRY;
+
+		--retval;
+	    }
+#endif
 	    else {
 		lstate->active_thread_entry_probe = probe;
 		target->ap_flags |= APF_OS_THREAD_ENTRY;
 	    }
-#else
-	    verror("cannot enable active thread_entry probes; distorm (disasm)"
-		   " support not built in!");
-	    --retval;
-#endif
 	}
 	else {
 	    if (lstate->active_thread_entry_probe) {
