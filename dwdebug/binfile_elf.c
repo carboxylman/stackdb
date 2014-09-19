@@ -27,12 +27,14 @@
 #include <inttypes.h>
 #include <assert.h>
 #include <regex.h>
+#include <glib.h>
 
 #include "config.h"
 #include "common.h"
 #include "log.h"
 #include "output.h"
 #include "list.h"
+#include "glib_wrapper.h"
 #include "clfit.h"
 #include "alist.h"
 #include "binfile.h"
@@ -645,7 +647,6 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
     char *name;
     Elf_Data *edata;
     struct array_list *ral;
-    struct clf_range_data *crd;
     struct array_list *tmp_ral;
     struct clf_range_data *tmp_crd;
     struct symbol *tmp_symbol;
@@ -657,10 +658,8 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
     struct symbol *symbol;
     unsigned int i, ii;
     int j,k;
-    Word_t nextstart = -1;
     Word_t tmpstart = -1;
     Word_t start = -1;
-    Word_t end = -1;
     Elf32_Nhdr *nthdr32;
     Elf64_Nhdr *nthdr64;
     char *ndata,*nend;
@@ -698,6 +697,8 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
     int dynstrtabsec = -1;
     struct symbol *tsymbol;
     struct scope *root_scope;
+    GSList *zll = NULL;
+    GSList *t1;
 
     /*
      * Set up our data structures.
@@ -1542,10 +1543,13 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 				    (gpointer)symbol);
 	    */
 
-	    if (symbol_get_addr(symbol) != 0)
-		clrange_add(&bf->ranges,symbol_get_addr(symbol),
-			    symbol_get_addr(symbol) + symbol_get_bytesize(symbol),
-			    symbol);
+	    if (symbol_get_addr(symbol) != 0) {
+		if (sym->st_size > 0)
+		    clrange_add(&bf->ranges,symbol_get_addr(symbol),
+				symbol_get_addr(symbol) + sym->st_size,symbol);
+		else
+		    zll = g_slist_prepend(zll,symbol);
+	    }
 	}
     }
 
@@ -1682,10 +1686,13 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 				    (gpointer)symbol);
 	    */
 
-	    if (sym->st_value > 0)
-		clrange_add(&bf->ranges,symbol_get_addr(symbol),
-			    symbol_get_addr(symbol) + symbol_get_bytesize(symbol),
-			    symbol);
+	    if (sym->st_value > 0) {
+		if (sym->st_size > 0)
+		    clrange_add(&bf->ranges,symbol_get_addr(symbol),
+				symbol_get_addr(symbol) + sym->st_size,symbol);
+		else
+		    zll = g_slist_prepend(zll,symbol);
+	    }
 	}
     }
 
@@ -1728,9 +1735,10 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 	       name,(ADDR)shdr->sh_addr,shdr->sh_size);
     }
 
-    {
-	/* Now, go through all the address ranges and update their sizes 
-	 * based on the following range's address -- this is
+    if (zll) {
+	/*
+	 * Now go through all the zero-length symbols, and try to update
+	 * their sizes based on the following range's address -- this is
 	 * definitely possibly wrong sometimes.  Could be wrong!
 	 *
 	 * The idea is, for any 0-length isexternal (GLOBAL ELF sym)
@@ -1744,209 +1752,201 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 	 * This will hopefully will allow disassembly of non-DWARF
 	 * functions -- since we guess their length here.  Could be
 	 * wrong sometimes.
+	 *
+	 * Note that we immediately sort zll in reverse order -- from
+	 * highest start addr to lowest (and we also prefer external
+	 * symbols to non-external symbols).
 	 */
-	nextstart = 0;
-	ral = clrange_find_next_inc(&bf->ranges,nextstart);
-	while (ral) {
+
+	gint __symbol_sort_addr_desc(gconstpointer a,gconstpointer b) {
+	    struct symbol *sa = (struct symbol *)a;
+	    struct symbol *sb = (struct symbol *)b;
+
+	    if (sa->addr > sb->addr)
+		return -1;
+	    else if (sa->addr == sb->addr)
+		return 0;
+	    else
+		return 1;
+	}
+
+	zll = g_slist_sort(zll,__symbol_sort_addr_desc);
+
+	v_g_slist_foreach(zll,t1,symbol) {
+	    start = symbol_get_addr(symbol);
+
+	    vdebug(16,LA_DEBUG,LF_ELF,
+		   "checking end of ELF symbol %s (0x%"PRIxADDR")\n",
+		   symbol_get_name(symbol),start);
+
 	    /*
-	     * Go through each crd (symbol + metadata) at this start
-	     * address, and if the CRD is 0-length, try to find the next
-	     * symbol.
+	     * Find the next nearest start range, such that
+	     * attributes match.
 	     *
-	     * One optimization (maybe) we *chould* do is if any symbols
-	     * on the list are nonzero-length, just make the symbols
-	     * that are 0-length be the value of the nonzero length, if
-	     * their attributes match.
+	     * If the 0-length *function* symbol is global, and the
+	     * next symbol is NOT global, we need to try to find the
+	     * next global symbol!
 	     */
-	    for (j = 0; j < array_list_len(ral); ++j) {
-		crd = (struct clf_range_data *)array_list_item(ral,j);
-		symbol = (struct symbol *)CLRANGE_DATA(crd);
-		/* Doesn't matter which crd we take the next start value
-		 * from; they are all the same.
-		 */
-		nextstart = start = CLRANGE_START(crd);
-		end = CLRANGE_END(crd);
+	    if (SYMBOL_IS_FUNC(symbol) && symbol->isexternal) {
+		gcrd = NULL;
+		tmpstart = start;
+		while ((tmp_ral = clrange_find_next_exc(&bf->ranges,
+							tmpstart))) {
+		    /* Need to find *any* global symbol at this ral,
+		     * so check the whole list!
+		     */
+		    for (k = 0; k < array_list_len(tmp_ral); ++k) {
+			tmp_crd = (struct clf_range_data *)	\
+			    array_list_item(tmp_ral,k);
+			tmp_symbol = (struct symbol *)CLRANGE_DATA(tmp_crd);
+			if (tmp_symbol->isexternal) {
+			    gcrd = tmp_crd;
+			    break;
+			}
 
-		if (start != end) 
-		    continue;
+			/* Doesn't matter which one; all same. */
+			tmpstart = CLRANGE_START(tmp_crd);
+		    }
 
-		vdebug(16,LA_DEBUG,LF_ELF,
-		       "checking end of ELF symbol %s (0x%"PRIxADDR","
-		       "0x%"PRIxADDR")\n",
-		       symbol_get_name(symbol),
-		       CLRANGE_START(crd),CLRANGE_END(crd));
+		    if (gcrd)
+			break;
+		}
 
 		/*
-		 * Find the next nearest start range, such that
-		 * attributes match.
-		 *
-		 * If the 0-length *function* symbol is global, and the
-		 * next symbol is NOT global, we need to try to find the
-		 * next global symbol!
+		 * We need to find the section containing the base
+		 * addr, and make sure whatever next addr we found,
+		 * if any, is still in that section!  If it is not
+		 * still in that section (or if we didn't find one),
+		 * use the section end addr.
 		 */
-		if (SYMBOL_IS_FUNC(symbol) && symbol->isexternal) {
-		    gcrd = NULL;
-		    tmpstart = start;
-		    while ((tmp_ral = \
-			    clrange_find_next_exc(&bf->ranges,
-						  tmpstart))) {
-			/* Need to find *any* global symbol at this ral,
-			 * so check the whole list!
-			 */
-			for (k = 0; k < array_list_len(tmp_ral); ++k) {
-			    tmp_crd = (struct clf_range_data *)	\
-				array_list_item(tmp_ral,k);
-			    tmp_symbol = (struct symbol *)CLRANGE_DATA(tmp_crd);
-			    if (tmp_symbol->isexternal) {
-				gcrd = tmp_crd;
-				break;
-			    }
-
-			    /* Doesn't matter which one; all same. */
-			    tmpstart = CLRANGE_START(tmp_crd);
-			}
-
-			if (gcrd)
-			    break;
-		    }
-
-		    /*
-		     * We need to find the section containing the base
-		     * addr, and make sure whatever next addr we found,
-		     * if any, is still in that section!  If it is not
-		     * still in that section (or if we didn't find one),
-		     * use the section end addr.
-		     */
-		    sec_found = 0;
-		    sec_end = 0;
-		    for (ii = 0; ii < bfelf->ehdr.e_shnum; ++ii) {
-			if (start >= bfelf->shdrs[ii].sh_addr
-			    && start < (bfelf->shdrs[ii].sh_addr 
-					 + bfelf->shdrs[ii].sh_size)) {
-			    sec_found = 1;
-			    sec_end = bfelf->shdrs[ii].sh_addr 
-				+ bfelf->shdrs[ii].sh_size;
-			    break;
-			}
-		    }
-
-		    if (!sec_found) {
-			vwarn("could not find section containing 0x%"PRIxADDR";"
-			      " not updating 0-length GLOBAL %s!\n",
-			      start,symbol_get_name(symbol));
-			goto lcontinue;
-		    }
-	
-		    if (!gcrd || CLRANGE_START(gcrd) > sec_end) {
-			if (!gcrd) {
-			    vdebug(2,LA_DEBUG,LF_ELF,
-				   "could not find next global symbol after %s;"
-				   " using section(%d:%d) end 0x%"PRIxADDR"!\n",
-				   symbol_get_name(symbol),
-				   ii,bfelf->shdrs[ii].sh_size,sec_end);
-			}
-			else {
-			    vdebug(2,LA_DEBUG,LF_ELF,
-				   "next global symbol after %s was past section"
-				   "(%d:%d); using section end 0x%"PRIxADDR"!\n",
-				   symbol_get_name(symbol),
-				   ii,bfelf->shdrs[ii].sh_size,sec_end);
-			}
-
-			clrange_update_end(&bf->ranges,start,sec_end,symbol);
-
-			symbol->size.bytes = sec_end - start;
-			symbol->size_is_bytes = 1;
-			symbol->guessed_size = 1;
-		    }
-		    else {
-			vdebug(2,LA_DEBUG,LF_ELF,
-			       "updating 0-length GLOBAL symbol %s to"
-			       " 0x%"PRIxADDR",0x%"PRIxADDR"\n",
-			       symbol_get_name(symbol),start,CLRANGE_START(gcrd));
-		    
-			clrange_update_end(&bf->ranges,start,
-					   CLRANGE_START(gcrd),symbol);
-
-			symbol->size.bytes = CLRANGE_START(gcrd) - start;
-			symbol->size_is_bytes = 1;
-			symbol->guessed_size = 1;
+		sec_found = 0;
+		sec_end = 0;
+		for (ii = 0; ii < bfelf->ehdr.e_shnum; ++ii) {
+		    if (start >= bfelf->shdrs[ii].sh_addr
+			&& start < (bfelf->shdrs[ii].sh_addr 
+				    + bfelf->shdrs[ii].sh_size)) {
+			sec_found = 1;
+			sec_end = bfelf->shdrs[ii].sh_addr 
+			    + bfelf->shdrs[ii].sh_size;
+			break;
 		    }
 		}
-		else {
-		    tmp_ral = clrange_find_next_exc(&bf->ranges,start);
-		    if (!tmp_ral) {
-			vwarnopt(9,LA_DEBUG,LF_ELF,
-				 "could not find a next range after %s;"
-				 " not updating 0-length symbol!\n",
-				 symbol_get_name(symbol));
-			goto lcontinue;
+
+		if (!sec_found) {
+		    vwarnopt(5,LA_DEBUG,LF_ELF,
+			     "could not find section containing 0x%"PRIxADDR";"
+			     " not updating 0-length GLOBAL %s!\n",
+			     start,symbol_get_name(symbol));
+		    continue;
+		}
+	
+		if (!gcrd || CLRANGE_START(gcrd) > sec_end) {
+		    if (!gcrd) {
+			vdebug(2,LA_DEBUG,LF_ELF,
+			       "could not find next global symbol after %s;"
+			       " using section(%d:%d) end 0x%"PRIxADDR"!\n",
+			       symbol_get_name(symbol),
+			       ii,bfelf->shdrs[ii].sh_size,sec_end);
 		    }
-
-		    /* Just take the first one! */
-		    gcrd = (struct clf_range_data *)array_list_item(tmp_ral,0);
-
-		    /*
-		     * We need to find the section containing the base
-		     * addr, and make sure whatever next addr we found,
-		     * if any, is still in that section!  If it is not
-		     * still in that section (or if we didn't find one),
-		     * use the section end addr.
-		     */
-		    sec_found = 0;
-		    sec_end = 0;
-		    for (ii = 0; ii < bfelf->ehdr.e_shnum; ++ii) {
-			if (start >= bfelf->shdrs[ii].sh_addr
-			    && start < (bfelf->shdrs[ii].sh_addr 
-					 + bfelf->shdrs[ii].sh_size)) {
-			    sec_found = 1;
-			    sec_end = bfelf->shdrs[ii].sh_addr 
-				+ bfelf->shdrs[ii].sh_size;
-			    break;
-			}
-		    }
-
-		    if (!sec_found) {
-			vwarnopt(5,LA_DEBUG,LF_ELF,
-				 "could not find section containing 0x%"PRIxADDR";"
-				 " not updating 0-length GLOBAL %s!\n",
-				 start,symbol_get_name(symbol));
-			goto lcontinue;
-		    }
-
-		    if (CLRANGE_START(gcrd) > sec_end) {
+		    else {
 			vdebug(2,LA_DEBUG,LF_ELF,
 			       "next global symbol after %s was past section"
 			       "(%d:%d); using section end 0x%"PRIxADDR"!\n",
 			       symbol_get_name(symbol),
 			       ii,bfelf->shdrs[ii].sh_size,sec_end);
-
-			clrange_update_end(&bf->ranges,start,sec_end,symbol);
-
-			symbol->size.bytes = sec_end - start;
-			symbol->size_is_bytes = 1;
-			symbol->guessed_size = 1;
 		    }
-		    else {
 
-			vdebug(2,LA_DEBUG,LF_ELF,
-			       "updating 0-length symbol %s to 0x%"PRIxADDR","
-			       "0x%"PRIxADDR"\n",
-			       symbol_get_name(symbol),start,CLRANGE_START(gcrd));
+		    symbol->size.bytes = sec_end - start;
+		    symbol->size_is_bytes = 1;
+		    symbol->guessed_size = 1;
 
-			clrange_update_end(&bf->ranges,start,
-					   CLRANGE_START(gcrd),symbol);
+		    clrange_add(&bf->ranges,start,sec_end,symbol);
+		}
+		else {
+		    vdebug(2,LA_DEBUG,LF_ELF,
+			   "updating 0-length GLOBAL symbol %s to"
+			   " 0x%"PRIxADDR",0x%"PRIxADDR"\n",
+			   symbol_get_name(symbol),start,CLRANGE_START(gcrd));
 
-			symbol->size.bytes = CLRANGE_START(gcrd) - start;
-			symbol->size_is_bytes = 1;
-			symbol->guessed_size = 1;
-		    }
+		    symbol->size.bytes = CLRANGE_START(gcrd) - start;
+		    symbol->size_is_bytes = 1;
+		    symbol->guessed_size = 1;
+
+		    clrange_add(&bf->ranges,start,CLRANGE_START(gcrd),symbol);
 		}
 	    }
+	    else {
+		tmp_ral = clrange_find_next_exc(&bf->ranges,start);
+		if (!tmp_ral) {
+		    vwarnopt(9,LA_DEBUG,LF_ELF,
+			     "could not find a next range after %s;"
+			     " not updating 0-length symbol!\n",
+			     symbol_get_name(symbol));
+		    continue;
+		}
 
-	lcontinue:
-	    ral = clrange_find_next_exc(&bf->ranges,nextstart);
+		/* Just take the first one! */
+		gcrd = (struct clf_range_data *)array_list_item(tmp_ral,0);
+
+		/*
+		 * We need to find the section containing the base
+		 * addr, and make sure whatever next addr we found,
+		 * if any, is still in that section!  If it is not
+		 * still in that section (or if we didn't find one),
+		 * use the section end addr.
+		 */
+		sec_found = 0;
+		sec_end = 0;
+		for (ii = 0; ii < bfelf->ehdr.e_shnum; ++ii) {
+		    if (start >= bfelf->shdrs[ii].sh_addr
+			&& start < (bfelf->shdrs[ii].sh_addr 
+				    + bfelf->shdrs[ii].sh_size)) {
+			sec_found = 1;
+			sec_end = bfelf->shdrs[ii].sh_addr 
+			    + bfelf->shdrs[ii].sh_size;
+			break;
+		    }
+		}
+
+		if (!sec_found) {
+		    vwarnopt(5,LA_DEBUG,LF_ELF,
+			     "could not find section containing 0x%"PRIxADDR";"
+			     " not updating 0-length GLOBAL %s!\n",
+			     start,symbol_get_name(symbol));
+		    continue;
+		}
+
+		if (CLRANGE_START(gcrd) > sec_end) {
+		    vdebug(2,LA_DEBUG,LF_ELF,
+			   "next global symbol after %s was past section"
+			   "(%d:%d); using section end 0x%"PRIxADDR"!\n",
+			   symbol_get_name(symbol),
+			   ii,bfelf->shdrs[ii].sh_size,sec_end);
+
+		    symbol->size.bytes = sec_end - start;
+		    symbol->size_is_bytes = 1;
+		    symbol->guessed_size = 1;
+
+		    clrange_add(&bf->ranges,start,sec_end,symbol);
+		}
+		else {
+
+		    vdebug(2,LA_DEBUG,LF_ELF,
+			   "updating 0-length symbol %s to 0x%"PRIxADDR","
+			   "0x%"PRIxADDR"\n",
+			   symbol_get_name(symbol),start,CLRANGE_START(gcrd));
+
+		    symbol->size.bytes = CLRANGE_START(gcrd) - start;
+		    symbol->size_is_bytes = 1;
+		    symbol->guessed_size = 1;
+
+		    clrange_add(&bf->ranges,start,CLRANGE_START(gcrd),symbol);
+		}
+	    }
 	}
+
+	g_slist_free(zll);
+	zll = NULL;
     }
 
     {
