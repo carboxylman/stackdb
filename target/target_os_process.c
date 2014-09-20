@@ -48,7 +48,7 @@ static int os_process_snprintf(struct target *target,char *buf,int bufsiz);
 static int os_process_init(struct target *target);
 static int os_process_postloadinit(struct target *target);
 static int os_process_attach(struct target *target);
-static int os_process_detach(struct target *target);
+static int os_process_detach(struct target *target,int stay_paused);
 static int os_process_fini(struct target *target);
 static int os_process_loadspaces(struct target *target);
 static int os_process_loadregions(struct target *target,struct addrspace *space);
@@ -222,6 +222,12 @@ static int os_process_init(struct target *target) {
     struct target *base = target->base;
     tid_t base_tid = target->base_tid;
 
+    if (target->spec->stay_paused) {
+	verror("OS Process driver cannot leave target process closed on exit!\n");
+	errno = EINVAL;
+	return -1;
+    }
+
     /*
      * Setup target mode stuff.
      */
@@ -302,7 +308,7 @@ static int os_process_attach(struct target *target) {
     return 0;
 }
 
-static int os_process_detach(struct target *target) {
+static int os_process_detach(struct target *target,int stay_paused) {
     /*
      * Just detach all our threads.
      */

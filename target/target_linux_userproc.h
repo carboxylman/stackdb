@@ -39,7 +39,7 @@ int linux_userproc_spec_to_argv(struct target_spec *spec,int *argc,char ***argv)
 
 int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t tid);
 int linux_userproc_detach_thread(struct target *target,tid_t tid,
-				 int detaching_all);
+				 int detaching_all,int stay_paused);
 
 /*
  * Once attached to a process, attach to one of its threads.

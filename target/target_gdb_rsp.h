@@ -98,7 +98,7 @@ typedef enum {
  * Prototypes.
  */
 int gdb_rsp_connect(struct target *target);
-int gdb_rsp_close(struct target *target);
+int gdb_rsp_close(struct target *target,int stay_paused);
 int gdb_rsp_recv(struct target *target,int blocking,int only_one,
 		 gdb_ptype_t *ptype);
 int gdb_rsp_recv_until_handled(struct target *target,

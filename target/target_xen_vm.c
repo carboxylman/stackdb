@@ -83,7 +83,7 @@ static struct target *xen_vm_attach(struct target_spec *spec,
 static int xen_vm_snprintf(struct target *target,char *buf,int bufsiz);
 static int xen_vm_init(struct target *target);
 static int xen_vm_attach_internal(struct target *target);
-static int xen_vm_detach(struct target *target);
+static int xen_vm_detach(struct target *target,int stay_paused);
 static int xen_vm_fini(struct target *target);
 static int xen_vm_kill(struct target *target,int sig);
 static int xen_vm_loadspaces(struct target *target);
@@ -2389,7 +2389,7 @@ static int xen_vm_attach_internal(struct target *target) {
     return 0;
 }
 
-static int xen_vm_detach(struct target *target) {
+static int xen_vm_detach(struct target *target,int stay_paused) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
     struct xen_domctl domctl;
 
@@ -2429,7 +2429,7 @@ static int xen_vm_detach(struct target *target) {
         return -1;
     }
 
-    if (xen_vm_status(target) == TSTATUS_PAUSED) {
+    if (!stay_paused && xen_vm_status(target) == TSTATUS_PAUSED) {
 	__xen_vm_resume(target,1);
     }
 
@@ -2455,11 +2455,6 @@ static int xen_vm_fini(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
-
-    if (target->opened) 
-	xen_vm_detach(target);
-
-
 
     if (xstate->vmpath)
 	free(xstate->vmpath);

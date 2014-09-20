@@ -232,6 +232,10 @@ x_TargetSpecT_to_t_target_spec(struct soap *soap,
 	ospec->start_paused = 0;
     else 
 	ospec->start_paused = 1;
+    if (spec->stayPaused == xsd__boolean__false_)
+	ospec->stay_paused = 0;
+    else 
+	ospec->stay_paused = 1;
     if ((spec->killOnClose && *spec->killOnClose == xsd__boolean__true_)
 	|| spec->killOnCloseSignal) {
 	ospec->kill_on_close = 1;
@@ -315,6 +319,10 @@ t_target_spec_to_x_TargetSpecT(struct soap *soap,
 	ospec->startPaused = xsd__boolean__false_;
     else 
 	ospec->startPaused = xsd__boolean__true_;
+    if (!spec->stay_paused)
+	ospec->stayPaused = xsd__boolean__false_;
+    else 
+	ospec->stayPaused = xsd__boolean__true_;
 
     ospec->defaultProbeStyle = 
 	SOAP_CALLOC(soap,1,sizeof(*ospec->defaultProbeStyle));
@@ -439,6 +447,8 @@ x_TargetXenSpecT_to_t_xen_vm_spec(struct soap *soap,
     if (spec->clearMemCachesEachException
 	&& *spec->clearMemCachesEachException == xsd__boolean__true_)
 	ospec->clear_mem_caches_each_exception = 1;
+    if (spec->memcacheMmapSize && *spec->memcacheMmapSize > 0)
+	ospec->memcache_mmap_size = *spec->memcacheMmapSize;
 #ifdef ENABLE_XENACCESS
     if (spec->useXenAccess && *spec->useXenAccess == xsd__boolean__true_)
 	ospec->use_xenaccess = 1;
@@ -484,6 +494,11 @@ t_xen_vm_spec_to_x_TargetXenSpecT(struct soap *soap,
 	ospec->clearMemCachesEachException = 
 	    SOAP_CALLOC(soap,1,sizeof(*ospec->clearMemCachesEachException));
 	*ospec->clearMemCachesEachException = xsd__boolean__true_;
+    }
+    if (spec->memcache_mmap_size > 0) {
+	ospec->memcacheMmapSize =
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->memcacheMmapSize));
+	*ospec->memcacheMmapSize = spec->memcache_mmap_size;
     }
     if (spec->use_libvmi) {
 	ospec->useLibVMI = 

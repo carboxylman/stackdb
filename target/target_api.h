@@ -1841,7 +1841,8 @@ struct target_spec {
     thread_bpmode_t bpmode;
     probepoint_style_t style;
     uint8_t start_paused:1,
-	    kill_on_close:1;
+	    kill_on_close:1,
+            stay_paused:1;
 
     active_probe_flags_t ap_flags;
 
@@ -2434,7 +2435,7 @@ struct target_ops {
      */
     int (*attach)(struct target *target);
     /* detach from target, but don't unload */
-    int (*detach)(struct target *target);
+    int (*detach)(struct target *target,int stay_paused);
     /* destroy the target */
     int (*kill)(struct target *target,int sig);
 

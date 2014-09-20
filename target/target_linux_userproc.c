@@ -73,7 +73,7 @@ static int linux_userproc_snprintf(struct target *target,
 static int linux_userproc_init(struct target *target);
 static int linux_userproc_postloadinit(struct target *target);
 static int linux_userproc_attach_internal(struct target *target);
-static int linux_userproc_detach(struct target *target);
+static int linux_userproc_detach(struct target *target,int stay_paused);
 static int linux_userproc_fini(struct target *target);
 static int linux_userproc_kill(struct target *target,int sig);
 static int linux_userproc_loadspaces(struct target *target);
@@ -1647,8 +1647,9 @@ static int __handle_internal_detaching(struct target *target,
 	return 1;
     }
     else {
-	vwarn("unknown waitpid event pid %d thread %"PRIiTID" (status 0x%x)\n",
-	      pid,tid,pstatus);
+	vwarnopt(5,LA_TARGET,LF_LUP,
+		 "unknown waitpid event pid %d thread %"PRIiTID" (status 0x%x)\n",
+		 pid,tid,pstatus);
 	return -1;
     }
 
@@ -1692,7 +1693,7 @@ int __poll_and_handle_detaching(struct target *target,
 }
 
 int linux_userproc_detach_thread(struct target *target,tid_t tid,
-				 int detaching_all) {
+				 int detaching_all,int stay_paused) {
     struct linux_userproc_state *lstate;
     struct target_thread *tthread;
     char buf[256];
@@ -1745,13 +1746,13 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid,
 	    kill(tid,SIGSTOP);
 	}
 
-	ptrace(PTRACE_DETACH,tid,NULL,NULL);
+	ptrace(PTRACE_DETACH,tid,NULL,(void *)(uintptr_t)(stay_paused ? SIGSTOP : 0));
 
 	/*
 	 * Don't CONT it if we're detaching; we'll signal the pid
 	 * globally if necessary.
 	 */
-	if (!detaching_all)
+	if (!detaching_all && !stay_paused)
 	    kill(tid,SIGCONT);
 
 	errno = 0;
@@ -2277,7 +2278,7 @@ static int linux_userproc_attach_internal(struct target *target) {
     return rc;
 }
 
-static int linux_userproc_detach(struct target *target) {
+static int linux_userproc_detach(struct target *target,int stay_paused) {
     struct linux_userproc_state *lstate;
     int rc, retval = 0;
     GHashTableIter iter;
@@ -2312,7 +2313,7 @@ static int linux_userproc_detach(struct target *target) {
     for (i = 0; i < array_list_len(threadlist); ++i) {
 	tthread = (struct target_thread *)array_list_item(threadlist,i);
 
-	rc = linux_userproc_detach_thread(target,tthread->tid,1);
+	rc = linux_userproc_detach_thread(target,tthread->tid,1,stay_paused);
 	if (rc) {
 	    verror("could not detach thread %"PRIiTID"\n",tthread->tid);
 	    ++retval;
@@ -2325,7 +2326,7 @@ static int linux_userproc_detach(struct target *target) {
      */
     tthread = target->global_thread;
     if (tthread) {
-	rc = linux_userproc_detach_thread(target,tthread->tid,1);
+	rc = linux_userproc_detach_thread(target,tthread->tid,1,stay_paused);
 	if (rc) {
 	    verror("could not detach global thread %"PRIiTID"\n",tthread->tid);
 	    ++retval;
@@ -2349,7 +2350,8 @@ static int linux_userproc_detach(struct target *target) {
     }
     */
 
-    kill(lstate->pid,SIGCONT);
+    if (!stay_paused)
+	kill(lstate->pid,SIGCONT);
 
     if (lstate->memfd > 0)
 	close(lstate->memfd);
@@ -2365,9 +2367,6 @@ static int linux_userproc_fini(struct target *target) {
     lstate = (struct linux_userproc_state *)(target->state);
 
     vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
-
-    if (target->opened) 
-	linux_userproc_detach(target);
 
     if (target->spec->outfile) {
 	unlink(target->spec->outfile);
@@ -3594,10 +3593,10 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 	    event = target_create_event(target,tthread,T_EVENT_EXITED,NULL);
 	    target_broadcast_event(target,event);
 
-	    linux_userproc_detach(target);
+	    linux_userproc_detach(target,0);
 	}
 	else 
-	    linux_userproc_detach_thread(target,tid,0);
+	    linux_userproc_detach_thread(target,tid,0,0);
 
 	return THREAD_STATUS_DONE;
     }

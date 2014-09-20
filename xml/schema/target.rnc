@@ -30,6 +30,7 @@ TargetSpecT =
     element mode { TargetModeT },
     element threadBPMode { ThreadBPModeT },
     element startPaused { xsd:boolean },
+    element stayPaused { xsd:boolean },
     element defaultProbeStyle { ProbepointStyleT }?,
     element dedicatedMonitor { xsd:boolean }?,
     element stdinBytes { xsd:hexBinary }?,
@@ -59,6 +60,7 @@ TargetXenSpecT =
     element noClearHWDbgReg { xsd:boolean }?,
     element noUseMultiplexer { xsd:boolean }?,
     element clearMemCachesEachException { xsd:boolean }?,
+    element memcacheMmapSize { xsd:unsignedInt }?,
     element useXenAccess { xsd:boolean }?,
     element useLibVMI { xsd:boolean }?,
     element dominfoTimeout { xsd:int }?

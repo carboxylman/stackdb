@@ -65,7 +65,7 @@ static struct target *gdb_attach(struct target_spec *spec,
 static int gdb_snprintf(struct target *target,char *buf,int bufsiz);
 static int gdb_init(struct target *target);
 static int gdb_attach_internal(struct target *target);
-static int gdb_detach(struct target *target);
+static int gdb_detach(struct target *target,int stay_paused);
 static int gdb_fini(struct target *target);
 static int gdb_kill(struct target *target,int sig);
 static int gdb_loadspaces(struct target *target);
@@ -764,7 +764,7 @@ static int gdb_attach_internal(struct target *target) {
     return 0;
 }
 
-static int gdb_detach(struct target *target) {
+static int gdb_detach(struct target *target,int stay_paused) {
     struct gdb_state *xstate = (struct gdb_state *)(target->state);
 
     vdebug(5,LA_TARGET,LF_GDB,
@@ -804,7 +804,7 @@ static int gdb_detach(struct target *target) {
 
     vdebug(4,LA_TARGET,LF_GDB,"detaching from stub (target %s)\n",target->name);
 
-    if (gdb_rsp_close(target))
+    if (gdb_rsp_close(target,stay_paused))
 	verror("failed to detach from GDB stub (target %s)!\n",target->name);
     else
 	vdebug(3,LA_TARGET,LF_GDB,"detach succeeded (target %s)\n",target->name);
@@ -816,9 +816,6 @@ static int gdb_fini(struct target *target) {
     struct gdb_state *xstate = (struct gdb_state *)(target->state);
 
     vdebug(5,LA_TARGET,LF_GDB,"target %s\n",target->name);
-
-    if (target->opened) 
-	gdb_detach(target);
 
     if (xstate) {
 	if (xstate->machine) {

@@ -954,7 +954,7 @@ static int php_snprintf(struct target *target,char *buf,int bufsiz);
 static int php_init(struct target *target);
 static int php_postloadinit(struct target *target);
 static int php_attach(struct target *target);
-static int php_detach(struct target *target);
+static int php_detach(struct target *target,int stay_paused);
 static int php_fini(struct target *target);
 static int php_loadspaces(struct target *target);
 static int php_loadregions(struct target *target,struct addrspace *space);
@@ -1081,6 +1081,12 @@ static int php_init(struct target *target) {
     struct php_thread_state *ptstate;
     struct target *base = target->base;
     tid_t base_tid = target->base_tid;
+
+    if (target->spec->stay_paused) {
+	verror("PHP driver cannot leave target process closed on exit!\n");
+	errno = EINVAL;
+	return -1;
+    }
 
     /*
      * Setup target mode stuff.
@@ -1436,7 +1442,7 @@ static int php_attach(struct target *target) {
     return -1;
 }
 
-static int php_detach(struct target *target) {
+static int php_detach(struct target *target,int stay_paused) {
     /*
      * Just detach all our threads.
      */

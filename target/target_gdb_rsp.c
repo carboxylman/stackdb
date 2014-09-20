@@ -384,7 +384,7 @@ int gdb_rsp_connect(struct target *target) {
     return 0;
 
  err_setup:
-    gdb_rsp_close(target);
+    gdb_rsp_close(target,0);
     return -1;
 }
 
@@ -397,12 +397,18 @@ int gdb_rsp_connect(struct target *target) {
 	}						\
     } while(0)
 
-int gdb_rsp_close(struct target *target) {
+int gdb_rsp_close(struct target *target,int stay_paused) {
     struct gdb_state *gstate = (struct gdb_state *)target->state;
 
     GDB_CHECKCONN(0);
 
-    if (gdb_rsp_send_packet(target,"D",0,NULL,NULL)) {
+    if (stay_paused && gstate->vcont) {
+	if (gdb_rsp_send_packet(target,"vCont;t",0,NULL,NULL)) {
+	    verror("failed to detach, STOPPED, via vCont;t!\n");
+	    return -1;
+	}
+    }
+    else if (gdb_rsp_send_packet(target,"D",0,NULL,NULL)) {
 	verror("failed to detach via D !\n");
 	return -1;
     }

@@ -149,6 +149,7 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state);
 
 #define TARGET_ARGP_PERSONALITY     0x333333
 #define TARGET_ARGP_PERSONALITY_LIB 0x333334
+#define TARGET_ARGP_START_PAUSED    0x333335
 
 struct argp_option target_argp_opts[] = {
     { "debug",'d',"LEVEL",0,"Set/increase the debugging level.",-3 },
@@ -164,7 +165,8 @@ struct argp_option target_argp_opts[] = {
       "Forcibly set the target personality (linux,process,php).",-3 },
     { "personality-lib",TARGET_ARGP_PERSONALITY_LIB,"PERSONALITY_LIB_FILENAME",0,
       "Specify a shared library where the personality specified by --personality should be loaded from.",-3 },
-    { "start-paused",'P',0,0,"Leave target paused after launch.",-3 },
+    { "start-paused",TARGET_ARGP_START_PAUSED,0,0,"Leave target paused after launch.",-3 },
+    { "stay-paused",'P',0,0,"Keep target paused at detach.",-3 },
     { "soft-breakpoints",'s',0,0,"Force software breakpoints.",-3 },
     { "debugfile-load-opts",'F',"LOAD-OPTS",0,"Add a set of debugfile load options.",-3 },
     { "breakpoint-mode",'L',"STRICT-LEVEL",0,"Set/increase the breakpoint mode level.",-3 },
@@ -256,6 +258,8 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
      */
     if (spec->start_paused) 
 	ac += 1;
+    if (spec->stay_paused)
+	ac += 1;
     if (spec->style == PROBEPOINT_SW)
 	ac += 1;
     if (spec->bpmode > 0)
@@ -312,7 +316,10 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
 
     /* Do the generic opts. */
     if (spec->start_paused) {
-	av[j++] = strdup("-P");
+	av[j++] = strdup("--start-paused");
+    }
+    if (spec->stay_paused) {
+	av[j++] = strdup("--stay-paused");
     }
     if (spec->style == PROBEPOINT_SW) {
 	av[j++] = strdup("-s");
@@ -738,8 +745,11 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	    array_list_append(spec->debugfile_load_opts_list,opts);
 	    break;
 	}
-    case 'P':
+    case TARGET_ARGP_START_PAUSED:
 	spec->start_paused = 1;
+	break;
+    case 'P':
+	spec->stay_paused = 1;
 	break;
     case 'L':
 	if (arg)

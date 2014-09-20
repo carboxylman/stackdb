@@ -1101,8 +1101,9 @@ int target_close(struct target *target) {
 
     /* XXX: should we deal with memcache?  No, let backends do it. */
 
-    vdebug(5,LA_TARGET,LF_TARGET,"detach target(%s)\n",target->name);
-    if ((rc = target->ops->detach(target))) {
+    vdebug(5,LA_TARGET,LF_TARGET,"detach target(%s) (stay_paused = %d)\n",
+	   target->name,target->spec->stay_paused);
+    if ((rc = target->ops->detach(target,target->spec->stay_paused))) {
 	verror("detach target(%s) failed: %s\n",target->name,strerror(errno));
     }
 

@@ -50,6 +50,7 @@
       <xs:element ref="vmi1:mode"/>
       <xs:element ref="vmi1:threadBPMode"/>
       <xs:element ref="vmi1:startPaused"/>
+      <xs:element ref="vmi1:stayPaused"/>
       <xs:element minOccurs="0" ref="vmi1:defaultProbeStyle"/>
       <xs:element minOccurs="0" ref="vmi1:dedicatedMonitor"/>
       <xs:element minOccurs="0" ref="vmi1:stdinBytes"/>
@@ -69,6 +70,7 @@
   <xs:element name="mode" type="vmi1:TargetModeT"/>
   <xs:element name="threadBPMode" type="vmi1:ThreadBPModeT"/>
   <xs:element name="startPaused" type="xs:boolean"/>
+  <xs:element name="stayPaused" type="xs:boolean"/>
   <xs:element name="defaultProbeStyle" type="vmi1:ProbepointStyleT"/>
   <xs:element name="dedicatedMonitor" type="xs:boolean"/>
   <xs:element name="stdinBytes" type="xs:hexBinary"/>
@@ -107,6 +109,7 @@
       <xs:element minOccurs="0" ref="vmi1:noClearHWDbgReg"/>
       <xs:element minOccurs="0" ref="vmi1:noUseMultiplexer"/>
       <xs:element minOccurs="0" ref="vmi1:clearMemCachesEachException"/>
+      <xs:element minOccurs="0" ref="vmi1:memcacheMmapSize"/>
       <xs:element minOccurs="0" ref="vmi1:useXenAccess"/>
       <xs:element minOccurs="0" ref="vmi1:useLibVMI"/>
       <xs:element minOccurs="0" ref="vmi1:dominfoTimeout"/>
@@ -120,6 +123,7 @@
   <xs:element name="noClearHWDbgReg" type="xs:boolean"/>
   <xs:element name="noUseMultiplexer" type="xs:boolean"/>
   <xs:element name="clearMemCachesEachException" type="xs:boolean"/>
+  <xs:element name="memcacheMmapSize" type="xs:unsignedInt"/>
   <xs:element name="useXenAccess" type="xs:boolean"/>
   <xs:element name="useLibVMI" type="xs:boolean"/>
   <xs:element name="dominfoTimeout" type="xs:int"/>
@@ -154,7 +158,6 @@
   <xs:element name="qemuQmpPort" type="xs:int"/>
   <xs:element name="qemuMemPath" type="xs:string"/>
   <xs:element name="mainFilename" type="xs:string"/>
-  <xs:element name="memcacheMmapSize" type="xs:unsignedInt"/>
   <xs:element name="targetGdbSpec" type="vmi1:TargetGdbSpecT"/>
   <xs:complexType name="TargetPtraceSpecT">
     <xs:choice>
