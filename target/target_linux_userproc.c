@@ -3919,7 +3919,7 @@ static target_status_t linux_userproc_poll(struct target *target,
 
     vdebug(9,LA_TARGET,LF_LUP,"waitpid target %d\n",lstate->pid);
  again:
-    tid = waitpid(-1,&status,WNOHANG | __WALL);
+    tid = waitpid(-lstate->pid,&status,WNOHANG | __WALL);
     if (tid < 0) {
 	/* We always do this on error; these two errnos are the only
 	 * ones we should see, though.
