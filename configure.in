@@ -752,6 +752,7 @@ outfiles="$outfiles Makeconf Makefile include/Makefile lib/Makefile \
 	  asm/moti/Makefile \
           xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile \
           vmfs/Makefile vmps/Makefile vmtap/Makefile xentt/Makefile \
+	  examples/Makefile examples/Makefile.example \
           examples/nfs-perf-analysis/Makefile \
           examples/perf-model-test/Makefile \
           examples/context-aware-probes/Makefile \
