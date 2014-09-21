@@ -109,7 +109,10 @@ ifeq ($(ENABLE_LIBVMI),"1")
 	STATICLIBS += $(LIBVMI)/lib/libvmi.a
 endif
 
-INST_INC = target_api.h probe_api.h
+INST_INC = target_api.h probe_api.h target_event.h \
+	target_arch_x86.h target_os.h target_process.h \
+	target_linux_userproc.h target_xen_vm.h target_gdb.h \
+	target_os_process.h target_php.h
 ifeq ($(ENABLE_DISTORM),"1")
 	INST_INC += disasm.h
 endif
