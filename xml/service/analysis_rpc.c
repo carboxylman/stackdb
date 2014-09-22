@@ -272,6 +272,7 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
     char *sbuf;
     char *ebuf;
     char *pbuf;
+    char *rbuf;
     char *pbuf_next;
     int saved = 0;
     int new_alen = 0;
@@ -338,9 +339,11 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
     /* One byte past the last char in buf. */
     ebuf = sbuf + remaining;
 
-    pbuf_next = strstr(pbuf,"RESULT::");
-    if (pbuf_next)
-	pbuf_next = strstr(pbuf_next + 1,"::RESULT\n");
+    rbuf = strstr(pbuf,"RESULT::");
+    if (rbuf)
+	pbuf_next = strstr(rbuf + 1,"::RESULT\n");
+    else
+	pbuf_next = NULL;
 
     if (!pbuf_next) {
 	/*
@@ -379,7 +382,7 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
 	rt = 0;
 	msg = value_str = name = result_value = NULL;
 	ccount = 0;
-	rc = sscanf(pbuf,"RESULT:: (%c:%d) %ms (%d) %ms \"%m[^\"]\" %n",
+	rc = sscanf(rbuf,"RESULT:: (%c:%d) %ms (%d) %ms \"%m[^\"]\" %n",
 		    &rt,&id,&name,&type,&result_value,&msg,&ccount);
 	if (rc >= 5) {
 	    /*
@@ -398,7 +401,7 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
 	    }
 
 	    if (ccount > 0) {
-		value_str = pbuf + ccount;
+		value_str = rbuf + ccount;
 		while (*value_str != '\0') {
 		    if (*value_str == '(') {
 			++value_str;
