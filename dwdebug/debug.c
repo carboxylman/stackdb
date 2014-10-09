@@ -100,12 +100,55 @@ void dwdebug_init(void) {
     init_done = 1;
 }
 
+static void dwdebug_save(struct debugfile *debugfile) {
+    /*
+     * Add it to our global hash if the user init'd the lib!
+     */
+    if (debugfile_tab) {
+	g_hash_table_insert(debugfile_tab,debugfile->filename,debugfile);
+	g_hash_table_insert(debugfile_id_tab,
+			    (gpointer)(uintptr_t)debugfile->id,debugfile);
+	RHOLD(debugfile,debugfile_tab);
+    }
+}
+
+void dwdebug_evict(struct debugfile *debugfile) {
+    REFCNT trefcnt;
+
+    if (debugfile_id_tab) {
+	if (g_hash_table_lookup(debugfile_id_tab,
+				(gpointer)(uintptr_t)debugfile->id)
+	    == debugfile) {
+	    g_hash_table_remove(debugfile_id_tab,
+				(gpointer)(uintptr_t)debugfile->id);
+	    g_hash_table_remove(debugfile_tab,debugfile->filename);
+	    RPUT(debugfile,debugfile,debugfile_id_tab,trefcnt);
+	}
+    }
+}
+
+void dwdebug_evict_all(void) {
+    GList *list,*t1;
+    struct debugfile *debugfile;
+
+    if (debugfile_id_tab) {
+	list = g_hash_table_get_values(debugfile_id_tab);
+	v_g_list_foreach(list,t1,debugfile) {
+	    dwdebug_evict(debugfile);
+	}
+	g_list_free(list);
+    }
+}
+
 void dwdebug_fini(void) {
     GHashTableIter iter;
     struct debugfile *df;
 
     if (!init_done)
 	return;
+
+    /* Try to uncache everything naturally first. */
+    dwdebug_evict_all();
 
     /* Double-iterate so that internal loop can remove hashtable nodes. */
     while (g_hash_table_size(debugfile_tab) > 0) {
@@ -1419,14 +1462,6 @@ void debugfile_init_internal(struct debugfile *debugfile) {
     if (debugfile->ops && debugfile->ops->init)
 	debugfile->ops->init(debugfile);
 
-    /*
-     * Add it to our global hash if the user init'd the lib!
-     */
-    if (debugfile_tab)
-	g_hash_table_insert(debugfile_tab,debugfile->filename,debugfile);
-    if (debugfile_id_tab)
-	g_hash_table_insert(debugfile_id_tab,
-			    (gpointer)(uintptr_t)debugfile->id,debugfile);
 }
 
 static int __realpath(char *filename,char **realfilename) {
@@ -1598,7 +1633,7 @@ struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
 		&& strcmp(root_prefix,debugfile->binfile->root_prefix) == 0)) {
 	    vdebug(2,LA_DEBUG,LF_DFILE,"reusing debugfile %s (%s)\n",
 		   debugfile->filename,filename);
-	    RHOLD(debugfile,debugfile);
+	    //RHOLD(debugfile,debugfile);
 	    goto out;
 	}
 	else
@@ -1675,7 +1710,8 @@ struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
 	&& (!opts || !(opts->flags & DEBUGFILE_LOAD_FLAG_NODWARF)))
 	debugfile->ops->load(debugfile);
 
-    RHOLD(debugfile,debugfile);
+    dwdebug_save(debugfile);
+    //RHOLD(debugfile,debugfile);
 
     goto out;
 
@@ -1753,7 +1789,8 @@ struct debugfile *debugfile_from_instance(struct binfile_instance *bfinst,
 	&& (!opts || !(opts->flags & DEBUGFILE_LOAD_FLAG_NODWARF)))
 	debugfile->ops->load(debugfile);
 
-    RHOLD(debugfile,debugfile);
+    /* Don't cache debugfiles from binfile instances! */
+    //RHOLD(debugfile,debugfile);
 
     goto out;
 
@@ -2327,11 +2364,13 @@ int debugfile_replace_type(struct debugfile *debugfile,struct symbol *symbol) {
     return 0;
 }
 
+/*
 REFCNT debugfile_release(struct debugfile *debugfile) {
     REFCNT refcnt;
     RPUT(debugfile,debugfile,debugfile,refcnt);
     return refcnt;
 }
+*/
 
 REFCNT debugfile_free(struct debugfile *debugfile,int force) {
     int retval = debugfile->refcnt;

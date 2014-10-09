@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -28,8 +28,10 @@
 #include "target_linux_userproc.h"
 #ifdef ENABLE_XENSUPPORT
 #include "target_xen_vm.h"
-#include "target_xen_vm_process.h"
 #endif
+#include "target_gdb.h"
+#include "target_os_process.h"
+#include "target_php.h"
 #include <glib.h>
 
 target_type_t 
@@ -88,6 +90,17 @@ t_xen_vm_spec_to_x_TargetXenSpecT(struct soap *soap,
 				  GHashTable *reftab,
 				  struct vmi1__TargetXenSpecT *out);
 #endif
+
+struct gdb_spec *
+x_TargetGdbSpecT_to_t_gdb_spec(struct soap *soap,
+			       struct vmi1__TargetGdbSpecT *xspec,
+			       GHashTable *reftab,
+			       struct gdb_spec *out);
+struct vmi1__TargetGdbSpecT *
+t_gdb_spec_to_x_TargetGdbSpecT(struct soap *soap,
+			       struct gdb_spec *spec,
+			       GHashTable *reftab,
+			       struct vmi1__TargetGdbSpecT *out);
 
 struct linux_userproc_spec *
 x_TargetPtraceSpecT_to_t_linux_userproc_spec(struct soap *soap,

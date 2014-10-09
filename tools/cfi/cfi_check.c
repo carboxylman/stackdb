@@ -56,12 +56,12 @@ target_status_t cleanup() {
     }
     if (otarget) {
 	target_close(otarget);
-	target_free(otarget);
+	target_finalize(otarget);
 	otarget = NULL;
     }
     if (target) {
 	retval = target_close(target);
-	target_free(target);
+	target_finalize(target);
 	target = NULL;
     }
 
@@ -306,7 +306,7 @@ error_t cc_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	opts->overlay_spec = target_argp_driver_parse(NULL,NULL,
 						      array_list_len(argv_list) - 1,
 						      (char **)argv_list->list,
-						      TARGET_TYPE_XEN_PROCESS,0);
+						      TARGET_TYPE_OS_PROCESS,0);
 	if (!opts->overlay_spec) {
 	    verror("could not parse overlay spec!\n");
 	    array_list_free(argv_list);
@@ -349,7 +349,8 @@ int main(int argc,char **argv) {
     opts.mode = CFI_DYNAMIC;
 
     tspec = target_argp_driver_parse(&cc_argp,&opts,argc,argv,
-				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN,1);
+				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN
+				         | TARGET_TYPE_GDB,1);
 
     if (!tspec) {
 	verror("could not parse target arguments!\n");

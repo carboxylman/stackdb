@@ -69,16 +69,16 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/include/output.h
 
 OBJECTS := dumpthreads.lo backtrace.lo
-ifeq ($(ENABLE_XENSUPPORT),"1")
-	OBJECTS += psaction.lo
-endif
+#ifeq ($(ENABLE_XENSUPPORT),"1")
+#	OBJECTS += psaction.lo
+#endif
 
 LIBRARIES := 
 
 PROGRAMS := dumpthreads backtrace
-ifeq ($(ENABLE_XENSUPPORT),"1")
-	PROGRAMS += psaction
-endif
+#ifeq ($(ENABLE_XENSUPPORT),"1")
+#	PROGRAMS += psaction
+#endif
 
 STATICLIBS := $(OBJDIR)/target/libtarget.la $(OBJDIR)/dwdebug/libdwdebug.la \
 	$(OBJDIR)/lib/libvmilib.la
@@ -107,9 +107,9 @@ dumpthreads: $(HEADERS) $(LIBRARIES) dumpthreads.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-psaction: $(HEADERS) $(LIBRARIES) psaction.lo $(STATICLIBS)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
-		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+#psaction: $(HEADERS) $(LIBRARIES) psaction.lo $(STATICLIBS)
+#	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+#		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
 backtrace: $(HEADERS) $(LIBRARIES) backtrace.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \

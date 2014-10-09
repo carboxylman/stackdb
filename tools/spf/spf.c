@@ -54,6 +54,7 @@ typedef enum {
     SPF_ACTION_DISABLE = 6,
     SPF_ACTION_REMOVE  = 7,
     SPF_ACTION_BT      = 8,
+    SPF_ACTION_SIGNAL  = 9,
 } spf_action_type_t;
 
 struct spf_action {
@@ -97,6 +98,11 @@ struct spf_action {
 	    int overlay_levels;
 	    char *overlay_debuginfo_prefix;
 	} bt;
+	struct {
+	    int tid;
+	    char *thid;
+	    char *sigdesc;
+	} signal;
     };
 };
 
@@ -219,14 +225,14 @@ void cleanup() {
 	    if (!ots[j])
 		continue;
 	    target_close(ots[j]);
-	    target_free(ots[j]);
+	    target_finalize(ots[j]);
 	    ots[j] = NULL;
 	}
     }
 
     if (t) {
 	target_close(t);
-	target_free(t);
+	target_finalize(t);
 	t = NULL;
     }
 }
@@ -380,7 +386,7 @@ void print_thread_context(FILE *stream,struct target *target,tid_t tid,
 
 	array_list_foreach(otl,i,overlay) {
 	    target_close(overlay);
-	    target_free(overlay);
+	    target_finalize(overlay);
 	}
 
 	array_list_free(otl);
@@ -507,7 +513,7 @@ void spf_backtrace(struct target *t,tid_t ctid,char *tiddesc,
 
 	array_list_foreach(otl,i,overlay) {
 	    target_close(overlay);
-	    target_free(overlay);
+	    target_finalize(overlay);
 	}
 
 	array_list_free(otl);
@@ -516,6 +522,82 @@ void spf_backtrace(struct target *t,tid_t ctid,char *tiddesc,
 
     fputs("\n",stdout);
     fflush(stdout);
+}
+
+int spf_signal(struct target *t,tid_t ctid,char *tiddesc,char *sigdesc) {
+    struct array_list *tids;
+    tid_t tid;
+    int i;
+    tid_t stid = -1;
+    struct target_thread *tthread;
+    char *endptr = NULL;
+    int rc;
+    int signo;
+
+    signo = target_os_signal_from_name(t,sigdesc);
+
+    if (tiddesc) {
+	stid = (int)strtol(tiddesc,&endptr,10);
+	if (tiddesc == endptr) 
+	    stid = -1;
+	else
+	    tiddesc = NULL;
+    }
+    else 
+	stid = -1;
+
+    /*
+     * If stid == 0 or tiddesc, do them all.
+     *
+     * If it == -1 && !tiddesc, do ctid.
+     *
+     * If it >= 0, do that one.
+     */
+
+    if (stid == -1 && !tiddesc) {
+	tids = array_list_create(1);
+	array_list_append(tids,(void *)(uintptr_t)ctid);
+    
+	printf("Signaling target '%s' (current thread %d):\n\n",t->name,ctid);
+    }
+    else if (stid > 0) {
+	tids = array_list_create(1);
+	array_list_append(tids,(void *)(uintptr_t)stid);
+    
+	printf("Signaling target '%s' (thread %d):\n\n",t->name,stid);
+    }
+    else if (tiddesc) {
+	tids = target_list_tids(t);
+    
+	printf("Signaling target '%s' (thread name %s):\n\n",t->name,tiddesc);
+    }
+    else {
+	tids = target_list_tids(t);
+    
+	printf("Signaling target '%s' (all threads):\n\n",t->name);
+    }
+
+    array_list_foreach_fakeptr_t(tids,i,tid,uintptr_t) {
+	tthread = target_lookup_thread(t,tid);
+	if (!tthread)
+	    continue;
+
+	if ((tiddesc && !tthread->name)
+	    || (tiddesc && strcmp(tiddesc,tthread->name)))
+	    continue;
+
+	rc = target_os_signal_enqueue(t,tid,signo,NULL);
+	if (rc < 0)
+	    fprintf(stdout,"thread %"PRIiTID": (error!)\n",tid);
+	else if (rc == 0)
+	    fprintf(stdout,"thread %"PRIiTID": success\n",tid);
+	else
+	    fprintf(stdout,"thread %"PRIiTID": unknown status %d\n",tid,rc);
+    }
+
+    fflush(stdout);
+
+    return 0;
 }
 
 result_t handler(int when,struct probe *probe,tid_t tid,void *data,
@@ -534,7 +616,7 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
     struct spf_action *spfa;
     struct probe *fprobe;
     result_t retval = RESULT_SUCCESS;
-    struct target *btt;
+    struct target *btt,*st;
 
     /*
      * Do all the actions.
@@ -787,6 +869,20 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 	    spf_backtrace(btt,tid,spfa->bt.thid,spfa->bt.overlay_levels,
 			  spfa->bt.overlay_debuginfo_prefix);
 	}
+	else if (spfa->atype == SPF_ACTION_SIGNAL) {
+	    if (spfa->signal.tid > 1) {
+		st = target_lookup_target_id(spfa->signal.tid);
+		if (!st) {
+		    verror("no existing target with id '%d'!\n",
+			   spfa->signal.tid);
+		    return RESULT_SUCCESS;
+		}
+	    }
+	    else
+		st = probe->target;
+
+	    spf_signal(st,tid,spfa->signal.thid,spfa->signal.sigdesc);
+	}
 	else {
 	    verror("probe %s: bad action type %d -- BUG!\n",
 		   probe_name(probe),spfa->atype);
@@ -984,7 +1080,7 @@ error_t spf_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	ospec->spec = target_argp_driver_parse(NULL,NULL,
 					       array_list_len(argv_list) - 1,
 					       (char **)argv_list->list,
-					       TARGET_TYPE_PHP | TARGET_TYPE_XEN_PROCESS,0);
+					       TARGET_TYPE_PHP | TARGET_TYPE_OS_PROCESS,0);
 	if (!ospec->spec) {
 	    verror("could not parse overlay spec %d!\n",opts->ospecs_len);
 	    array_list_free(argv_list);
@@ -1029,7 +1125,8 @@ int main(int argc,char **argv) {
     memset(&opts,0,sizeof(opts));
 
     tspec = target_argp_driver_parse(&spf_argp,&opts,argc,argv,
-				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN,1);
+				     TARGET_TYPE_PTRACE 
+				         | TARGET_TYPE_XEN | TARGET_TYPE_GDB,1);
 
     if (!tspec) {
 	verror("could not parse target arguments!\n");
@@ -1129,7 +1226,7 @@ int main(int argc,char **argv) {
     sprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
     fprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
 
-    if (opts.use_os_syscall_probes && t->kind == TARGET_KIND_OS) {
+    if (opts.use_os_syscall_probes && t->personality == TARGET_PERSONALITY_OS) {
 	if (target_os_syscall_table_load(t))
 	    vwarn("could not load the syscall table; target_os_syscall probes"
 		  " will not be available!\n");
@@ -2175,6 +2272,43 @@ struct spf_config *load_config_file(char *file) {
 			else if (lpc == 3)
 			    spfa->bt.overlay_debuginfo_prefix = strdup(token);
 			else 
+			    goto err;
+
+			++lpc;
+		    }
+		    bufptr = nextbufptr;
+
+		    spff->actions = g_slist_append(spff->actions,spfa);
+		    spfa = NULL;
+		}
+		else if (strcmp(token,"signal") == 0) {
+		    spfa = calloc(1,sizeof(*spfa));
+		    spfa->atype = SPF_ACTION_SIGNAL;
+
+		    /* Set some defaults. */
+		    spfa->signal.tid = -1;
+		    spfa->signal.thid = NULL;
+
+		    char *nextbufptr = NULL;
+		    nextbufptr = _get_next_non_enc_esc(bufptr,')');
+		    if (!nextbufptr)
+			goto err;
+		    *nextbufptr = '\0';
+		    ++nextbufptr;
+		    token = NULL;
+		    token2 = NULL;
+		    saveptr = NULL;
+
+		    int lpc = 0;
+		    while ((token = strtok_r((!token) ? bufptr : NULL,",",
+					     &saveptr))) {
+			if (lpc == 0)
+			    spfa->signal.tid = atoi(token);
+			else if (lpc == 1)
+			    spfa->signal.thid = strdup(token);
+			else if (lpc == 2)
+			    spfa->signal.sigdesc = strdup(token);
+			else
 			    goto err;
 
 			++lpc;

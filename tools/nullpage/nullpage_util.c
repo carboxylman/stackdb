@@ -21,6 +21,9 @@
 #include <argp.h>
 
 #include "log.h"
+#include "arch.h"
+#include "arch_x86.h"
+#include "arch_x86_64.h"
 #include "probe_api.h"
 #include "probe.h"
 #include "target.h"
@@ -264,21 +267,21 @@ result_t np_pgfault_handler(struct probe *probe,tid_t tid,void *data,
     struct target_location_ctxt *tlctxt;
     ADDR addr = ADDRMAX;
     unum_t error_code = 0;
-    struct value *va,*vec;
-    REG cr2reg;
+    struct value *vec;
     int hit = 0;
+    struct target *target = probe->target;
 
-    tlctxt = target_location_ctxt_create_from_bsymbol(probe->target,TID_GLOBAL,
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,TID_GLOBAL,
 						      probe->bsymbol);
 
-    vec = target_load_symbol_member(probe->target,tlctxt,probe->bsymbol,
+    vec = target_load_symbol_member(target,tlctxt,probe->bsymbol,
 				    "error_code",NULL,LOAD_FLAG_NONE);
     if (!vec) {
 	vwarn("could not load do_page_fault.error_code!");
 	return 0;
     }
     /*
-    va = target_load_symbol_member(probe->target,tlctxt,probe->bsymbol,
+    va = target_load_symbol_member(target,tlctxt,probe->bsymbol,
                                    "address",NULL,LOAD_FLAG_NONE);
     if (!va) {
 	vwarn("could not load do_page_fault.address!");
@@ -288,8 +291,14 @@ result_t np_pgfault_handler(struct probe *probe,tid_t tid,void *data,
     addr = v_addr(va);
     */
 
-    cr2reg = target_dw_reg_no_targetname(probe->target,"cr2");
-    addr = target_read_reg(probe->target,TID_GLOBAL,cr2reg);
+    if (target->arch->type == ARCH_X86)
+	addr = target_read_reg(target,TID_GLOBAL,REG_X86_CR2);
+    else if (target->arch->type == ARCH_X86_64)
+	addr = target_read_reg(target,TID_GLOBAL,REG_X86_64_CR2);
+    else {
+	verror("unsupported arch type %d!\n",target->arch->type);
+	return 0;
+    }
 
     error_code = v_unum(vec);
 

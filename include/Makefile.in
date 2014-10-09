@@ -31,7 +31,9 @@ HEADERS := $(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/waitpipe.h $(TOP_SRCDIR)/include/evloop.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/glib_wrapper.h \
 	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/monitor.h \
-	$(TOP_SRCDIR)/include/rfilter.h
+	$(TOP_SRCDIR)/include/rfilter.h $(TOP_SRCDIR)/include/object.h \
+	$(TOP_SRCDIR)/include/arch.h $(TOP_SRCDIR)/include/arch_x86.h \
+	$(TOP_SRCDIR)/include/arch_x86_64.h
 
 INST_INC = $(HEADERS)
 

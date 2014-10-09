@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -20,6 +20,7 @@
  ** Binfiles (i.e., ELF).
  **/
 
+#include "arch.h"
 #include "dwdebug_priv.h"
 #include "dwdebug.h"
 
@@ -212,8 +213,7 @@ struct binfile {
     char *image;
     int fd;
 
-    int wordsize;
-    int endian;
+    struct arch *arch;
 
     /*
      * The string table for this file.  All binfile string pointers are

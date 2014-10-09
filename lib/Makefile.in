@@ -36,9 +36,12 @@ HEADERS := $(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/log.h $(TOP_SRCDIR)/include/clfit.h \
 	$(TOP_SRCDIR)/include/waitpipe.h $(TOP_SRCDIR)/include/evloop.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/output.h \
-	$(TOP_SRCDIR)/lib/debugpred.h
+	$(TOP_SRCDIR)/lib/debugpred.h $(TOP_SRCDIR)/include/arch.h \
+	$(TOP_SRCDIR)/include/arch_x86.h $(TOP_SRCDIR)/include/arch_x86_64.h \
+	$(TOP_SRCDIR)/include/regcache.h
 
-OBJECTS := ref.lo log.lo clfit.lo waitpipe.lo evloop.lo monitor.lo
+OBJECTS := ref.lo log.lo clfit.lo waitpipe.lo evloop.lo monitor.lo \
+	arch.lo arch_x86.lo arch_x86_64.lo regcache.lo
 LIBRARIES := libvmilib.la libloadall.la libloadallforever.la libloadallpagebypage.la
 
 INST_INC = debugpred.h

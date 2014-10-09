@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -93,26 +93,6 @@ typedef uint64_t unum_t;
 typedef int8_t REG;
 #define PRIiREG PRIi8
 
-typedef enum {
-    CREG_AX = 0,
-    CREG_BX,
-    CREG_CX,
-    CREG_DX,
-    CREG_DI,
-    CREG_SI,
-    CREG_BP,
-    CREG_SP,
-    CREG_IP,
-    CREG_FLAGS,
-    CREG_CS,
-    CREG_SS,
-    CREG_DS,
-    CREG_ES,
-    CREG_FS,
-    CREG_GS,
-} common_reg_t;
-#define COMMON_REG_COUNT 16
-
 /*
  * We use small offsets for DWARF offset addrs.  Saves mem in symbol
  * structures, which is very important.
@@ -121,8 +101,7 @@ typedef int32_t SMOFFSET;
 #define PRIiSMOFFSET PRIi32
 #define PRIxSMOFFSET PRIx32
 
-#define DATA_BIG_ENDIAN 0
-#define DATA_LITTLE_ENDIAN 1
+#define __PAGE_SIZE    0x1000
 
 #define PROT_READ         0x1
 #define PROT_WRITE        0x2
@@ -226,6 +205,20 @@ typedef uint32_t REFCNT;
  * released.  That's how we will do this.  This frees us from having to
  * track ref holders.
  */
+
+/*
+ * NB for internal users that use refcnts to protect objects:
+ *
+ * If an object maintains its own refcnt, plus it allows other objects
+ * to take weak refs to it, when it frees itself after its refcnt goes
+ * to 0, it must protect itself from getting double-freed by RPUTW,
+ * which will get called on it as it frees its children.  So these
+ * functions just temporarily jack up its own refcnt temporarily to do
+ * that.  By the time these are called, its refcnt is already 0, or
+ * we're forcing a free.
+ */
+#define RWGUARD(x) ++((x)->refcnt)
+#define RWUNGUARD(x) --((x)->refcnt)
 
 #ifdef REF_DEBUG
 
@@ -414,8 +407,8 @@ extern GHashTable *grefwstab;
 	/* if ((x)->refcntw == 0) */					\
 	    /* asm("int $3");  */					\
 									\
-	(rc) = (--((x)->refcntw) == 0)					\
-	            ? objtype ## _free(x,0) : ((x)->refcntw);		\
+	(rc) = ((--((x)->refcntw) + (x)->refcnt) == 0)			\
+	        ? objtype ## _free(x,0) : ((x)->refcntw + (x)->refcnt);	\
 									\
 	if (_x == _hx) {						\
 	    if (!grefwstab)						\
@@ -631,6 +624,10 @@ extern GHashTable *grefwstab;
 #define RPUT(x,objtype,hx,rc)  ((rc) = (--((x)->refcnt) == 0)	\
 				           ? objtype ## _free(x,0) \
 				           : (x)->refcnt); \
+                               (rc) += 0
+#define RPUTW(x,objtype,hx,rc)  ((rc) = ((--((x)->refcntw) + (x)->refcnt) == 0) \
+				           ? objtype ## _free(x,0) \
+				           : (x)->refcntw + (x)->refcnt); \
                                (rc) += 0
 /*
  * Allows the caller to free the object even if the refcnt has gone

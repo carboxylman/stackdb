@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -91,6 +91,7 @@ typedef enum log_flag_bits_lib {
     LFB_MONITOR       = 5,
     LFB_ROP           = 6,
     LFB_CFI           = 7,
+    LFB_REGCACHE      = 8,
 } log_flag_bits_lib_t;
 typedef enum log_flags_lib {
     LF_CLMATCH        = 1 << LFB_CLMATCH,
@@ -101,6 +102,7 @@ typedef enum log_flags_lib {
     LF_MONITOR        = 1 << LFB_MONITOR,
     LF_ROP            = 1 << LFB_ROP,
     LF_CFI            = 1 << LFB_CFI,
+    LF_REGCACHE       = 1 << LFB_REGCACHE,
 } log_flags_lib_t;
 
 typedef enum log_flag_bits_debug {
@@ -142,15 +144,19 @@ typedef enum log_flag_bits_target {
     LFB_TLOC          = 4,
     LFB_TOTHER        = 5,
     LFB_TSYMBOL       = 6,
-    LFB_TUNW          = 7,
-    LFB_LUP           = 8,
-    LFB_XV            = 9,
-    LFB_XVP           = 10,
-    LFB_PHP           = 11,
-    LFB_DISASM        = 12,
-    LFB_THREAD        = 13,
-    LFB_OS            = 14,
-    LFB_PROCESS       = 15,
+    LFB_MEMCACHE      = 7,
+    LFB_TUNW          = 8,
+    LFB_LUP           = 9,
+    LFB_XV            = 10,
+    LFB_OSP           = 11,
+    LFB_PHP           = 12,
+    LFB_GDB           = 13,
+    LFB_DISASM        = 14,
+    LFB_THREAD        = 15,
+    LFB_OS            = 16,
+    LFB_PROCESS       = 17,
+    LFB_APPLICATION   = 18,
+    LFB_OSLINUX       = 19,
 } log_flag_bits_target_t;
 typedef enum log_flags_target {
     LF_TARGET         = 1 << LFB_TARGET,
@@ -160,15 +166,19 @@ typedef enum log_flags_target {
     LF_TLOC           = 1 << LFB_TLOC,
     LF_TOTHER         = 1 << LFB_TOTHER,
     LF_TSYMBOL        = 1 << LFB_TSYMBOL,
+    LF_MEMCACHE       = 1 << LFB_MEMCACHE,
     LF_TUNW           = 1 << LFB_TUNW,
     LF_LUP            = 1 << LFB_LUP,
     LF_XV             = 1 << LFB_XV,
-    LF_XVP            = 1 << LFB_XVP,
+    LF_OSP            = 1 << LFB_OSP,
     LF_PHP            = 1 << LFB_PHP,
+    LF_GDB            = 1 << LFB_GDB,
     LF_DISASM         = 1 << LFB_DISASM,
     LF_THREAD         = 1 << LFB_THREAD,
     LF_OS             = 1 << LFB_OS,
     LF_PROCESS        = 1 << LFB_PROCESS,
+    LF_APPLICATION    = 1 << LFB_APPLICATION,
+    LF_OSLINUX        = 1 << LFB_OSLINUX,
 } log_flags_target_t;
 
 typedef enum log_flag_bits_probe {
@@ -220,14 +230,14 @@ typedef enum log_flags_ {
  */
 /* Set every last bit for a specific area. */
 #define LF_ALL        INT_MAX
-#define LF_L_ALL (LF_CLMATCH | LF_CLRANGE | LF_RFILTER | LF_WAITPIPE | LF_EVLOOP | LF_MONITOR | LF_ROP | LF_CFI)
+#define LF_L_ALL (LF_CLMATCH | LF_CLRANGE | LF_RFILTER | LF_WAITPIPE | LF_EVLOOP | LF_MONITOR | LF_ROP | LF_CFI | LF_REGCACHE)
 #define LF_D_ALL (LF_DFILE | LF_SYMBOL | LF_SCOPE | LF_DLOC \
 		  | LF_DLOOKUP | LF_DWARF | LF_DWARFATTR	\
 		  | LF_DWARFSOPS | LF_DWARFOPS | LF_DCFA | LF_DOTHER \
 		  | LF_ELF | LF_BFILE )
 #define LF_T_ALL (LF_TARGET | LF_SPACE | LF_REGION | LF_TLOOKUP \
-		  | LF_TLOC | LF_TOTHER | LF_TSYMBOL | LF_TUNW | LF_DISASM \
-		  | LF_THREAD | LF_OS | LF_PROCESS)
+		  | LF_TLOC | LF_TOTHER | LF_TSYMBOL | LF_MEMCACHE | LF_TUNW \
+		  | LF_DISASM | LF_THREAD | LF_OS | LF_PROCESS)
 #define LF_P_ALL (LF_PROBE | LF_PROBEPOINT | LF_ACTION)
 #define LF_X_ALL (LF_XML | LF_RPC | LF_SVC | LF_PROXYREQ)
 #define LF_A_ALL (LF_ANL)

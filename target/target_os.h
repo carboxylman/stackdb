@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 The University of Utah
+ * Copyright (c) 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -22,13 +22,15 @@
 #include <glib.h>
 
 #include "target_api.h"
+#include "target_process.h"
 
 typedef enum {
     TARGET_OS_TYPE_NONE  = 0,
     TARGET_OS_TYPE_LINUX = 1,
 } target_os_type_t;
 
-extern struct target_os_ops os_linux_generic_ops;
+#define THREAD_CTXT_KERNEL 0
+#define THREAD_CTXT_USER   1
 
 struct target_os_syscall {
     /*
@@ -63,26 +65,58 @@ struct target_os_syscall_state {
 
 #define SAFE_TARGET_OS_OP(target,op,errval,...)				\
     do {								\
-        if (target->kind != TARGET_KIND_OS) {				\
+        if (target->personality != TARGET_PERSONALITY_OS) {		\
 	    verror("target %s is not an OS!\n",target->name);		\
 	    errno = EINVAL;						\
 	    return (errval);						\
 	}								\
-	else if (!target->kind_ops.os || !target->kind_ops.os->op) {	\
+	else if (!target->os_ops || !target->os_ops->op) {		\
 	    verror("target %s does not support OS operation '%s'!\n",	\
 		   target->name,#op);					\
 	    errno = ENOSYS;						\
 	    return (errval);						\
 	}								\
 	else {								\
-	    return target->kind_ops.os->op(__VA_ARGS__);		\
+	    return target->os_ops->op(__VA_ARGS__);			\
+	}								\
+    } while (0);
+
+#define SAFE_TARGET_OS_OP_NORET(target,op,errval,outvar,...)		\
+    do {								\
+        if (target->personality != TARGET_PERSONALITY_OS) {		\
+	    verror("target %s is not an OS!\n",target->name);		\
+	    errno = EINVAL;						\
+	    outvar = (errval);						\
+	}								\
+	else if (!target->os_ops || !target->os_ops->op) {		\
+	    verror("target %s does not support OS operation '%s'!\n",	\
+		   target->name,#op);					\
+	    errno = ENOSYS;						\
+	    outvar = (errval);						\
+	}								\
+	else {								\
+	    outvar = target->os_ops->op(__VA_ARGS__);			\
 	}								\
     } while (0);
 
 
 target_os_type_t target_os_type(struct target *target);
+
 uint64_t target_os_version(struct target *target);
 int target_os_version_cmp(struct target *target,uint64_t vers);
+
+int target_os_thread_get_pgd_phys(struct target *target,tid_t tid,ADDR *pgdp);
+int target_os_thread_is_user(struct target *target,tid_t tid);
+tid_t target_os_thread_get_leader(struct target *target,tid_t tid);
+
+GHashTable *target_os_process_table_get(struct target *target);
+struct target_process *target_os_process_get(struct target *target,tid_t tid);
+
+int target_os_signal_enqueue(struct target *target,tid_t tid,
+			     int signo,void *data);
+const char *target_os_signal_to_name(struct target *target,int signo);
+int target_os_signal_from_name(struct target *target,const char *name);
+
 int target_os_syscall_table_load(struct target *target);
 int target_os_syscall_table_unload(struct target *target);
 GHashTable *target_os_syscall_table_get(struct target *target);
@@ -118,7 +152,6 @@ void *target_os_syscall_probe_summarize_tid(struct probe *probe,tid_t tid);
  */
 struct target_os_ops {
     int (*init)(struct target *target);
-    int (*close)(struct target *target);
     int (*fini)(struct target *target);
 
     /*
@@ -128,6 +161,36 @@ struct target_os_ops {
     uint64_t (*os_version)(struct target *target);
     char *(*os_version_string)(struct target *target);
     int (*os_version_cmp)(struct target *target,uint64_t vers);
+
+    /*
+     * Threads.
+     */
+    int (*thread_get_pgd_phys)(struct target *target,
+			       struct target_thread *tthread,ADDR *pgdp);
+    int (*thread_is_user)(struct target *target,struct target_thread *tthread);
+    struct target_thread *(*thread_get_leader)(struct target *target,
+					       struct target_thread *tthread);
+
+    /*
+     * Processes.
+     */
+    GHashTable *(*processes_get)(struct target *target);
+    struct target_process *(*process_get)(struct target *target,
+					  struct target_thread *tthread);
+
+    /*
+     * Signals.
+     */
+    const char *(*signal_to_name)(struct target *target,int signo);
+    int (*signal_from_name)(struct target *target,const char *name);
+    int (*signal_enqueue)(struct target *target,struct target_thread *tthread,
+			  int signo,void *data);
+    int (*signal_dequeue)(struct target *target,struct target_thread *tthread,
+			  int signo);
+    int (*signal_get_mask)(struct target *target,struct target_thread *tthread,
+			   unsigned char **maskbytes,int *masklen);
+    int (*signal_set_mask)(struct target *target,struct target_thread *tthread,
+			   unsigned char *maskbytes,int masklen);
 
     /*
      * Syscalls.
@@ -195,6 +258,10 @@ extern struct probe_ops target_os_syscall_ret_probe_ops;
 /*
  * Helper functions for backend builders.
  */
+
+int target_os_update_process_threads_generic(struct target_process *process,
+					     int no_event_send);
+
 struct target_os_syscall_state *
 target_os_syscall_record_entry(struct target *target,tid_t tid,
 			       struct target_os_syscall *syscall);

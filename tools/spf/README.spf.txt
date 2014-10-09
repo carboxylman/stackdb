@@ -57,6 +57,7 @@ ProbeFilter <symbol_name> [id(<probeFilterId>)] [when(pre|post)] [disable()]  \
     [vfilter(value1=/regex/,value2=/regex/,...)]                              \
     [print()] [bt([<target_id>[,<thread_name_or_id>[,levels,                  \
                   [debuginfo_root_prefix]]]])]                                \
+    [signal(<target_id>,<thread_name_or_id>,<signo_or_name>)]                 \
     [report(rt=i|f,tn=<typename>,tid=<typeid>,rv=<resultvalue>,msg="<msg>",   \
             ttctx=all|hier|self|none),bt=0|1,overlay_levels=-1|0|n,           \
             overlay_debuginfo_root_prefix=/path/to/debuginfo/for/overlays)]   \
@@ -112,6 +113,8 @@ the syntax.
     tid      The thread id
     ptid     The thread's parent thread id (-1 if target does not support
              thread parents)
+    tgid     The thread's group id (-1 if target does not support
+             thread groups) (on Linux, the thread group id the process id)
     tidhier  A common-separated list of tids starting with the
              current tid, and then moving up the hierarchy to the root.
     name     The thread's name (the empty string if the target does not
@@ -172,6 +175,21 @@ the syntax.
     will be used to find debuginfo files for the files running in your
     overlay targets, at all the levels you have requested for
     backtracing.  A single directory appears to be enough for now.
+
+  signal(<target_id>,<thread_name_or_id>,<signo_or_signame>)
+
+    This command injects a signal into a thread in an OS.
+    If you specify -1 for <target_id> instead of a target id, it will
+    signal a thread in the target that is currently executing (i.e.,
+    the one that hit the probe); otherwise, the target you specified
+    will be used.  If you don't specify <thread_name_or_id>, it will
+    signal the current thread.  If you use the value '0', it will
+    signal all threads in the target.  If you specify a thread name,
+    it will signal all threads for which
+    strcmp(<thread_name_or_id>,thread->name) matches.  If you specify a
+    thread number, it will signal that thread -- if it exists.
+    <signo_or_signame> is a signal number or signal name (i.e., SIGKILL,
+    SIGINT, etc).
 
   report(rt=i|f,tn=<typename>,tid=<typeid>,rv=<resultvalue>,msg="<msg>",   \
          ttctx=all|hier|self|none,ttdetail=<-2|-1|0|1|2>,bt=0|1,

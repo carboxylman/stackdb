@@ -801,7 +801,8 @@ int clrangesimple_foreach(clrangesimple_t clr,
     return 0;
 }
 
-void clrangesimple_free(clrangesimple_t clr,clrangesimple_free_dtor dtor) {
+void clrangesimple_free(clrangesimple_t clr,clrangesimple_free_dtor dtor,
+			void *dtor_data) {
     struct clf_rangesimple_data *crd = NULL;
     PWord_t pv;
     int rci;
@@ -819,7 +820,7 @@ void clrangesimple_free(clrangesimple_t clr,clrangesimple_free_dtor dtor) {
 	    break;
 	crd = (struct clf_rangesimple_data *)*pv;
 	if (dtor)
-	    dtor(crd->start,crd->end,crd->data);
+	    dtor(crd->start,crd->end,crd->data,dtor_data);
 	free(crd);
 	*pv = (Word_t)NULL;
 	JLD(rci,clr,index);

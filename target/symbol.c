@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -19,6 +19,7 @@
 #include <glib.h>
 #include "glib_wrapper.h"
 
+#include "arch.h"
 #include "target.h"
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
@@ -35,7 +36,7 @@ struct symbol *target_create_synthetic_type_pointer(struct target *target,
     retval->datatype = type;
     retval->datatype_ref = type->ref;
 
-    retval->size.bytes = target->ptrsize;
+    retval->size.bytes = target->arch->ptrsize;
     retval->size_is_bytes = 1;
 
     RHOLD(type,retval);
@@ -316,14 +317,16 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 		goto again;
 	}
 	else {
+	    int ptrsize = (int)target->arch->ptrsize;
+
 	    fprintf(stream,"0x");
-	    if (target->endian == DATA_LITTLE_ENDIAN) {
-		for (i = target->ptrsize - 1; i > -1; --i) {
+	    if (target->arch->endian == ENDIAN_LITTLE) {
+		for (i = ptrsize - 1; i > -1; --i) {
 		    fprintf(stream,"%02hhx",*(((uint8_t *)buf)+i));
 		}
 	    }
 	    else {
-		for (i = 0; i < target->ptrsize; ++i) {
+		for (i = 0; i < ptrsize; ++i) {
 		    fprintf(stream,"%02hhx",*(((uint8_t *)buf)+i));
 		}
 	    }
@@ -377,7 +380,7 @@ void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
 	    bitmask <<= 1;
 	    bitmask |= 1;
 	}
-	if (target->endian == DATA_LITTLE_ENDIAN)
+	if (target->arch->endian == ENDIAN_LITTLE)
 	    lboffset = (symbol->size.ctbytes * 8) - (symbol->size.offset + symbol->size.bits);
 	else 
 	    lboffset = symbol->size.offset;

@@ -349,10 +349,10 @@ GHashTable *__probe_value_get_table_function_ee(struct probe *probe,tid_t tid,
 	datatype = target_lookup_sym(probe->target,"long unsigned int",NULL,NULL,
 				     SYMBOL_TYPE_FLAG_TYPE);
 	if (datatype) {
+	    REG retreg = -1;
+	    target_cregno(probe->target,CREG_RET,&retreg);
 	    v = target_load_type_reg(probe->target,bsymbol_get_symbol(datatype),
-				     tid,
-				     target_dw_reg_no(probe->target,CREG_AX),
-				     LOAD_FLAG_NONE);
+				     tid,retreg,LOAD_FLAG_NONE);
 	    name = PROBE_VALUE_NAME_RETURN;
 	    /* Always record it even if it's NULL -- should not happen
 	     * for retval though!
@@ -440,10 +440,10 @@ static struct value *__probe_value_get_function_ee(struct probe *probe,tid_t tid
 	datatype = target_lookup_sym(probe->target,"long unsigned int",NULL,NULL,
 				     SYMBOL_TYPE_FLAG_TYPE);
 	if (datatype) {
+	    REG retreg = -1;
+	    target_cregno(probe->target,CREG_RET,&retreg);
 	    v = target_load_type_reg(probe->target,bsymbol_get_symbol(datatype),
-				     tid,
-				     target_dw_reg_no(probe->target,CREG_AX),
-				     LOAD_FLAG_NONE);
+				     tid,retreg,LOAD_FLAG_NONE);
 	    name = PROBE_VALUE_NAME_RETURN;
 	}
 	else

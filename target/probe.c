@@ -423,10 +423,11 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 	 */
 	if (probepoint->state != PROBE_DISABLED) {
 	    /* Reset EIP to the right thing. */
-	    if ((probepoint->state == PROBE_BP_PREHANDLING 
-		 || probepoint->state == PROBE_BP_ACTIONHANDLING 
-		 || probepoint->state == PROBE_ACTION_RUNNING
-		 || probepoint->state == PROBE_ACTION_DONE)
+	    if (!target->no_adjust_bp_ip
+		&& (probepoint->state == PROBE_BP_PREHANDLING 
+		    || probepoint->state == PROBE_BP_ACTIONHANDLING 
+		    || probepoint->state == PROBE_ACTION_RUNNING
+		    || probepoint->state == PROBE_ACTION_DONE)
 		&& !action_did_obviate
 		&& probepoint->type != PROBEPOINT_WATCH) {
 		/* We still must execute the original instruction. */
@@ -500,8 +501,12 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 
 	probepoint->debugregnum = -1;
     }
-    /* Otherwise do software. */
-    else {
+    /*
+     * Otherwise do software.  NB: we might get here twice; so make sure
+     * the probepoint is still associated with a thread.  If not, don't
+     * try again to remove it from the target.
+     */
+    else if (probepoint->thread) {
 	if (!fake) {
 	    /* restore the original instruction */
 	    if (target_remove_sw_breakpoint(target,probepoint->thread->tid,
@@ -1111,6 +1116,7 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
 	probepoint_free(probepoint);
     else if (force) {
 	verror("probepoint_remove failed, but force freeing!\n");
+	target_remove_probepoint(target,probepoint->thread,probepoint);
 	probepoint_free(probepoint);
 	return -1;
     }
@@ -2403,10 +2409,12 @@ static int setup_post_single_step(struct target *target,
      * If we're software, replace the original.
      */
     else if (probepoint->style == PROBEPOINT_SW) {
-	/* Restore the original instruction. */
-	vdebug(4,LA_PROBE,LF_PROBEPOINT,"restoring orig instr for SW ");
-	LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
-	vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
+	if (!target->no_adjust_bp_ip) {
+	    /* Restore the original instruction. */
+	    vdebug(4,LA_PROBE,LF_PROBEPOINT,"restoring orig instr for SW ");
+	    LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	    vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
+	}
 
 	doit = 1;
 
@@ -2516,7 +2524,7 @@ static int setup_post_single_step(struct target *target,
 	if (probepoint->style != PROBEPOINT_HW) {
 	    if (target_enable_sw_breakpoint(target,probepoint->thread->tid,
 					    probepoint->mmod)) {
-		verror("could enable sw breakpoint after failed singlestep;"
+		verror("could not enable sw breakpoint after failed singlestep;"
 		       " assuming breakpoint is left in place and"
 		       " skipping single step, but badness will ensue!");
 	    }
@@ -2768,8 +2776,8 @@ result_t probepoint_bp_handler(struct target *target,
     /* If SW bp, reset EIP and write it back *now*, because it's easy
      * here, and then if the user tries to read it, it's "correct".
      */
-    if (probepoint->style == PROBEPOINT_SW) {
-	ipval -= target->breakpoint_instrs_len;
+    if (!target->no_adjust_bp_ip && probepoint->style == PROBEPOINT_SW) {
+	ipval -= target->arch->breakpoint_instrs_len;
 	errno = 0;
 	target_write_reg(target,tid,target->ipregno,ipval);
 	if (errno) {
@@ -2830,7 +2838,7 @@ result_t probepoint_bp_handler(struct target *target,
     }
 
     /* Restore ip register if we ran a handler. */
-    if (doit) {
+    if (!target->no_adjust_bp_ip && doit) {
 	errno = 0;
 	target_write_reg(target,tid,target->ipregno,ipval);
 	if (errno) {
@@ -3698,9 +3706,9 @@ static int __insert_action(struct target *target,struct target_thread *tthread,
 		    return -1;
 		}
 
-		buf = target->full_ret_instrs;
-		buflen = target->full_ret_instrs_len;
-		action->steps = target->full_ret_instr_count;
+		buf = target->arch->full_ret_instrs;
+		buflen = target->arch->full_ret_instrs_len;
+		action->steps = target->arch->full_ret_instr_count;
 	    }
 	    else {
 		vdebug(3,LA_PROBE,LF_ACTION,
@@ -3722,15 +3730,15 @@ static int __insert_action(struct target *target,struct target_thread *tthread,
 		    return -1;
 		}
 
-		buf = target->ret_instrs;
-		buflen = target->ret_instrs_len;
-		action->steps = target->ret_instr_count;
+		buf = target->arch->ret_instrs;
+		buflen = target->arch->ret_instrs_len;
+		action->steps = target->arch->ret_instr_count;
 	    }
 	}
 	else {
-	    buf = target->ret_instrs;
-	    buflen = target->ret_instrs_len;
-	    action->steps = target->ret_instr_count;
+	    buf = target->arch->ret_instrs;
+	    buflen = target->arch->ret_instrs_len;
+	    action->steps = target->arch->ret_instr_count;
 	}
     }
     else if (action->type == ACTION_CUSTOMCODE) {
@@ -4275,7 +4283,7 @@ int action_sched(struct probe *probe,struct action *action,
 	else if (action->detail.ret.prologue && action->detail.ret.prologue_uses_bp
 		 && !action->boosted
 		 && !target->threadctl
-		 && target->full_ret_instr_count > 1
+		 && target->arch->full_ret_instr_count > 1
 		 && target->spec->bpmode == THREAD_BPMODE_SEMI_STRICT) {
 	    if (action->detail.ret.prologue_has_sp_offset) {
 		vdebug(8,LA_PROBE,LF_ACTION,

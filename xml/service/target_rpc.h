@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -25,6 +25,7 @@
 
 #include "dwdebug.h"
 #include "target_api.h"
+#include "target_event.h"
 #include <glib.h>
 #include <pthread.h>
 

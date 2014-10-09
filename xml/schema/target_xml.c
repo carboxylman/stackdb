@@ -16,6 +16,7 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include "glib_wrapper.h"
 #include "target_xml.h"
 #include "debuginfo_xml.h"
 #include "util.h"
@@ -43,10 +44,18 @@ x_TargetTypeT_to_t_target_type_t(struct soap *soap,
 	if (out)
 	    *out = TARGET_TYPE_XEN;
 	return TARGET_TYPE_XEN;
-    case vmi1__TargetTypeT__xenProcess:
+    case vmi1__TargetTypeT__gdb:
 	if (out)
-	    *out = TARGET_TYPE_XEN_PROCESS;
-	return TARGET_TYPE_XEN_PROCESS;
+	    *out = TARGET_TYPE_GDB;
+	return TARGET_TYPE_GDB;
+    case vmi1__TargetTypeT__osProcess:
+	if (out)
+	    *out = TARGET_TYPE_OS_PROCESS;
+	return TARGET_TYPE_OS_PROCESS;
+    case vmi1__TargetTypeT__php:
+	if (out)
+	    *out = TARGET_TYPE_PHP;
+	return TARGET_TYPE_PHP;
     default:
 	verror("unknown TargetTypeT %d\n",type);
 	return TARGET_TYPE_NONE;
@@ -71,10 +80,18 @@ t_target_type_t_to_x_TargetTypeT(struct soap *soap,
 	if (out)
 	    *out = vmi1__TargetTypeT__xen;
 	return vmi1__TargetTypeT__xen;
-    case TARGET_TYPE_XEN_PROCESS:
+    case TARGET_TYPE_GDB:
 	if (out)
-	    *out = vmi1__TargetTypeT__xenProcess;
-	return vmi1__TargetTypeT__xenProcess;
+	    *out = vmi1__TargetTypeT__gdb;
+	return vmi1__TargetTypeT__gdb;
+    case TARGET_TYPE_OS_PROCESS:
+	if (out)
+	    *out = vmi1__TargetTypeT__osProcess;
+	return vmi1__TargetTypeT__osProcess;
+    case TARGET_TYPE_PHP:
+	if (out)
+	    *out = vmi1__TargetTypeT__php;
+	return vmi1__TargetTypeT__php;
     default:
 	verror("unknown target_type_t %d\n",type);
 	return vmi1__TargetTypeT__none;
@@ -215,6 +232,10 @@ x_TargetSpecT_to_t_target_spec(struct soap *soap,
 	ospec->start_paused = 0;
     else 
 	ospec->start_paused = 1;
+    if (spec->stayPaused == xsd__boolean__false_)
+	ospec->stay_paused = 0;
+    else 
+	ospec->stay_paused = 1;
     if ((spec->killOnClose && *spec->killOnClose == xsd__boolean__true_)
 	|| spec->killOnCloseSignal) {
 	ospec->kill_on_close = 1;
@@ -225,16 +246,16 @@ x_TargetSpecT_to_t_target_spec(struct soap *soap,
 	ospec->debugfile_root_prefix = strdup(spec->debugfileRootPrefix);
     if (spec->activeProbeThreadEntry 
 	&& *spec->activeProbeThreadEntry == xsd__boolean__true_)
-	ospec->active_probe_flags |= ACTIVE_PROBE_FLAG_THREAD_ENTRY;
+	ospec->ap_flags |= APF_THREAD_ENTRY;
     if (spec->activeProbeThreadExit 
 	&& *spec->activeProbeThreadExit == xsd__boolean__true_)
-	ospec->active_probe_flags |= ACTIVE_PROBE_FLAG_THREAD_EXIT;
+	ospec->ap_flags |= APF_THREAD_EXIT;
     if (spec->activeProbeMemory 
 	&& *spec->activeProbeMemory == xsd__boolean__true_)
-	ospec->active_probe_flags |= ACTIVE_PROBE_FLAG_MEMORY;
+	ospec->ap_flags |= APF_MEMORY;
     if (spec->activeProbeOther 
 	&& *spec->activeProbeOther == xsd__boolean__true_)
-	ospec->active_probe_flags |= ACTIVE_PROBE_FLAG_OTHER;
+	ospec->ap_flags |= APF_OTHER;
 
     if (type == TARGET_TYPE_PTRACE
 	&& spec->backendSpec 
@@ -253,10 +274,21 @@ x_TargetSpecT_to_t_target_spec(struct soap *soap,
 					  (struct vmi1__TargetXenSpecT *)spec->backendSpec->union_backendSpec.targetXenSpec,
 					  reftab,
 					  ospec->backend_spec);
-    else if (type == TARGET_TYPE_XEN_PROCESS) {
+#endif
+    else if (type == TARGET_TYPE_GDB
+	     && spec->backendSpec 
+	     && spec->backendSpec->__union_backendSpec			\
+  	            == SOAP_UNION__vmi1__union_backendSpec_targetGdbSpec)
+	x_TargetGdbSpecT_to_t_gdb_spec(soap,
+				       (struct vmi1__TargetGdbSpecT *)spec->backendSpec->union_backendSpec.targetGdbSpec,
+				       reftab,
+				       ospec->backend_spec);
+    else if (type == TARGET_TYPE_OS_PROCESS) {
 	spec->backendSpec = NULL;
     }
-#endif
+    else if (type == TARGET_TYPE_PHP) {
+	spec->backendSpec = NULL;
+    }
     else {
 	verror("bad target-specific spec (%d)\n",type);
 	return NULL;
@@ -287,6 +319,10 @@ t_target_spec_to_x_TargetSpecT(struct soap *soap,
 	ospec->startPaused = xsd__boolean__false_;
     else 
 	ospec->startPaused = xsd__boolean__true_;
+    if (!spec->stay_paused)
+	ospec->stayPaused = xsd__boolean__false_;
+    else 
+	ospec->stayPaused = xsd__boolean__true_;
 
     ospec->defaultProbeStyle = 
 	SOAP_CALLOC(soap,1,sizeof(*ospec->defaultProbeStyle));
@@ -319,25 +355,25 @@ t_target_spec_to_x_TargetSpecT(struct soap *soap,
 	SOAP_STRCPY(soap,ospec->debugfileRootPrefix,spec->debugfile_root_prefix);
     ospec->activeProbeThreadEntry = 
 	SOAP_CALLOC(soap,1,sizeof(*ospec->activeProbeThreadEntry));
-    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) 
+    if (spec->ap_flags & APF_THREAD_ENTRY) 
 	*ospec->activeProbeThreadEntry = xsd__boolean__true_;
     else
 	*ospec->activeProbeThreadEntry = xsd__boolean__false_;
     ospec->activeProbeThreadExit = 
 	SOAP_CALLOC(soap,1,sizeof(*ospec->activeProbeThreadExit));
-    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) 
+    if (spec->ap_flags & APF_THREAD_EXIT) 
 	*ospec->activeProbeThreadExit = xsd__boolean__true_;
     else
 	*ospec->activeProbeThreadExit = xsd__boolean__false_;
     ospec->activeProbeMemory = 
 	SOAP_CALLOC(soap,1,sizeof(*ospec->activeProbeMemory));
-    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY) 
+    if (spec->ap_flags & APF_MEMORY) 
 	*ospec->activeProbeMemory = xsd__boolean__true_;
     else
 	*ospec->activeProbeMemory = xsd__boolean__false_;
     ospec->activeProbeOther = 
 	SOAP_CALLOC(soap,1,sizeof(*ospec->activeProbeOther));
-    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_OTHER) 
+    if (spec->ap_flags & APF_OTHER) 
 	*ospec->activeProbeOther = xsd__boolean__true_;
     else
 	*ospec->activeProbeOther = xsd__boolean__false_;
@@ -361,13 +397,28 @@ t_target_spec_to_x_TargetSpecT(struct soap *soap,
 					      (struct xen_vm_spec *)spec->backend_spec,
 					      reftab,NULL);
     }
-    else if (spec->target_type == TARGET_TYPE_XEN_PROCESS) {
+#endif
+    else if (spec->target_type == TARGET_TYPE_GDB) {
 	ospec->backendSpec = SOAP_CALLOC(soap,1,sizeof(*ospec->backendSpec));
 	ospec->backendSpec->__union_backendSpec = \
-	    SOAP_UNION__vmi1__union_backendSpec_targetXenProcessSpec;
-	ospec->backendSpec->union_backendSpec.targetXenProcessSpec = NULL;
+	    SOAP_UNION__vmi1__union_backendSpec_targetGdbSpec;
+	ospec->backendSpec->union_backendSpec.targetGdbSpec = \
+	    t_gdb_spec_to_x_TargetGdbSpecT(soap,
+					   (struct gdb_spec *)spec->backend_spec,
+					   reftab,NULL);
     }
-#endif
+    else if (spec->target_type == TARGET_TYPE_OS_PROCESS) {
+	ospec->backendSpec = SOAP_CALLOC(soap,1,sizeof(*ospec->backendSpec));
+	ospec->backendSpec->__union_backendSpec = \
+	    SOAP_UNION__vmi1__union_backendSpec_targetOsProcessSpec;
+	ospec->backendSpec->union_backendSpec.targetOsProcessSpec = NULL;
+    }
+    else if (spec->target_type == TARGET_TYPE_PHP) {
+	ospec->backendSpec = SOAP_CALLOC(soap,1,sizeof(*ospec->backendSpec));
+	ospec->backendSpec->__union_backendSpec = \
+	    SOAP_UNION__vmi1__union_backendSpec_targetPhpSpec;
+	ospec->backendSpec->union_backendSpec.targetPhpSpec = NULL;
+    }
 
     return ospec;
 }
@@ -393,6 +444,19 @@ x_TargetXenSpecT_to_t_xen_vm_spec(struct soap *soap,
 	ospec->config_file = strdup(spec->configFile);
     if (spec->noHVMSetContext && *spec->noHVMSetContext == xsd__boolean__true_)
 	ospec->no_hvm_setcontext = 1;
+    if (spec->clearMemCachesEachException
+	&& *spec->clearMemCachesEachException == xsd__boolean__true_)
+	ospec->clear_mem_caches_each_exception = 1;
+    if (spec->memcacheMmapSize && *spec->memcacheMmapSize > 0)
+	ospec->memcache_mmap_size = *spec->memcacheMmapSize;
+#ifdef ENABLE_XENACCESS
+    if (spec->useXenAccess && *spec->useXenAccess == xsd__boolean__true_)
+	ospec->use_xenaccess = 1;
+#endif
+#ifdef ENABLE_LIBVMI
+    if (spec->useLibVMI && *spec->useLibVMI == xsd__boolean__true_)
+	ospec->use_libvmi = 1;
+#endif
     if (spec->noClearHWDbgReg && *spec->noClearHWDbgReg == xsd__boolean__true_)
 	ospec->no_hw_debug_reg_clear = 1;
     if (spec->noUseMultiplexer && *spec->noUseMultiplexer == xsd__boolean__true_)
@@ -426,6 +490,26 @@ t_xen_vm_spec_to_x_TargetXenSpecT(struct soap *soap,
 	    SOAP_CALLOC(soap,1,sizeof(*ospec->noHVMSetContext));
 	*ospec->noHVMSetContext = xsd__boolean__true_;
     }
+    if (spec->clear_mem_caches_each_exception) {
+	ospec->clearMemCachesEachException = 
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->clearMemCachesEachException));
+	*ospec->clearMemCachesEachException = xsd__boolean__true_;
+    }
+    if (spec->memcache_mmap_size > 0) {
+	ospec->memcacheMmapSize =
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->memcacheMmapSize));
+	*ospec->memcacheMmapSize = spec->memcache_mmap_size;
+    }
+    if (spec->use_libvmi) {
+	ospec->useLibVMI = 
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->useLibVMI));
+	*ospec->useLibVMI = xsd__boolean__true_;
+    }
+    if (spec->use_xenaccess) {
+	ospec->useXenAccess = 
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->useXenAccess));
+	*ospec->useXenAccess = xsd__boolean__true_;
+    }
     if (spec->no_hw_debug_reg_clear) {
 	ospec->noClearHWDbgReg = 
 	    SOAP_CALLOC(soap,1,sizeof(*ospec->noClearHWDbgReg));
@@ -445,6 +529,106 @@ t_xen_vm_spec_to_x_TargetXenSpecT(struct soap *soap,
     return ospec;
 }
 #endif
+
+struct gdb_spec *
+x_TargetGdbSpecT_to_t_gdb_spec(struct soap *soap,
+			       struct vmi1__TargetGdbSpecT *spec,
+			       GHashTable *reftab,
+			       struct gdb_spec *out) {
+    struct gdb_spec *ospec;
+
+    if (out)
+	ospec = out;
+    else 
+	ospec = gdb_build_spec();
+
+    if (spec->gdbHostname)
+	ospec->hostname = strdup(spec->gdbHostname);
+    if (spec->gdbPort && *spec->gdbPort > 0)
+	ospec->port = *spec->gdbPort;
+    if (spec->gdbSockfile)
+	ospec->sockfile = strdup(spec->gdbSockfile);
+    if (spec->isQemu && *spec->isQemu == xsd__boolean__true_)
+	ospec->is_qemu = 1;
+    if (spec->isKvm && *spec->isKvm == xsd__boolean__true_)
+	ospec->is_kvm = 1;
+    if (spec->clearMemCachesEachException
+	&& *spec->clearMemCachesEachException == xsd__boolean__true_)
+	ospec->clear_mem_caches_each_exception = 1;
+    if (spec->qemuQmpHostname)
+	ospec->qemu_qmp_hostname = strdup(spec->qemuQmpHostname);
+    if (spec->qemuQmpPort && *spec->qemuQmpPort > 0)
+	ospec->qemu_qmp_port = *spec->qemuQmpPort;
+    if (spec->qemuMemPath)
+	ospec->qemu_mem_path = strdup(spec->qemuMemPath);
+    if (spec->mainFilename)
+	ospec->main_filename = strdup(spec->mainFilename);
+    if (spec->memcacheMmapSize && *spec->memcacheMmapSize > 0)
+	ospec->memcache_mmap_size = *spec->memcacheMmapSize;
+
+    return ospec;
+}
+
+struct vmi1__TargetGdbSpecT *
+t_gdb_spec_to_x_TargetGdbSpecT(struct soap *soap,
+			       struct gdb_spec *spec,
+			       GHashTable *reftab,
+			       struct vmi1__TargetGdbSpecT *out) {
+    struct vmi1__TargetGdbSpecT *ospec;
+
+    if (out)
+	ospec = out;
+    else 
+	ospec = SOAP_CALLOC(soap,1,sizeof(*ospec));
+
+    if (spec->hostname)
+	SOAP_STRCPY(soap,ospec->gdbHostname,spec->hostname);
+    if (spec->port > 0) {
+	ospec->gdbPort =
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->gdbPort));
+	*ospec->gdbPort = spec->port;
+    }
+    if (spec->sockfile)
+	SOAP_STRCPY(soap,ospec->gdbSockfile,spec->sockfile);
+    if (spec->do_udp) {
+	ospec->doUdp = 
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->doUdp));
+	*ospec->doUdp = xsd__boolean__true_;
+    }
+    if (spec->is_qemu) {
+	ospec->isQemu = 
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->isQemu));
+	*ospec->isQemu = xsd__boolean__true_;
+    }
+    if (spec->is_kvm) {
+	ospec->isKvm = 
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->isKvm));
+	*ospec->isKvm = xsd__boolean__true_;
+    }
+    if (spec->qemu_qmp_hostname)
+	SOAP_STRCPY(soap,ospec->qemuQmpHostname,spec->qemu_qmp_hostname);
+    if (spec->qemu_qmp_port > 0) {
+	ospec->qemuQmpPort =
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->qemuQmpPort));
+	*ospec->qemuQmpPort = spec->qemu_qmp_port;
+    }
+    if (spec->qemu_mem_path)
+	SOAP_STRCPY(soap,ospec->qemuMemPath,spec->qemu_mem_path);
+    if (spec->main_filename)
+	SOAP_STRCPY(soap,ospec->mainFilename,spec->main_filename);
+    if (spec->clear_mem_caches_each_exception) {
+	ospec->clearMemCachesEachException = 
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->clearMemCachesEachException));
+	*ospec->clearMemCachesEachException = xsd__boolean__true_;
+    }
+    if (spec->memcache_mmap_size > 0) {
+	ospec->memcacheMmapSize =
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->memcacheMmapSize));
+	*ospec->memcacheMmapSize = spec->memcache_mmap_size;
+    }
+
+    return ospec;
+}
 
 struct linux_userproc_spec *
 x_TargetPtraceSpecT_to_t_linux_userproc_spec(struct soap *soap,
@@ -771,25 +955,25 @@ t_target_id_to_x_TargetT(struct soap *soap,
      */
     otarget->activeProbeThreadEntry = 
 	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeThreadEntry));
-    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) 
+    if (spec->ap_flags & APF_THREAD_ENTRY) 
 	*otarget->activeProbeThreadEntry = xsd__boolean__true_;
     else
 	*otarget->activeProbeThreadEntry = xsd__boolean__false_;
     otarget->activeProbeThreadExit = 
 	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeThreadExit));
-    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) 
+    if (spec->ap_flags & APF_THREAD_EXIT) 
 	*otarget->activeProbeThreadExit = xsd__boolean__true_;
     else
 	*otarget->activeProbeThreadExit = xsd__boolean__false_;
     otarget->activeProbeMemory = 
 	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeMemory));
-    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY) 
+    if (spec->ap_flags & APF_MEMORY) 
 	*otarget->activeProbeMemory = xsd__boolean__true_;
     else
 	*otarget->activeProbeMemory = xsd__boolean__false_;
     otarget->activeProbeOther = 
 	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeOther));
-    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_OTHER) 
+    if (spec->ap_flags & APF_OTHER) 
 	*otarget->activeProbeOther = xsd__boolean__true_;
     else
 	*otarget->activeProbeOther = xsd__boolean__false_;
@@ -819,6 +1003,7 @@ t_target_to_x_TargetT(struct soap *soap,
     int i;
     int len;
     struct addrspace *space;
+    GList *t1;
 
     if (out)
 	otarget = out;
@@ -835,25 +1020,25 @@ t_target_to_x_TargetT(struct soap *soap,
 
     otarget->activeProbeThreadEntry = 
 	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeThreadEntry));
-    if (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) 
+    if (target->ap_flags & APF_THREAD_ENTRY) 
 	*otarget->activeProbeThreadEntry = xsd__boolean__true_;
     else
 	*otarget->activeProbeThreadEntry = xsd__boolean__false_;
     otarget->activeProbeThreadExit = 
 	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeThreadExit));
-    if (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) 
+    if (target->ap_flags & APF_THREAD_EXIT) 
 	*otarget->activeProbeThreadExit = xsd__boolean__true_;
     else
 	*otarget->activeProbeThreadExit = xsd__boolean__false_;
     otarget->activeProbeMemory = 
 	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeMemory));
-    if (target->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY) 
+    if (target->ap_flags & APF_MEMORY) 
 	*otarget->activeProbeMemory = xsd__boolean__true_;
     else
 	*otarget->activeProbeMemory = xsd__boolean__false_;
     otarget->activeProbeOther = 
 	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeOther));
-    if (target->active_probe_flags & ACTIVE_PROBE_FLAG_OTHER) 
+    if (target->ap_flags & APF_OTHER) 
 	*otarget->activeProbeOther = xsd__boolean__true_;
     else
 	*otarget->activeProbeOther = xsd__boolean__false_;
@@ -877,13 +1062,13 @@ t_target_to_x_TargetT(struct soap *soap,
     }
 
     len = 0;
-    list_for_each_entry(space,&target->spaces,space)
+    v_g_list_foreach(target->spaces,t1,space)
 	++len;
     if (len) {
 	otarget->__sizeaddrSpace = len;
 	otarget->addrSpace = SOAP_CALLOC(soap,len,sizeof(*(otarget->addrSpace)));
 	i = 0;
-	list_for_each_entry(space,&target->spaces,space) {
+	v_g_list_foreach(target->spaces,t1,space) {
 	    t_addrspace_to_x_AddrSpaceT(soap,space,reftab,
 					&otarget->addrSpace[i]);
 	    ++i;
@@ -905,6 +1090,7 @@ t_addrspace_to_x_AddrSpaceT(struct soap *soap,
     struct memregion *region;
     int i;
     int len;
+    GList *t1;
 
     if (out)
 	ospace = out;
@@ -913,17 +1099,17 @@ t_addrspace_to_x_AddrSpaceT(struct soap *soap,
 
     if (space->name)
 	SOAP_STRCPY(soap,ospace->name,space->name);
-    ospace->id = space->id;
+    ospace->id = space->tag;
     ospace->tid = space->target->id;
 
     len = 0;
-    list_for_each_entry(region,&space->regions,region)
+    v_g_list_foreach(space->regions,t1,region)
 	++len;
     if (len) {
 	ospace->__sizememRegion = len;
 	ospace->memRegion = SOAP_CALLOC(soap,len,sizeof(*(ospace->memRegion)));
 	i = 0;
-	list_for_each_entry(region,&space->regions,region) {
+	v_g_list_foreach(space->regions,t1,region) {
 	    t_memregion_to_x_MemRegionT(soap,region,reftab,
 					&ospace->memRegion[i]);
 	    ++i;
@@ -990,6 +1176,7 @@ t_memregion_to_x_MemRegionT(struct soap *soap,
     GHashTableIter iter;
     struct debugfile *df;
     char idbuf[12];
+    GList *t1;
 
     if (out)
 	oregion = out;
@@ -1011,13 +1198,13 @@ t_memregion_to_x_MemRegionT(struct soap *soap,
     oregion->physOffset = region->phys_offset;
 
     len = 0;
-    list_for_each_entry(range,&region->ranges,range)
+    v_g_list_foreach(region->ranges,t1,range)
 	++len;
     if (len) {
 	oregion->__sizememRange = len;
 	oregion->memRange = SOAP_CALLOC(soap,len,sizeof(*(oregion->memRange)));
 	i = 0;
-	list_for_each_entry(range,&region->ranges,range) {
+	v_g_list_foreach(region->ranges,t1,range) {
 	    t_memrange_to_x_MemRangeT(soap,range,reftab,&oregion->memRange[i]);
 	    ++i;
 	}
@@ -1432,7 +1619,7 @@ t_action_to_x_ActionT(struct soap *soap,
 	    SOAP_CALLOC(soap,1,sizeof(*oaction->actionSpec->union_ActionSpecT.regmod->registerValue));
 	SOAP_STRCPY(soap,
 		    oaction->actionSpec->union_ActionSpecT.regmod->registerValue->name,
-		    target_reg_name(action->target,action->detail.regmod.regnum));
+		    (char *)target_regname(action->target,action->detail.regmod.regnum));
 	oaction->actionSpec->union_ActionSpecT.regmod->registerValue->value = \
 	    action->detail.regmod.regval;
 	break;

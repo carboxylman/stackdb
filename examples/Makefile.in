@@ -1,0 +1,50 @@
+## -*- mode: Makefile -*-
+##
+## Copyright (c) 2014 The University of Utah
+##
+## This program is free software; you can redistribute it and/or
+## modify it under the terms of the GNU General Public License as
+## published by the Free Software Foundation; either version 2 of
+## the License, or (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+
+###############################################################################
+
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= examples
+OBJDIR		= @top_builddir@
+
+SUBDIRS = 
+
+include $(OBJDIR)/Makeconf
+
+INST_SHARE = Makefile.example ptrace.c ptrace-multi-process.c
+
+all:	all-subdirs
+
+include $(TOP_SRCDIR)/Makerules
+
+install: def-install install-subdirs
+
+clean: clean-subdirs
+
+distclean: distclean-subdirs
+
+# How to recursively descend into subdirectories to make general
+# targets such as `all'.
+%.MAKE:
+	@$(MAKE) -C $(dir $@) $(basename $(notdir $@))
+%-subdirs: $(addsuffix /%.MAKE,$(SUBDIRS)) ;
+
+.PHONY:	$(SUBDIRS)
+
+.SECONDARY:

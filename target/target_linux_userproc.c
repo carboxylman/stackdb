@@ -16,6 +16,9 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include "config.h"
+#include "glib_wrapper.h"
+
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -34,18 +37,20 @@
 #include <dirent.h>
 #include <sys/time.h>
 #include <argp.h>
-
 #include <gelf.h>
 #include <elf.h>
 #include <libelf.h>
 
+#include "common.h"
+#include "object.h"
+#include "arch.h"
+#include "arch_x86.h"
+#include "arch_x86_64.h"
 #include "waitpipe.h"
 #include "evloop.h"
-
 #include "binfile.h"
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
-
 #include "target_api.h"
 #include "target.h"
 #include "target_linux_userproc.h"
@@ -68,7 +73,7 @@ static int linux_userproc_snprintf(struct target *target,
 static int linux_userproc_init(struct target *target);
 static int linux_userproc_postloadinit(struct target *target);
 static int linux_userproc_attach_internal(struct target *target);
-static int linux_userproc_detach(struct target *target);
+static int linux_userproc_detach(struct target *target,int stay_paused);
 static int linux_userproc_fini(struct target *target);
 static int linux_userproc_kill(struct target *target,int sig);
 static int linux_userproc_loadspaces(struct target *target);
@@ -79,6 +84,7 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 					 struct memregion *region);
 
 static target_status_t linux_userproc_handle_exception(struct target *target,
+						       target_exception_flags_t flags,
 						       int *again,void *priv);
 
 static struct target *
@@ -109,9 +115,6 @@ static unsigned long linux_userproc_write(struct target *target,
 					  ADDR addr,
 					  unsigned long length,
 					  unsigned char *buf);
-static char *linux_userproc_reg_name(struct target *target,REG reg);
-static REG linux_userproc_dwregno_targetname(struct target *target,char *name);
-static REG linux_userproc_dw_reg_no(struct target *target,common_reg_t reg);
 
 static tid_t linux_userproc_gettid(struct target *target);
 static void linux_userproc_free_thread_state(struct target *target,void *state);
@@ -126,7 +129,8 @@ static int linux_userproc_flush_thread(struct target *target,tid_t tid);
 static int linux_userproc_flush_current_thread(struct target *target);
 static int linux_userproc_flush_all_threads(struct target *target);
 static int linux_userproc_invalidate_all_threads(struct target *target);
-static int linux_userproc_thread_snprintf(struct target_thread *tthread,
+static int linux_userproc_thread_snprintf(struct target *target,
+					  struct target_thread *tthread,
 					  char *buf,int bufsiz,
 					  int detail,char *sep,char *kvsep);
 
@@ -194,9 +198,6 @@ struct target_ops linux_userspace_process_ops = {
     .poll = linux_userproc_poll,
     .read = linux_userproc_read,
     .write = linux_userproc_write,
-    .regname = linux_userproc_reg_name,
-    .dwregno_targetname = linux_userproc_dwregno_targetname,
-    .dwregno = linux_userproc_dw_reg_no,
 
     .gettid = linux_userproc_gettid,
     .free_thread_state = linux_userproc_free_thread_state,
@@ -211,7 +212,6 @@ struct target_ops linux_userspace_process_ops = {
     .flush_thread = linux_userproc_flush_thread,
     .flush_current_thread = linux_userproc_flush_current_thread,
     .flush_all_threads = linux_userproc_flush_all_threads,
-    .invalidate_all_threads = linux_userproc_invalidate_all_threads,
     .thread_snprintf = linux_userproc_thread_snprintf,
 
     .attach_evloop = linux_userproc_attach_evloop,
@@ -219,7 +219,6 @@ struct target_ops linux_userspace_process_ops = {
 
     .readreg = linux_userproc_read_reg,
     .writereg = linux_userproc_write_reg,
-    .copy_registers = linux_userproc_copy_registers,
     .get_unused_debug_reg = linux_userproc_get_unused_debug_reg,
     .set_hw_breakpoint = linux_userproc_set_hw_breakpoint,
     .set_hw_watchpoint = linux_userproc_set_hw_watchpoint,
@@ -719,11 +718,7 @@ static struct target *linux_userproc_attach(struct target_spec *spec,
     target->binfile = binfile;
     RHOLD(target->binfile,target);
 
-    target->wordsize = binfile->wordsize;
-    target->endian = binfile->endian;
-
-    /* Wordsize and ptrsize the same, obviously... */
-    target->ptrsize = target->wordsize;
+    target->arch = target->binfile->arch;
 
     /* Which register is the fbreg is dependent on host cpu type, not
      * target cpu type.
@@ -738,28 +733,9 @@ static struct target *linux_userproc_attach(struct target_spec *spec,
     target->ipregno = 8;
 #endif
 
-    target->breakpoint_instrs = malloc(1);
-    *(char *)(target->breakpoint_instrs) = 0xcc;
-    target->breakpoint_instrs_len = 1;
-    target->breakpoint_instr_count = 1;
-
-    target->ret_instrs = malloc(1);
-    /* RET */
-    *(char *)(target->ret_instrs) = 0xc3;
-    target->ret_instrs_len = 1;
-    target->ret_instr_count = 1;
-
-    target->full_ret_instrs = malloc(2);
-    /* LEAVE */
-    *(char *)(target->full_ret_instrs) = 0xc9;
-    /* RET */
-    *(((char *)(target->full_ret_instrs))+1) = 0xc3;
-    target->full_ret_instrs_len = 2;
-    target->full_ret_instr_count = 2;
-
     lstate = (struct linux_userproc_state *)malloc(sizeof(*lstate));
     if (!lstate) {
-	target_free(target);
+	target_finalize(target);
 	errno = ENOMEM;
 	return NULL;
     }
@@ -869,9 +845,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
     target->binfile = binfile;
     RHOLD(target->binfile,target);
 
-    target->wordsize = binfile->wordsize;
-    target->endian = binfile->endian;
-    target->ptrsize = target->wordsize;
+    target->arch = target->binfile->arch;
 
     if (binfile->is_dynamic < 0) {
 	verror("could not check if %s is static/dynamic exe; aborting!\n",
@@ -895,25 +869,6 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
     target->spregno = 4;
     target->ipregno = 8;
 #endif
-
-    target->breakpoint_instrs = malloc(1);
-    *(char *)(target->breakpoint_instrs) = 0xcc;
-    target->breakpoint_instrs_len = 1;
-    target->breakpoint_instr_count = 1;
-
-    target->ret_instrs = malloc(1);
-    /* RET */
-    *(char *)(target->ret_instrs) = 0xc3;
-    target->ret_instrs_len = 1;
-    target->ret_instr_count = 1;
-
-    target->full_ret_instrs = malloc(2);
-    /* LEAVE */
-    *(char *)(target->full_ret_instrs) = 0xc9;
-    /* RET */
-    *(((char *)(target->full_ret_instrs))+1) = 0xc3;
-    target->full_ret_instrs_len = 2;
-    target->full_ret_instr_count = 2;
 
     lstate = (struct linux_userproc_state *)malloc(sizeof(*lstate));
     if (!lstate) {
@@ -1288,7 +1243,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
 
  errout:
     /*
-     * Cleanup I/O stuff first!  Do it before target_free!
+     * Cleanup I/O stuff first!  Do it before target_finalize!
      */
     if (inpfd[0] > -1) 
 	close(inpfd[0]);
@@ -1324,7 +1279,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
 	close(errfd);
 
     if (target)
-	target_free(target);
+	target_finalize(target);
     else if (binfile)
 	RPUT(binfile,binfile,target,trefcnt);
 
@@ -1353,6 +1308,7 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
     int racy_status;
     int pstatus;
     int rc;
+    struct target_event *event;
 
     lstate = (struct linux_userproc_state *)target->state;
 
@@ -1468,11 +1424,12 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
     }
     tstate->ctl_sig_pause_all = 0;
 
-    tthread = target_create_thread(target,child,tstate);
+    tthread = target_create_thread(target,child,tstate,NULL);
     tthread->supported_overlay_types = TARGET_TYPE_PHP;
 
-    target_add_state_change(target,child,TARGET_STATE_CHANGE_THREAD_CREATED,0,0,
-			    0,0,NULL);
+    event = target_create_event(target,tthread,T_EVENT_PROCESS_THREAD_CREATED,
+				tthread);
+    target_broadcast_event(target,event);
 
     target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
 
@@ -1637,12 +1594,12 @@ static int __handle_internal_detaching(struct target *target,
 	    /* catch glib bug in hash table init; check for empty hashtable */
 	    else if ((dpp = (struct probepoint *) \
 		      g_hash_table_lookup(target->soft_probepoints,
-					  (gpointer)(ipval - target->breakpoint_instrs_len)))) {
+					  (gpointer)(ipval - target->arch->breakpoint_instrs_len)))) {
 		vdebug(5,LA_TARGET,LF_LUP,
 		       "sw bp pid %d thread %"PRIiTID", resetting EIP\n",
 		       pid,tid);
 
-		ipval -= target->breakpoint_instrs_len;
+		ipval -= target->arch->breakpoint_instrs_len;
 		errno = 0;
 		target_write_reg(target,tid,target->ipregno,ipval);
 		if (errno) {
@@ -1690,8 +1647,9 @@ static int __handle_internal_detaching(struct target *target,
 	return 1;
     }
     else {
-	vwarn("unknown waitpid event pid %d thread %"PRIiTID" (status 0x%x)\n",
-	      pid,tid,pstatus);
+	vwarnopt(5,LA_TARGET,LF_LUP,
+		 "unknown waitpid event pid %d thread %"PRIiTID" (status 0x%x)\n",
+		 pid,tid,pstatus);
 	return -1;
     }
 
@@ -1735,7 +1693,7 @@ int __poll_and_handle_detaching(struct target *target,
 }
 
 int linux_userproc_detach_thread(struct target *target,tid_t tid,
-				 int detaching_all) {
+				 int detaching_all,int stay_paused) {
     struct linux_userproc_state *lstate;
     struct target_thread *tthread;
     char buf[256];
@@ -1772,7 +1730,8 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid,
     snprintf(buf,256,"/proc/%d/task/%d",pid,tid);
     if (stat(buf,&sbuf) == 0) {
 
-	target_detach_thread(target,tthread);
+	/* Detach no longer means detach; now it means remove too. */
+	//target_detach_thread(target,tthread);
 
 	/*
 	 * If the thread is stopped with status, check it and handle it
@@ -1787,19 +1746,19 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid,
 	    kill(tid,SIGSTOP);
 	}
 
-	ptrace(PTRACE_DETACH,tid,NULL,NULL);
+	ptrace(PTRACE_DETACH,tid,NULL,(void *)(uintptr_t)(stay_paused ? SIGSTOP : 0));
 
 	/*
 	 * Don't CONT it if we're detaching; we'll signal the pid
 	 * globally if necessary.
 	 */
-	if (!detaching_all)
+	if (!detaching_all && !stay_paused)
 	    kill(tid,SIGCONT);
 
 	errno = 0;
     }
 
-    target_delete_thread(target,tthread,0);
+    target_detach_thread(target,tthread);
 
     return 0;
 }
@@ -1826,7 +1785,7 @@ static tid_t linux_userproc_gettid(struct target *target) {
      * -- but we also make sure we load the current thread.
      */
 
-    if (target->current_thread && target->current_thread->valid)
+    if (target->current_thread && OBJVALID(target->current_thread))
 	return target->current_thread->tid;
 
     tthread = linux_userproc_load_current_thread(target,0);
@@ -1855,7 +1814,7 @@ static int __linux_userproc_load_thread_status(struct target_thread *tthread,
     lstate = (struct linux_userproc_state *)tthread->target->state;
     pid = lstate->pid;
 
-    if (tthread->valid && !force) {
+    if (OBJVALID(tthread) && !force) {
 	vdebug(9,LA_TARGET,LF_LUP,
 	       "pid %d thread %"PRIiTID" already valid\n",pid,tid);
 	return 0;
@@ -1930,7 +1889,7 @@ static struct target_thread *__linux_userproc_load_thread(struct target *target,
     }
     tstate = (struct linux_userproc_thread_state *)tthread->state;
 
-    if (tthread->valid && !force) {
+    if (OBJVALID(tthread) && !force) {
 	vdebug(9,LA_TARGET,LF_LUP,"pid %d thread %"PRIiTID" already valid\n",
 	       pid,tid);
 	return tthread;
@@ -1949,18 +1908,18 @@ static struct target_thread *__linux_userproc_load_thread(struct target *target,
 	errno = 0;
 	if (ptrace(PTRACE_GETREGS,tthread->tid,NULL,&(tstate->regs)) == -1) {
 	    verror("ptrace(GETREGS): %s\n",strerror(errno));
-	    tthread->valid = 0;
-	    tthread->dirty = 0;
+	    OBJSINVALID(tthread);
+	    OBJSCLEAN(tthread);
 	    return NULL;
 	}
-	tthread->valid = 1;
+	OBJSVALID(tthread);
     }
     else {
 	memset(&tstate->regs,0,sizeof(tstate->regs));
-	tthread->valid = 0;
+	OBJSINVALID(tthread);
     }
 
-    tthread->dirty = 0;
+    OBJSCLEAN(tthread);
 
     return tthread;
 }
@@ -2013,7 +1972,7 @@ static int linux_userproc_flush_thread(struct target *target,tid_t tid) {
 	return -1;
     }
 
-    if (!tthread->valid || !tthread->dirty)
+    if (!OBJVALID(tthread) || !OBJDIRTY(tthread))
 	return 0;
 
     errno = 0;
@@ -2021,7 +1980,7 @@ static int linux_userproc_flush_thread(struct target *target,tid_t tid) {
 	verror("ptrace(SETREGS): %s\n",strerror(errno));
 	return -1;
     }
-    tthread->dirty = 0;
+    OBJSCLEAN(tthread);
 
     return 0;
 }
@@ -2054,11 +2013,8 @@ static int linux_userproc_flush_all_threads(struct target *target) {
     return retval;
 }
 
-static int linux_userproc_invalidate_all_threads(struct target *target) {
-    return __target_invalidate_all_threads(target);
-}
-
-static int linux_userproc_thread_snprintf(struct target_thread *tthread,
+static int linux_userproc_thread_snprintf(struct target *target,
+					  struct target_thread *tthread,
 					  char *buf,int bufsiz,
 					  int detail,char *sep,char *kvsep) {
     struct linux_userproc_thread_state *tstate;
@@ -2072,10 +2028,16 @@ static int linux_userproc_thread_snprintf(struct target_thread *tthread,
     r = &tstate->regs;
 
 #if __WORDSIZE == 64
-#define RF "lx"
+#define __V_LINUX_PTRACE_REG_LARGE_SIZE
+#ifdef __V_LINUX_PTRACE_REG_LARGE_SIZE
+#define RF "llx"
 #define DRF "lx"
 #else
 #define RF "lx"
+#define DRF "lx"
+#endif
+#else
+#define RF "llx"
 #define DRF "x"
 #endif
 
@@ -2147,7 +2109,7 @@ static int linux_userproc_init(struct target *target) {
     tstate->last_status = -1;
     tstate->last_signo = -1;
 
-    tthread = target_create_thread(target,lstate->pid,tstate);
+    tthread = target_create_thread(target,lstate->pid,tstate,NULL);
     tthread->supported_overlay_types = TARGET_TYPE_PHP;
     /* Default thread is always starts paused. */
     target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
@@ -2158,6 +2120,9 @@ static int linux_userproc_init(struct target *target) {
     /* Set thread->current_thread to our primary thread! */
     target->current_thread = tthread;
     lstate->current_tid = tthread->tid;
+
+    target->global_tlctxt =
+	target_location_ctxt_create(target,TID_GLOBAL,NULL);
 
     if (target->evloop)
 	linux_userproc_evloop_add_tid(target,tthread->tid);
@@ -2300,7 +2265,7 @@ static int linux_userproc_attach_internal(struct target *target) {
 	tstate->ctl_sig_recv = 0;
 	tstate->ctl_sig_pause_all = 0;
 
-	tthread = target_create_thread(target,tid,tstate);
+	tthread = target_create_thread(target,tid,tstate,NULL);
 	tthread->supported_overlay_types = TARGET_TYPE_PHP;
 	target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
 
@@ -2313,7 +2278,7 @@ static int linux_userproc_attach_internal(struct target *target) {
     return rc;
 }
 
-static int linux_userproc_detach(struct target *target) {
+static int linux_userproc_detach(struct target *target,int stay_paused) {
     struct linux_userproc_state *lstate;
     int rc, retval = 0;
     GHashTableIter iter;
@@ -2348,7 +2313,7 @@ static int linux_userproc_detach(struct target *target) {
     for (i = 0; i < array_list_len(threadlist); ++i) {
 	tthread = (struct target_thread *)array_list_item(threadlist,i);
 
-	rc = linux_userproc_detach_thread(target,tthread->tid,1);
+	rc = linux_userproc_detach_thread(target,tthread->tid,1,stay_paused);
 	if (rc) {
 	    verror("could not detach thread %"PRIiTID"\n",tthread->tid);
 	    ++retval;
@@ -2361,7 +2326,7 @@ static int linux_userproc_detach(struct target *target) {
      */
     tthread = target->global_thread;
     if (tthread) {
-	rc = linux_userproc_detach_thread(target,tthread->tid,1);
+	rc = linux_userproc_detach_thread(target,tthread->tid,1,stay_paused);
 	if (rc) {
 	    verror("could not detach global thread %"PRIiTID"\n",tthread->tid);
 	    ++retval;
@@ -2371,7 +2336,7 @@ static int linux_userproc_detach(struct target *target) {
     }
 
     /* Also, remove the global thread from target->threads! */
-    g_hash_table_remove(target->threads,(gpointer)(uintptr_t)TID_GLOBAL);
+    //g_hash_table_remove(target->threads,(gpointer)(uintptr_t)TID_GLOBAL);
 
     /*
      *
@@ -2385,7 +2350,8 @@ static int linux_userproc_detach(struct target *target) {
     }
     */
 
-    kill(lstate->pid,SIGCONT);
+    if (!stay_paused)
+	kill(lstate->pid,SIGCONT);
 
     if (lstate->memfd > 0)
 	close(lstate->memfd);
@@ -2401,9 +2367,6 @@ static int linux_userproc_fini(struct target *target) {
     lstate = (struct linux_userproc_state *)(target->state);
 
     vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
-
-    if (target->opened) 
-	linux_userproc_detach(target);
 
     if (target->spec->outfile) {
 	unlink(target->spec->outfile);
@@ -2442,12 +2405,8 @@ static int linux_userproc_kill(struct target *target,int sig) {
 static int linux_userproc_loadspaces(struct target *target) {
     struct linux_userproc_state *lstate = \
 	(struct linux_userproc_state *)target->state;
-    struct addrspace *space = addrspace_create(target,"NULL",lstate->pid);
 
-    space->target = target;
-    RHOLD(space,target);
-
-    list_add_tail(&space->space,&target->spaces);
+    addrspace_create(target,"NULL",lstate->pid);
 
     return 0;
 }
@@ -2573,8 +2532,9 @@ static int linux_userproc_updateregions(struct target *target,
     char main_exe[PATH_MAX];
     FILE *f;
     char p[4];
-    struct memregion *region,*tregion;
-    struct memrange *range,*trange;
+    struct memregion *region;
+    struct memrange *range;
+    GList *t1,*t2,*t3,*t4;
     unsigned long long start,end,offset;
     region_type_t rtype;
     int rc;
@@ -2584,6 +2544,7 @@ static int linux_userproc_updateregions(struct target *target,
     uint32_t prot_flags;
     int exists;
     int updated;
+    struct target_event *event;
 
     vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
@@ -2597,6 +2558,13 @@ static int linux_userproc_updateregions(struct target *target,
     f = fopen(buf,"r");
     if (!f)
 	return 1;
+
+    /*
+     * Mark all existing regions as dead; then liven up the others.
+     */
+    v_g_list_foreach(space->regions,t1,region) {
+	OBJSDEAD(region,memregion);
+    }
 
     while (1) {
 	errno = 0;
@@ -2642,10 +2610,7 @@ static int linux_userproc_updateregions(struct target *target,
 		    && !(region = addrspace_match_region_start(space,rtype,start)))) {
 		if (!(region = memregion_create(space,rtype,buf)))
 		    goto err;
-		region->new = 1;
-	    }
-	    else {
-		region->exists = 1;
+		OBJSNEW(region);
 	    }
 
 	    prot_flags = 0;
@@ -2662,18 +2627,19 @@ static int linux_userproc_updateregions(struct target *target,
 		if (!(range = memrange_create(region,start,end,offset,0))) {
 		    goto err;
 		}
-		range->new = 1;
+		OBJSNEW(range);
 	    }
 	    else {
 		if (range->end == end 
 		    && range->offset == offset 
-		    && range->prot_flags == prot_flags)
-		    range->same = 1;
+		    && range->prot_flags == prot_flags) {
+		    OBJSLIVE(range,memrange);
+		}
 		else {
 		    range->end = end;
 		    range->offset = offset;
 		    range->prot_flags = prot_flags;
-		    range->updated = 1;
+		    OBJSMOD(range);
 
 		    if (start < region->base_load_addr)
 			region->base_load_addr = start;
@@ -2698,80 +2664,82 @@ static int linux_userproc_updateregions(struct target *target,
      * and we have to purge them.
      */
 
-    list_for_each_entry_safe(region,tregion,&space->regions,region) {
+    v_g_list_foreach_safe(space->regions,t1,t2,region) {
 	exists = 0;
 	updated = 0;
-	list_for_each_entry_safe(range,trange,&region->ranges,range) {
-	    if (range->new) {
+	v_g_list_foreach_safe(region->ranges,t3,t4,range) {
+	    if (OBJNEW(range)) {
 		vdebug(3,LA_TARGET,LF_LUP,
 		       "new range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
 		exists = 1;
-		target_add_state_change(target,TID_GLOBAL,
-					TARGET_STATE_CHANGE_RANGE_NEW,
-					0,range->prot_flags,
-					range->start,range->end,region->name);
+
+		event = target_create_event(target,NULL,
+					    T_EVENT_PROCESS_RANGE_NEW,range);
+		target_broadcast_event(target,event);
 	    }
-	    else if (range->same) {
+	    else if (OBJLIVE(range)) {
 		vdebug(9,LA_TARGET,LF_LUP,
 		       "same range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
 		exists = 1;
 	    }
-	    else if (range->updated) {
+	    else if (OBJMOD(range)) {
 		vdebug(3,LA_TARGET,LF_LUP,
 		       "updated range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
 		exists = 1;
 		updated = 1;
 
-		target_add_state_change(target,TID_GLOBAL,
-					TARGET_STATE_CHANGE_RANGE_MOD,
-					0,range->prot_flags,
-					range->start,range->end,region->name);
+		event = target_create_event(target,NULL,
+					    T_EVENT_PROCESS_RANGE_MOD,range);
+		target_broadcast_event(target,event);
 	    }
 	    else {
 		vdebug(3,LA_TARGET,LF_LUP,
 		       "removing stale range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
-		target_add_state_change(target,TID_GLOBAL,
-					TARGET_STATE_CHANGE_RANGE_DEL,
-					0,range->prot_flags,
-					range->start,range->end,region->name);
-		memrange_free(range);
+
+		event = target_create_event(target,NULL,
+					    T_EVENT_PROCESS_RANGE_DEL,range);
+		target_broadcast_event(target,event);
+
+		memregion_detach_range(region,range);
+		range = NULL;
 	    }
-	    range->new = range->same = range->updated = 0;
 	}
-	if (!exists || list_empty(&region->ranges)) {
+
+	if (!exists || !region->ranges) {
 	    vdebug(3,LA_TARGET,LF_LUP,"removing stale region (%s:%s:%s)\n",
-		   region->space->idstr,region->name,REGION_TYPE(region->type));
-	    target_add_state_change(target,TID_GLOBAL,
-				    TARGET_STATE_CHANGE_REGION_DEL,
-				    0,0,region->base_load_addr,0,region->name);
-	    memregion_free(region);
+		   region->space->name,region->name,REGION_TYPE(region->type));
+
+	    event = target_create_event(target,NULL,
+					T_EVENT_PROCESS_REGION_DEL,region);
+	    target_broadcast_event(target,event);
+
+	    addrspace_detach_region(space,region);
 	}
 	else if (updated) {
-	    target_add_state_change(target,TID_GLOBAL,
-				    TARGET_STATE_CHANGE_REGION_MOD,
-				    0,0,region->base_load_addr,0,region->name);
+	    event = target_create_event(target,NULL,
+					T_EVENT_PROCESS_REGION_MOD,region);
+	    target_broadcast_event(target,event);
 	}
-	else if (region->new) {
-	    region->exists = region->new = 0;
-	    target_add_state_change(target,TID_GLOBAL,
-				    TARGET_STATE_CHANGE_REGION_NEW,
-				    0,0,region->base_load_addr,0,region->name);
+	else if (OBJNEW(region)) {
+	    event = target_create_event(target,NULL,
+					T_EVENT_PROCESS_REGION_NEW,region);
+	    target_broadcast_event(target,event);
 
 	    /*
 	     * Add debugfiles for the region!
 	     */
 	    if (linux_userproc_loaddebugfiles(target,space,region)) {
 		vwarn("could not load debugfile for new region (%s:%s:%s)\n",
-		      region->space->idstr,region->name,
+		      region->space->name,region->name,
 		      REGION_TYPE(region->type));
 	    }
 	}
 	else {
-	    region->exists = region->new = 0;
+	    //region->exists = region->new = 0;
 	}
     }
 
@@ -3257,6 +3225,7 @@ static int linux_userproc_resume(struct target *target) {
 }
 
 static target_status_t linux_userproc_handle_exception(struct target *target,
+						       target_exception_flags_t flags,
 						       int *again,void *priv) {
     struct linux_userproc_state *lstate;
     REG dreg = -1;
@@ -3276,6 +3245,8 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
     struct linux_userproc_exception_handler_state *exst;
     tid_t tid;
     int pstatus;
+    GList *t1;
+    struct target_event *event;
 
     exst = (struct linux_userproc_exception_handler_state *)priv;
     tid = exst->tid;
@@ -3297,8 +3268,6 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 	goto out_err;
     }
     tstate = (struct linux_userproc_thread_state *)tthread->state;
-
-    target_clear_state_changes(target);
 
     if (WIFSTOPPED(pstatus)) {
 	/* Ok, this was a ptrace event; figure out which sig (or if it
@@ -3344,7 +3313,7 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 	}
 
 	//if (!lstate->live_syscall_maps_tracking) {
-	list_for_each_entry(space,&target->spaces,space) {
+	v_g_list_foreach(target->spaces,t1,space) {
 	    linux_userproc_updateregions(target,space);
 	}
 	//}
@@ -3373,8 +3342,8 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 	    //target_set_status(target,TSTATUS_EXITING);
 	    target_thread_set_status(tthread,TSTATUS_EXITING);
 
-	    target_add_state_change(target,tid,TARGET_STATE_CHANGE_EXITING,
-				    0,0,0,0,NULL);
+	    event = target_create_event(target,NULL,T_EVENT_EXITING,target);
+	    target_broadcast_event(target,event);
 
 	    return THREAD_STATUS_EXITING;
 	}
@@ -3470,7 +3439,7 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 		else
 		    vdebug(4,LA_TARGET,LF_LUP,
 			   "checking for SS or sw break on 0x%"PRIxADDR"\n",
-			   ipval - target->breakpoint_instrs_len);
+			   ipval - target->arch->breakpoint_instrs_len);
 	    }
 
 	    /*
@@ -3540,7 +3509,7 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 	    /* Try to handle a software breakpoint. */
 	    else if ((dpp = (struct probepoint *)			\
 		      g_hash_table_lookup(target->soft_probepoints,
-					  (gpointer)(ipval - target->breakpoint_instrs_len)))) {
+					  (gpointer)(ipval - target->arch->breakpoint_instrs_len)))) {
 		if (target->ops->handle_break(target,tthread,dpp,cdr & 0x4000)
 		    != RESULT_SUCCESS)
 		    return THREAD_STATUS_ERROR;
@@ -3609,8 +3578,10 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 	 */
 	target_tid_set_status(target,tid,THREAD_STATUS_DONE);
 
-	target_add_state_change(target,tid,TARGET_STATE_CHANGE_THREAD_EXITED,
-				pstatus,0,0,0,NULL);
+	event = target_create_event_2(target,tthread,
+				      T_EVENT_PROCESS_THREAD_EXITED,
+				      tthread,(void *)(uintptr_t)pstatus);
+	target_broadcast_event(target,event);
 
 	/*
 	 * If we're out of threads (besides the global thread); detach
@@ -3619,13 +3590,13 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 	if (g_hash_table_size(target->threads) == 2) {
 	    target_set_status(target,TSTATUS_DONE);
 
-	    target_add_state_change(target,tid,TARGET_STATE_CHANGE_EXITED,
-				    0,0,0,0,NULL);
+	    event = target_create_event(target,tthread,T_EVENT_EXITED,NULL);
+	    target_broadcast_event(target,event);
 
-	    linux_userproc_detach(target);
+	    linux_userproc_detach(target,0);
 	}
 	else 
-	    linux_userproc_detach_thread(target,tid,0);
+	    linux_userproc_detach_thread(target,tid,0,0);
 
 	return THREAD_STATUS_DONE;
     }
@@ -3719,7 +3690,7 @@ int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
      */
     exst.tid = tid;
     exst.pstatus = status;
-    retval = linux_userproc_handle_exception(target,&again,&exst);
+    retval = linux_userproc_handle_exception(target,0,&again,&exst);
 
     if (THREAD_SPECIFIC_STATUS(retval)) {
 	verror("thread-specific status %d tid %d; bad!\n",retval,tid);
@@ -3947,7 +3918,7 @@ static target_status_t linux_userproc_poll(struct target *target,
 
     vdebug(9,LA_TARGET,LF_LUP,"waitpid target %d\n",lstate->pid);
  again:
-    tid = waitpid(-1,&status,WNOHANG | __WALL);
+    tid = waitpid(-lstate->pid,&status,WNOHANG | __WALL);
     if (tid < 0) {
 	/* We always do this on error; these two errnos are the only
 	 * ones we should see, though.
@@ -4003,7 +3974,7 @@ static target_status_t linux_userproc_poll(struct target *target,
 	 */
 	exst.tid = tid;
 	exst.pstatus = status;
-	retval = linux_userproc_handle_exception(target,NULL,&exst);
+	retval = linux_userproc_handle_exception(target,0,NULL,&exst);
 
 	if (THREAD_SPECIFIC_STATUS(retval)) {
 	    vwarn("unhandled thread-specific status %d!\n",retval);
@@ -4044,7 +4015,7 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 
     exst.tid = tid;
     exst.pstatus = pstatus;
-    retval = linux_userproc_handle_exception(target,&again,&exst);
+    retval = linux_userproc_handle_exception(target,0,&again,&exst);
     if (again)
 	goto again;
 
@@ -4225,8 +4196,7 @@ unsigned long linux_userproc_write(struct target *target,
  * It is unfortunate that sys/user.h conditions the macros on __WORDSIZE.
  */
 #if __WORDSIZE == 64
-#define X86_64_DWREG_COUNT 67
-static int dreg_to_ptrace_idx64[X86_64_DWREG_COUNT] = { 
+static int dreg_to_ptrace_idx64[ARCH_X86_64_REG_COUNT] = { 
     10, 12, 11, 5, 13, 14, 4, 19,
     9, 8, 7, 6, 3, 2, 1, 0,
     16, 
@@ -4239,149 +4209,30 @@ static int dreg_to_ptrace_idx64[X86_64_DWREG_COUNT] = {
     21, 22, 
     -1, -1, 
     -1, -1, -1, -1, -1,
-};
-static char *dreg_to_name64[X86_64_DWREG_COUNT] = { 
-    "rax", "rdx", "rcx", "rbx", "rsi", "rdi", "rbp", "rsp",
-    "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
-    "rip",
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    "rflags", "es", "cs", "ss", "ds", "fs", "gs",
-    NULL, NULL,
-    "fs_base", "gs_base", 
-    NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL,
-};
-static int creg_to_dreg64[COMMON_REG_COUNT] = { 
-    [CREG_AX] = 0,
-    [CREG_BX] = 3,
-    [CREG_CX] = 2,
-    [CREG_DX] = 1,
-    [CREG_DI] = 5,
-    [CREG_SI] = 4,
-    [CREG_BP] = 6,
-    [CREG_SP] = 7,
-    [CREG_IP] = 16,
-    [CREG_FLAGS] = 49,
-    [CREG_CS] = 51,
-    [CREG_SS] = 52,
-    [CREG_DS] = 53,
-    [CREG_ES] = 50,
-    [CREG_FS] = 54,
-    [CREG_GS] = 55,
-};
-#else
-#define X86_32_DWREG_COUNT 59
-static int dreg_to_ptrace_idx32[X86_32_DWREG_COUNT] = { 
-    6, 1, 2, 0, 15, 5, 3, 4,
-    12, 14,
-    -1, -1, -1, -1, -1, -1, 
-    -1, -1, -1, -1, -1, -1, -1, -1, 
-    -1, -1, -1, -1, -1, -1, -1, -1, 
-    -1, -1, -1, -1, -1, -1, -1, -1, 
-    -1, -1, -1, -1, -1, -1, -1, -1, 
-    -1, -1, -1, -1, -1,
-    /* These are "fake" DWARF regs. */
-    13, 16, 7, 8, 9, 10,
-};
-static char *dreg_to_name32[X86_32_DWREG_COUNT] = { 
-    "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi",
-    "eip", "eflags",
-    NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-    NULL, NULL, NULL, NULL, NULL,
-    "cs", "ss", "ds", "es", "fs", "gs",
-};
-static int creg_to_dreg32[COMMON_REG_COUNT] = { 
-    [CREG_AX] = 0,
-    [CREG_BX] = 3,
-    [CREG_CX] = 1,
-    [CREG_DX] = 2,
-    [CREG_DI] = 7,
-    [CREG_SI] = 6,
-    [CREG_BP] = 5,
-    [CREG_SP] = 4,
-    [CREG_IP] = 8,
-    [CREG_FLAGS] = 9,
-    [CREG_CS] = 53,
-    [CREG_SS] = 54,
-    [CREG_DS] = 55,
-    [CREG_ES] = 56,
-    [CREG_FS] = 57,
-    [CREG_GS] = 58,
+    -1,
+    -1, -1, -1, -1,-1, -1, -1, -1,-1, -1,
+    -1, -1,-1, -1, -1, -1,-1, -1, -1, -1,
+    -1,
 };
 #endif
+static int dreg_to_ptrace_idx32[ARCH_X86_REG_COUNT] = {
+    6, 1, 2, 0, 15, 5, 3, 4,
+    12, 14,
+    -1,
+    -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1,
+    -1,-1,-1,
+    /* These are "fake" DWARF regs. */
+    8, 13, 16, 7, 9, 10,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1,
+};
 
 /*
  * Register functions.
  */
-char *linux_userproc_reg_name(struct target *target,REG reg) {
-#if __WORDSIZE == 64
-    if (reg >= X86_64_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
-	return NULL;
-    }
-    return dreg_to_name64[reg];
-#else
-    if (reg >= X86_32_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
-	return NULL;
-    }
-    return dreg_to_name32[reg];
-#endif
-}
-
-REG linux_userproc_dwregno_targetname(struct target *target,char *name) {
-    /* This sucks. */
-    REG retval = 0;
-    int i;
-    int count;
-    char **dregname;
-
-#if __WORDSIZE == 64
-    count = X86_64_DWREG_COUNT;
-    dregname = dreg_to_name64;
-#else
-    count = X86_32_DWREG_COUNT;
-    dregname = dreg_to_name32;
-#endif
-
-    for (i = 0; i < count; ++i) {
-	if (dregname[i] == NULL)
-	    continue;
-	else if (strcmp(name,dregname[i]) == 0) {
-	    retval = i;
-	    break;
-	}
-    }
-
-    if (i == count) {
-	verror("could not find register number for name %s!\n",name);
-	errno = EINVAL;
-	return 0;
-    }
-
-    return retval;
-}
-
-REG linux_userproc_dw_reg_no(struct target *target,common_reg_t reg) {
-    if (reg >= COMMON_REG_COUNT) {
-	verror("common regnum %d does not have an x86 mapping!\n",reg);
-	errno = EINVAL;
-	return 0;
-    }
-#if __WORDSIZE == 64
-    return creg_to_dreg64[reg];
-#else
-    return creg_to_dreg32[reg];
-#endif
-}
-
 REGVAL linux_userproc_read_reg(struct target *target,tid_t tid,REG reg) {
     int ptrace_idx;
     struct target_thread *tthread;
@@ -4395,29 +4246,23 @@ REGVAL linux_userproc_read_reg(struct target *target,tid_t tid,REG reg) {
     }
     tstate = (struct linux_userproc_thread_state *)tthread->state;
 
-    vdebug(5,LA_TARGET,LF_LUP,"reading reg %s\n",linux_userproc_reg_name(target,reg));
+    vdebug(5,LA_TARGET,LF_LUP,"reading reg %s\n",
+	   target_regname(target,reg));
 
-#if __WORDSIZE == 64
-    if (reg >= X86_64_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
+    if (reg >= arch_regcount(target->arch)) {
+	verror("regnum %d does not have a target mapping!\n",reg);
 	errno = EINVAL;
 	return 0;
     }
-    ptrace_idx = dreg_to_ptrace_idx64[reg];
-#else
-    if (reg >= X86_32_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
-	errno = EINVAL;
-	return 0;
-    }
-    ptrace_idx = dreg_to_ptrace_idx32[reg];
-#endif
 
-#if __WORDSIZE == 64
-    return (REGVAL)(((unsigned long *)&(tstate->regs))[ptrace_idx]);
-#else 
-    return (REGVAL)(((long int *)&(tstate->regs))[ptrace_idx]);
-#endif
+    if (target->arch->type == ARCH_X86_64) {
+	ptrace_idx = dreg_to_ptrace_idx64[reg];
+	return (REGVAL)(((unsigned long *)&(tstate->regs))[ptrace_idx]);
+    }
+    else {
+	ptrace_idx = dreg_to_ptrace_idx32[reg];
+	return (REGVAL)(((long int *)&(tstate->regs))[ptrace_idx]);
+    }
 }
 
 int linux_userproc_write_reg(struct target *target,tid_t tid,REG reg,
@@ -4435,82 +4280,26 @@ int linux_userproc_write_reg(struct target *target,tid_t tid,REG reg,
     tstate = (struct linux_userproc_thread_state *)tthread->state;
 
     vdebug(5,LA_TARGET,LF_LUP,"writing reg %s 0x%"PRIxREGVAL"\n",
-	   linux_userproc_reg_name(target,reg),value);
+	   target_regname(target,reg),value);
 
-#if __WORDSIZE == 64
-    if (reg >= X86_64_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
-	errno = EINVAL;
-	return -1;
-    }
-    ptrace_idx = dreg_to_ptrace_idx64[reg];
-#else
-    if (reg >= X86_32_DWREG_COUNT) {
-	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
-	errno = EINVAL;
-	return -1;
-    }
-    ptrace_idx = dreg_to_ptrace_idx32[reg];
-#endif
-
-#if __WORDSIZE == 64
-    ((unsigned long *)&(tstate->regs))[ptrace_idx] = (unsigned long)value;
-#else 
-    ((long int*)&(tstate->regs))[ptrace_idx] = (long int)value;
-#endif
-
-    /* Flush the registers in target_resume! */
-    tthread->dirty = 1;
-
-    return 0;
-}
-
-GHashTable *linux_userproc_copy_registers(struct target *target,tid_t tid) {
-    GHashTable *retval;
-    int i;
-    int count;
-    REGVAL *rvp;
-    int *dregs;
-    char **dregnames;
-    struct target_thread *tthread;
-    struct linux_userproc_thread_state *tstate;
-
-    tthread = linux_userproc_load_thread(target,tid,0);
-    if (!tthread) {
-	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+    if (reg >= arch_regcount(target->arch)) {
+	verror("regnum %d does not have a target mapping!\n",reg);
 	errno = EINVAL;
 	return 0;
     }
-    tstate = (struct linux_userproc_thread_state *)tthread->state;
-
-#if __WORDSIZE == 64
-    count = X86_64_DWREG_COUNT;
-    dregs = dreg_to_ptrace_idx64;
-    dregnames = dreg_to_name64;
-#else 
-    count = X86_32_DWREG_COUNT;
-    dregs = dreg_to_ptrace_idx32;
-    dregnames = dreg_to_name32;
-#endif
-
-    retval = g_hash_table_new_full(g_str_hash,g_str_equal,NULL,free);
-
-    for (i = 0; i < count; ++i) {
-	if (dregs[i] == -1) 
-	    continue;
-
-	rvp = malloc(sizeof(*rvp));
-	
-#if __WORDSIZE == 64
-	memcpy(rvp,&((unsigned long *)&(tstate->regs))[i],sizeof(unsigned long));
-#else 
-	memcpy(rvp,&((long int *)&(tstate->regs))[i],sizeof(long int));
-#endif
-
-	g_hash_table_insert(retval,dregnames[i],rvp);
+    if (target->arch->type == ARCH_X86_64) {
+	ptrace_idx = dreg_to_ptrace_idx64[reg];
+	((unsigned long *)&(tstate->regs))[ptrace_idx] = (unsigned long)value;
+    }
+    else {
+	ptrace_idx = dreg_to_ptrace_idx32[reg];
+	((long int*)&(tstate->regs))[ptrace_idx] = (long int)value;
     }
 
-    return retval;
+    /* Flush the registers in target_resume! */
+    OBJSDIRTY(tthread);
+
+    return 0;
 }
 
 /*
@@ -5036,7 +4825,7 @@ int linux_userproc_singlestep(struct target *target,tid_t tid,int isbp,
      * PTRACE_SINGLESTEP runs the thread right away, so we have make
      * sure to do all the things _resume() would have done to it.
      */
-    __target_invalidate_thread(target,tthread);
+    target_invalidate_thread(target,tthread);
     target_thread_set_status(tthread,THREAD_STATUS_RUNNING);
 
     return 0;

@@ -209,7 +209,7 @@ target_status_t cleanup() {
     target_status_t retval;
     target_pause(target);
     retval = target_close(target);
-    target_free(target);
+    target_finalize(target);
     return retval;
 }
 

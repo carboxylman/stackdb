@@ -263,7 +263,7 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 	    case 2:  wordsize = 2; break;
 	    case 3:  wordsize = 4; break;
 	    case 4:  wordsize = 8; break;
-	    default: wordsize = debugfile->binfile->wordsize;
+	    default: wordsize = debugfile->binfile->arch->wordsize;
 	    }
 
 	    const unsigned char *base = readp;
@@ -869,7 +869,7 @@ int dwarf_load_cfa(struct debugfile *debugfile,
 	else
 	    cie_id = read_8ubyte_unaligned_inc(obo,readp);
 
-	wordsize = debugfile->binfile->wordsize;
+	wordsize = debugfile->binfile->arch->wordsize;
 
 	/* Read a CIE. */
 	if (cie_id == (ddi->is_eh_frame ? 0 : DW_CIE_ID_64)) {
@@ -962,7 +962,7 @@ int dwarf_load_cfa(struct debugfile *debugfile,
 		      unsigned int encoding = *readp++;
 		      personality = 0;
 		      readp = __read_encoded(encoding,
-					     debugfile->binfile->wordsize,
+					     debugfile->binfile->arch->wordsize,
 					     readp,readp - 1 + auglen,
 					     &personality,dbg);
 		    }
@@ -1036,7 +1036,7 @@ int dwarf_load_cfa(struct debugfile *debugfile,
 	    case 2:  wordsize = 2; break;
 	    case 3:  wordsize = 4; break;
 	    case 4:  wordsize = 8; break;
-	    default: wordsize = debugfile->binfile->wordsize;
+	    default: wordsize = debugfile->binfile->arch->wordsize;
 	    }
 
 	    const unsigned char *base = readp;
@@ -1757,7 +1757,7 @@ int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
     return 0;
 }
 
-static void __dwarf_cfa_dtor(Word_t start,Word_t end,void *data) {
+static void __dwarf_cfa_dtor(Word_t start,Word_t end,void *data,void *dtor_data) {
     struct dwarf_cfa_fde *fde;
 
     fde = (struct dwarf_cfa_fde *)data;
@@ -1776,7 +1776,7 @@ int dwarf_unload_cfa(struct debugfile *debugfile) {
     ddi = (struct dwarf_debugfile_info *)debugfile->priv;
     
     if (ddi->cfa_fde) {
-	clrangesimple_free(ddi->cfa_fde,__dwarf_cfa_dtor);
+	clrangesimple_free(ddi->cfa_fde,__dwarf_cfa_dtor,NULL);
 	ddi->cfa_fde = NULL;
     }
 

@@ -19,19 +19,16 @@
 #ifndef __TARGET_API_H__
 #define __TARGET_API_H__
 
+#include "config.h"
 #include "common.h"
+#include "object.h"
+#include "arch.h"
 #include "list.h"
 #include "evloop.h"
 #include "dwdebug.h"
+#include "target_event.h"
 #include "probe_api.h"
 #include <glib.h>
-
-/*
- * Must be called by the library user, if said user wants 
- * multi-target management.
- */
-void target_init(void);
-void target_fini(void);
 
 /**
  ** This file describes the publicly-accessible target API.  The target
@@ -94,6 +91,27 @@ void target_fini(void);
  ** For information on how to probe a target, see probe_api.h .
  **/
 
+/**
+ * This function must be called by StackDB user before using any
+ * library functions.
+ */
+void target_init(void);
+
+/**
+ * This function should be called by the StackDB user when the user is
+ * done using StackDB, or when their program is about to exit.  It
+ * cleans up global StackDB state.  One way to do this is to to schedule
+ * it to be called via atexit(3) --- although note that will not work in
+ * the case where the program is terminated by signal delivery.
+ *
+ * target_fini() can safely be called at any point in your program,
+ * except from within a probe or action handler!  It will result in any
+ * active, open target objects being closed and freed.  After calling
+ * this function, you cannot use any other StackDB library target_*
+ * functions until you call target_init() again.
+ */
+void target_fini(void);
+
 /*
  * The thread identifier type (tid_t) is declared in include/common.h .
  */
@@ -134,6 +152,7 @@ struct target_process_ops;
 struct target_spec;
 struct target_location_ctxt;
 struct target_memmod;
+struct regfile;
 struct addrspace;
 struct memregion;
 struct memrange;
@@ -145,17 +164,21 @@ typedef enum {
     TARGET_TYPE_NONE   = 0,
     TARGET_TYPE_PTRACE = 1 << 0,
     TARGET_TYPE_XEN    = 1 << 1,
-    TARGET_TYPE_XEN_PROCESS = 1 << 2,
+    TARGET_TYPE_OS_PROCESS = 1 << 2,
     TARGET_TYPE_PHP    = 1 << 3,
+    TARGET_TYPE_GDB    = 1 << 4,
 } target_type_t;
-#define TARGET_TYPE_BITS 4
+#define TARGET_TYPE_BITS 5
 
+/*
+ * Order of these is important!
+ */
 typedef enum {
-    TARGET_KIND_NONE    = 0,
-    TARGET_KIND_OS      = 1,
-    TARGET_KIND_PROCESS = 2,
-    TARGET_KIND_APPLICATION = 3,
-} target_kind_t;
+    TARGET_PERSONALITY_NONE    = 0,
+    TARGET_PERSONALITY_OS      = 1,
+    TARGET_PERSONALITY_PROCESS = 2,
+    TARGET_PERSONALITY_APPLICATION = 3,
+} target_personality_t;
 
 typedef enum {
     TARGET_MODE_NONE = 0,
@@ -261,10 +284,17 @@ extern char *THREAD_STATUS_STRINGS[];
 #define THREAD_STATUS(n) (((n) <= THREAD_STATUS_RETURNING_KERNEL)	\
 			  ? THREAD_STATUS_STRINGS[(n)] : NULL)
 
-typedef enum {
-    THREAD_CTXT_KERNEL = 0,
-    THREAD_CTXT_USER   = 3,
-} thread_ctxt_t;
+/*
+ * Thread contexts are a bit funny.  They exist so that threads can have
+ * different contexts; right now only registers are per-context.
+ * Targets need not provide multiple contexts; but they can make use of
+ * them if desired.  We don't make thread_ctxt_t an enum because we want
+ * to leave context numbering/naming to personalities as possible (i.e.,
+ * THREAD_CTXT_KERNEL and THREAD_CTXT_USER for the OS personality), and
+ * to backends where necessary (but personalities are more abstract...).
+ */
+typedef unsigned int thread_ctxt_t;
+#define THREAD_CTXT_DEFAULT 0
 
 /*
  * When we handle a breakpoint, we *have* to single step some
@@ -336,6 +366,28 @@ typedef enum {
 } thread_bpmode_t;
 
 typedef enum {
+    REGION_TYPE_UNKNOWN        = 0,
+    REGION_TYPE_HEAP           = 1,
+    REGION_TYPE_STACK          = 2,
+    REGION_TYPE_VDSO           = 3,
+    REGION_TYPE_VSYSCALL       = 4,
+    REGION_TYPE_ANON           = 5,
+    REGION_TYPE_MAIN           = 6,
+    REGION_TYPE_LIB            = 7,
+    __REGION_TYPE_MAX,
+} region_type_t;
+extern char *REGION_TYPE_STRINGS[];
+#define REGION_TYPE(n) (((n) < __REGION_TYPE_MAX) ? REGION_TYPE_STRINGS[(n)] : NULL)
+
+typedef enum {
+    EXCEPTION_NONE             = 1 << 0,
+    EXCEPTION_SINGLESTEP       = 1 << 1,
+    EXCEPTION_SINGLESTEP_BOGUS = 1 << 2,
+    EXCEPTION_BREAKPOINT       = 1 << 3,
+    EXCEPTION_BREAKPOINT_STEP  = 1 << 4,
+} target_exception_flags_t;
+
+typedef enum {
     POLL_NOTHING          = 0,
     POLL_ERROR            = 1,
     POLL_SUCCESS          = 2,
@@ -349,64 +401,154 @@ extern char *POLL_STRINGS[];
 
 typedef enum {
     LOAD_FLAG_NONE = 0,
-    LOAD_FLAG_SHOULD_MMAP = 1,
-    LOAD_FLAG_MUST_MMAP = 2,
-    LOAD_FLAG_NO_CHECK_BOUNDS = 4,
-    LOAD_FLAG_NO_CHECK_VISIBILITY = 8,
-    LOAD_FLAG_AUTO_DEREF = 16,
-    LOAD_FLAG_AUTO_DEREF_RECURSE = 32,
-    LOAD_FLAG_AUTO_STRING = 64,
-    LOAD_FLAG_NO_AUTO_RESOLVE = 128,
-    LOAD_FLAG_VALUE_FORCE_COPY = 256,
+    LOAD_FLAG_NO_CHECK_BOUNDS = 1,
+    LOAD_FLAG_NO_CHECK_VISIBILITY = 2,
+    LOAD_FLAG_AUTO_DEREF = 4,
+    LOAD_FLAG_AUTO_DEREF_RECURSE = 8,
+    LOAD_FLAG_AUTO_STRING = 16,
+    LOAD_FLAG_NO_AUTO_RESOLVE = 32,
+    LOAD_FLAG_VALUE_FORCE_COPY = 64,
 } load_flags_t;
 
+/*
+ * We have flags for each level -- because some backends/personalities
+ * might actively probe at a level they are not natively providing --
+ * for instance, an OS personality might as well actively probe process
+ * mmap regions; why bother splitting that out into a process-level
+ * personality's job?  The knowledge is about the OS's process
+ * structures.
+ *
+ * Anyway, that's why we have the "default" flags -- a user can specify
+ * those no matter what personality level their backend is providing,
+ * and the backend will enable those flags *at its level*.  Or, for
+ * instance, if you have an OS personality that can provide active
+ * probing of process-level entities, you can enable those too with the
+ * APF_PROCESS_* flags.
+ */
 typedef enum {
-    ACTIVE_PROBE_FLAG_NONE          = 0,
-    ACTIVE_PROBE_FLAG_THREAD_ENTRY  = 1 << 0,
-    ACTIVE_PROBE_FLAG_THREAD_EXIT   = 1 << 1,
-    ACTIVE_PROBE_FLAG_MEMORY        = 1 << 2,
-    ACTIVE_PROBE_FLAG_OTHER         = 1 << 3,
-} active_probe_flags_t;
-#define ACTIVE_PROBE_BITS 4
+    AFP_NONE          = 0,
 
-/**
- ** These functions form the target API.
- **/
+    APF_THREAD_ENTRY  = 1 << 0,
+    APF_THREAD_EXIT   = 1 << 1,
+    APF_MEMORY        = 1 << 2,
+    APF_OTHER         = 1 << 3,
+
+    APF_OS_THREAD_ENTRY  = 1 << 8,
+    APF_OS_THREAD_EXIT   = 1 << 9,
+    APF_OS_MEMORY        = 1 << 10,
+    APF_OS_OTHER         = 1 << 11,
+
+    APF_PROCESS_THREAD_ENTRY  = 1 << 16,
+    APF_PROCESS_THREAD_EXIT   = 1 << 17,
+    APF_PROCESS_MEMORY        = 1 << 18,
+    APF_PROCESS_OTHER         = 1 << 19,
+
+    APF_APP_THREAD_ENTRY  = 1 << 24,
+    APF_APP_THREAD_EXIT   = 1 << 25,
+    APF_APP_MEMORY        = 1 << 26,
+    APF_APP_OTHER         = 1 << 27,
+} active_probe_flags_t;
+
+#define APF_WILD (APF_THREAD_ENTRY | APF_THREAD_EXIT | APF_MEMORY | APF_OTHER)
+#define APF_OS (APF_OS_THREAD_ENTRY | APF_OS_THREAD_EXIT | APF_OS_MEMORY \
+		| APF_OS_OTHER)
+#define APF_PROCESS (APF_PROCESS_THREAD_ENTRY | APF_PROCESS_THREAD_EXIT	\
+		     | APF_PROCESS_MEMORY | APF_PROCESS_OTHER)
+#define APF_APP (APF_APP_THREAD_ENTRY | APF_APP_THREAD_EXIT	\
+		 | APF_APP_MEMORY | APF_APP_OTHER)
+#define APF_ALL (APF_WILD | APF_OS | APF_PROCESS | APF_APP)
 
 /*
- * Returns a target specification by parsing command line arguments.
- * Assumes that the caller is also a driver program that requires its
- * own arguments.  Caller must fully specify @program_parser (we fill it
- * with child argp parsers).  Caller must specify at least one target
- * type in @target_types.
+ * The following functions form the target API.
+ */
+
+/**
+ * Returns a target specification object by parsing command line
+ * arguments provided in the standard \em argc, \em argv pair.  The
+ * caller should be a StackDB program who wants to build a target_spec
+ * object containing the details about a target (and perhaps its overlay
+ * targets) to instantiate.  This program may also require its own
+ * arguments, which it can retrieve and parse after any StackDB-relevant
+ * arguments have been extracted (see the User Guide section on standard
+ * StackDB arguments).
+ *
+ * \param driver_parser A fully-specified GNU argp parser struct (see
+ *   http://www.gnu.org/software/libc/manual/html_node/Argp.html).  May
+ *   be NULL, if your program doesn't require any arguments.
+ * \param driver_state A pointer to an object that will be passed to
+ *   your \em driver_parser when \em driver_parser->parser is invoked.
+ *   May always be NULL; it's up to you.
+ *
+ * \param argc A count of the arguments in \em argv; usually is main()'s
+ *   first argument.
+ * \param argv An argument vector; usually is main()'s second argument.
+ *
+ * \param target_types A mask of allowed target types (drivers) that
+ *   your program can be applied to.
+ *
+ * \param filter_quoted If set non-zero, the StackDB argp wrapper will
+ *   catch any arguments after the "--" characters on the command
+ *   line, and save them to be processed.  The Ptrace driver will
+ *   process any arguments after "--" and use them to launch a program
+ *   that StackDB will attach to).
+ *
+ * \return A target_spec that can be passed to target_instantiate().  Do
+ *   not free this struct; once passed to target_instantiate(), the
+ *   returned target object owns it; and it cannot be passed to
+ *   another call to target_instantiate().
  */
 struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
 					     void *driver_state,
 					     int argc,char **argv,
 					     target_type_t target_types,
 					     int filter_quoted);
-
 struct target_spec *target_argp_target_spec(struct argp_state *state);
-
 void *target_argp_driver_state(struct argp_state *state);
-
 void target_driver_argp_init_children(struct argp_state *state);
-
 int target_spec_to_argv(struct target_spec *spec,char *arg0,
 			int *argc,char ***argv);
+struct target_spec *target_build_spec(target_type_t type,target_mode_t mode);
+void target_free_spec(struct target_spec *spec);
+
+/**
+ * Instantiates a target object according to the configuration provided
+ * in \em spec.  The returned target object is configured and prepared
+ * to be passed to target_open(), at which point it will be attached to
+ * the target program.  Once instantiated, it is recorded in the
+ * library's global data structures, so calls like
+ * target_lookup_target_id() will succeed.  It remains in the library's
+ * global structures until target_close() is called, at which point it
+ * is removed.  If you pass an event loop \em evloop, the target object
+ * will be attached to the given \em evloop.
+ *
+ * Event loops are our homegrown, powerful wrapper around select().
+ * Most StackDB drivers are capable of turning debug exceptions into
+ * notifications on file descriptors, and those descriptors can be
+ * passed to the event loop.  Moreover, event loops allow you to
+ * integrate your program's own event-driven main loop with StackDB's
+ * event-driven paradigm.  You can pass your own FDs and handlers to
+ * StackDB's event loop, and evloop_run() or evloop_handleone() can be
+ * called to do the event loop work for you.  However, many people won't
+ * need a separate event loop, and can simple use target_monitor() to
+ * control target execution --- because all of their program's work is
+ * done in reacting to StackDB probes.  Moreover, target_monitor() is
+ * interruptible, so you need not use a polling strategy --- you can
+ * interrupt it from your own signal handlers.
+ *
+ * \param spec   A target spec, describing the kind of target object to
+ *   instantiate.
+ * \param evloop An evloop that will "run" this target object via
+ *   evloop_run() or evloop_handleone(); see evloop_create().
+ * \return A target object that is ready to be passed to target_open()
+ *   when you want to attach to the target program; need not be
+ *   immediate.
+ */
+struct target *target_instantiate(struct target_spec *spec,
+				  struct evloop *evloop);
 /*
  * Look up an existing target by its id.
  */
 struct target *target_lookup_target_id(int id);
-
-/*
- * Generic function that creates a target, given @spec.
- */
-struct target *target_instantiate(struct target_spec *spec,
-				  struct evloop *evloop);
-
-struct target_spec *target_build_spec(target_type_t type,target_mode_t mode);
-void target_free_spec(struct target_spec *spec);
 
 target_type_t target_type(struct target *target);
 
@@ -562,13 +704,31 @@ int target_is_open(struct target *target);
  */
 target_status_t target_status(struct target *target);
 
-/*
- * Closes a target and releases all its resources.
+/**
+ * Closes a target and releases all its live resources.
  *
  * (Internally, this calls the following target_ops: detach(), kill() (if
  * target->kill_on_close is set).)
  */
 int target_close(struct target *target);
+
+/**
+ * Finalizes a target.  This means the library drops its internal
+ * reference to the target --- and thus, the user did not
+ * call target_hold() after target_open(), this will also have the
+ * effect of freeing the target struct -- because the target library
+ * will remove the target struct from its internal structs, and drop a
+ * ref.  Unless some other caller had held a ref to it for some other
+ * reason, this will deallocate it.  Thus -- if you want to
+ * hold onto the struct for subsequent calls, hold onto it first!
+ *
+ * NB: the library will never drop its ref to the target struct object
+ * unless the user calls target_finalize() -- or target_fini().  It
+ * may detach (on your behalf) from an exiting target, but that does
+ * not perform the work of target_finalize() by itself -- you still get to
+ * do that so you can handle the exiting/exited target.
+ */
+int target_finalize(struct target *target);
 
 /*
  * Destroys a target.
@@ -576,9 +736,13 @@ int target_close(struct target *target);
 int target_kill(struct target *target,int sig);
 
 /*
- * Frees a target.
+ * Holds a ref to, or releases, a target object.  Most users can just
+ * get away with the normal target_open/target_close pattern; but if you
+ * need to keep the target struct around after calling target_close,
+ * you'll need to keep a ref to it!
  */
-void target_free(struct target *target);
+void target_hold(struct target *target);
+void target_release(struct target *target);
 
 /*
  * Overlay support.
@@ -592,8 +756,9 @@ struct target_spec *target_build_default_overlay_spec(struct target *target,
 						      tid_t tid);
 struct target *target_instantiate_overlay(struct target *target,tid_t tid,
 					  struct target_spec *spec);
-target_status_t target_notify_overlay(struct target *overlay,tid_t tid,ADDR ipval,
-				      int *again);
+target_status_t target_notify_overlay(struct target *overlay,
+				      target_exception_flags_t flags,
+				      tid_t tid,ADDR ipval,int *again);
 
 /*
  * Returns the probe attached to this target with ID @probe_id, if any.
@@ -636,19 +801,19 @@ unsigned long target_write_physaddr(struct target *target,ADDR paddr,
  * Returns a string representation for the DWARF register number on this
  * particular target type.  Will (likely) differ between targets/archs.
  */
-char *target_reg_name(struct target *target,REG reg);
+const char *target_regname(struct target *target,REG reg);
 
 /*
  * Returns the target-specific DWARF register number for the
  * target-specific register name @name.
  */
-REG target_dw_reg_no_targetname(struct target *target,char *name);
+int target_regno(struct target *target,char *name,REG *reg);
 
 /*
  * Returns the target-specific DWARF register number for the common
  * register @reg.
  */
-REG target_dw_reg_no(struct target *target,common_reg_t reg);
+int target_cregno(struct target *target,common_reg_t creg,REG *reg);
 
 /*
  * Reads the DWARF register @reg from thread @tid in @target.  Returns 0
@@ -661,6 +826,20 @@ REGVAL target_read_reg(struct target *target,tid_t tid,REG reg);
  * nonzero on failure.
  */
 int target_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value);
+
+/*
+ * Reads the DWARF register @reg from thread @tid in @target.  Returns 0
+ * and sets errno nonzero on error.
+ */
+REGVAL target_read_reg_ctxt(struct target *target,tid_t tid,thread_ctxt_t tidctxt,
+			    REG reg);
+
+/*
+ * Writes @value to the DWARF register @reg.  Returns 0 on success;
+ * nonzero on failure.
+ */
+int target_write_reg_ctxt(struct target *target,tid_t tid,thread_ctxt_t tidctxt,
+			  REG reg,REGVAL value);
 
 /*
  * Reads the common register @reg in thread @tid in target @target.
@@ -839,16 +1018,6 @@ uint64_t target_get_counter(struct target *target);
  */
 int target_enable_feature(struct target *target,int feature,void *arg);
 int target_disable_feature(struct target *target,int feature);
-
-/*
- * @return: nonzero if the target thread is valid (loaded).
- */
-int target_thread_is_valid(struct target *target,tid_t tid);
-
-/*
- * @return: nonzero if the target thread is dirty (context has been modified).
- */
-int target_thread_is_dirty(struct target *target,tid_t tid);
 
 /*
  * @return: the thread's status if it exists in our cache, or
@@ -1461,6 +1630,12 @@ ADDR             rv_addr(void *buf);
  * threads should share their address spaces; if they do not, use a
  * separate target to track them.
  *
+ * XXX: we really need to have each thread "own" its own addrspace --
+ * even if that addrspace is shared throughout a group of threads.  This
+ * isn't too hard to fix; BUT all access to memory would then need to go
+ * through a thread id.  That's a fundamental API change, throughout the
+ * library.
+ *
  * Targets can support either single-thread mode or multi-thread mode
  * (or may only support one or the other).  To support single-thread
  * mode, each target should supply a "default thread" that either really
@@ -1539,26 +1714,38 @@ struct target_thread {
     struct target *target;
     tid_t tid;
     thread_ctxt_t tidctxt;
-    int8_t valid:1,
-  	   dirty:1,
-	   resumeat:4,
-	   attached:1;
+    int8_t resumeat:4,
+	   attached:1,
+	   exiting:1;
     thread_status_t status:THREAD_STATUS_BITS;
     target_type_t supported_overlay_types:TARGET_TYPE_BITS;
+
+    obj_flags_t obj_flags;
+    REFCNT refcnt;
+    REFCNT refcntw;
 
     /*
      * Target backends may or may not set these fields when they load
      * threads.  If @name is set, it will be freed when the thread is
-     * freed.  @ptid is the parent thread, or -1.  @uid and @gid are the
+     * freed.  @ptid is the parent thread, or -1.  @tgid is the thread
+     * group id (on Linux, it's the process id).  @uid and @gid are the
      * user id and group id of this thread; or -1 if not
      * available/meaningless.
      */
     char *name;
+    tid_t tgid;
     tid_t ptid;
     int uid;
     int gid;
 
     void *state;
+    void *personality_state;
+
+    /*
+     * Built-in support for regcache.  We do expect most target backends
+     * to use it!
+     */
+    struct regcache **regcaches;
 
     /*
      * A hashtable of addresses to probe points.
@@ -1656,8 +1843,23 @@ struct target_spec {
     thread_bpmode_t bpmode;
     probepoint_style_t style;
     uint8_t start_paused:1,
-	    kill_on_close:1;
-    active_probe_flags_t active_probe_flags:ACTIVE_PROBE_BITS;
+	    kill_on_close:1,
+            stay_paused:1;
+
+    active_probe_flags_t ap_flags;
+
+    /*
+     * All personalities have unique string IDs.  The user can force a
+     * specific one to be used here if they like, although that is
+     * likely to be a bad idea, unless they've implemented a custom
+     * personality that is outside the VMI install tree.
+     */
+    char *personality;
+    /*
+     * If the personality is to be loaded from a specific shared
+     * library, this is the filename.
+     */
+    char *personality_lib;
 
     char *debugfile_root_prefix;
     /* struct array_list of struct debugfile_load_opts * */
@@ -1726,32 +1928,8 @@ struct target_argp_parser_state {
     char **quoted_argv;
 };
 
-typedef enum {
-    TARGET_STATE_CHANGE_EXITED = 1,
-    TARGET_STATE_CHANGE_EXITING,
-    TARGET_STATE_CHANGE_ERROR,
-    TARGET_STATE_CHANGE_THREAD_CREATED,
-    TARGET_STATE_CHANGE_THREAD_EXITED,
-    TARGET_STATE_CHANGE_THREAD_EXITING,
-    TARGET_STATE_CHANGE_REGION_NEW,
-    TARGET_STATE_CHANGE_REGION_MOD,
-    TARGET_STATE_CHANGE_REGION_DEL,
-    TARGET_STATE_CHANGE_RANGE_NEW,
-    TARGET_STATE_CHANGE_RANGE_MOD,
-    TARGET_STATE_CHANGE_RANGE_DEL,
-} target_state_change_type_t;
-
-struct target_state_change {
-    tid_t tid;
-    target_state_change_type_t chtype;
-    unsigned long code;
-    unsigned long data;
-    ADDR start;
-    ADDR end;
-    char *msg;
-};
-
 typedef target_status_t (*target_exception_handler_t)(struct target *target,
+						      target_exception_flags_t flags,
 						      int *again,void *priv);
 
 typedef result_t (*target_debug_bp_handler_t)(struct target *target,
@@ -1763,7 +1941,7 @@ typedef result_t (*target_debug_handler_t)(struct target *target,
 					   struct probepoint *probepoint);
 
 /**
- ** Target location contexts (unwinding).
+ ** Target location contexts (unwinding, symbol loading/address resolution).
  **
  ** We use a target_location_ctxt struct that wraps location_ctxt in
  ** dwdebug.  Thus, you can lookup/load symbols in the current thread,
@@ -1778,6 +1956,8 @@ typedef result_t (*target_debug_handler_t)(struct target *target,
  ** resolution/computation; target caches restored registers and keeps a
  ** stack of frames and their metadata).
  **/
+struct target_location_ctxt *target_global_tlctxt(struct target *target);
+
 struct target_location_ctxt *
 target_location_ctxt_create(struct target *target,tid_t tid,
 			    struct memregion *region);
@@ -1905,19 +2085,23 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt);
  * an execution context and at least one address space.
  */
 struct target {
+    REFCNT refcnt;
+    REFCNT refcntw;
+    obj_flags_t obj_flags;
+
     uint32_t live:1,
     	     writeable:1,
 	     nodisablehwbponss:1,
 	     threadctl:1,
-	     endian:1,
 	     mmapable:1,
-	     wordsize:4,
-	     ptrsize:4,
 	     opened:1,
 	     kill_on_close:1,
 	     monitorhandling:1,
-	     needmonitorinterrupt:1;
-    active_probe_flags_t active_probe_flags:ACTIVE_PROBE_BITS;
+	     needmonitorinterrupt:1,
+	     global_tlctxt_is_dynamic:1,
+	     no_adjust_bp_ip:1;
+
+    active_probe_flags_t ap_flags;
 
     /*
      * How we track status is a little funny.  Basically, we want the
@@ -1945,16 +2129,7 @@ struct target {
      */
     target_status_t status;
 
-    /*
-     * Targets can add target_state_change structs to this array; it is
-     * also their responsibility to free them.  Basically, the idea is
-     * that internal handlers could set one or more; then if they cause
-     * monitor/poll/evloop_handler to return to the user, the user can
-     * see what changed; then the internal handler should empty the list
-     * at its next run.
-     */
-    struct array_list *state_changes;
-
+    unsigned int max_thread_ctxt;
     REG fbregno;
     REG spregno;
     REG ipregno;
@@ -1964,7 +2139,7 @@ struct target {
      * target hashtable, for instance.
      */
     int id;
-    target_kind_t kind;
+    target_personality_t personality;
 
     /*
      * Each target has a unique name; this is generated by
@@ -1972,13 +2147,86 @@ struct target {
      */
     char *name;
 
+    /*
+     * state is for, and owned, by the backend providing this target.
+     */
     void *state;
+    /*
+     * Right now, personality_state is owned by the personality -- and
+     * the personality_ops and
+     * (os_ops|process_ops|application_ops|runtime_ops) own that state
+     * together.  No need to separate those things for now.
+     */
+    void *personality_state;
+
+    /*
+     * These are the primary target operations, provided by the backend
+     * as necessary/applicable.  The backend need not provide all
+     * operations, especially if it is counting on a personality to fill
+     * them in, as described below.  Target backends may be designed to
+     * require a personality; utilize a personality; or to block any
+     * personality ops from ever being called (i.e., if the personality
+     * is effectively integrated fully into the target ops -- sometimes
+     * a target backend cannot be separated into a generic control
+     * interface, or there might not be an available personality, or
+     * whatever -- the abstraction is deliberately designed to be
+     * flexible).  Read more below...
+     */
     struct target_ops *ops;
     struct location_ops *location_ops;
+    /*
+     * Ok, these ops structures are for personalities.  A personality
+     * can "overload" the target with more information.  For instance,
+     * some targets may provide low-level machine control/read/write;
+     * but a *personality* might be able to fill in more info by
+     * reading/writing symbols in the target to obtain a richer
+     * representation of the target, or to enable more functionality.
+     *
+     * By abstracting it this way, we allow a target backend to be
+     * written in a minimal style, and to be enriched by a personality.
+     * This supports writing, for instance, a bare-bones xen vm backend
+     * that supports minimal x86 machine control/read/write via the Xen
+     * control interface; but allows that same backend to be enriched by
+     * the os_linux_generic personality; a customized version for
+     * specific linux kernel versions; or a windows personality.
+     *
+     * The reason we reuse a full struct target_ops for personality ops,
+     * instead of creating a struct target_personality_ops, is because
+     * many of the operations could legitimately be provided by either
+     * the target backend, or by the personality, depending on the
+     * target in question.  A PHP target backend might not support a
+     * separate personality; it might just be all integrated into the
+     * backend.  It may be impossible to disentangle the primary backend
+     * from the personality.
+     *
+     * So here's how the Target API/library work this all out.
+     * Everything goes through the target API or library wrapper
+     * functions; they are the only things that call through the ops
+     * structs.  Basically, if the target backend implements one of the
+     * target ops, the implementation should call the
+     * target_personality_[op] wrapper function for the op in question.
+     * If the target backend does *not* implement an op, but the
+     * personality does; the target library will call that op instead of
+     * the target op.
+     */
+    struct target_personality_ops *personality_ops;
+    /*
+     * OS/Process/Application ops will probably also be provided by the
+     * same library providing the personality, but this need not be the
+     * case.
+     */
     union {
-	struct target_os_ops *os;
-	struct target_process_ops *process;
-    } kind_ops;
+	void *__personality_specific_ops;
+	struct target_os_ops *os_ops;
+	struct target_process_ops *process_ops;
+    };
+
+    /*
+     * Each target *must* have an architecture.  This pointer must be
+     * set by the target backend factory functions.
+     */
+    struct arch *arch;
+
     struct target_spec *spec;
 
     int kill_on_close_sig;
@@ -2017,7 +2265,7 @@ struct target {
     /* Targets can have multiple address spaces, but not sure how we're
      * going to use this yet.
      */
-    struct list_head spaces;
+    GList *spaces;
 
     /*
      * Each target has a primary binfile associated with it; think
@@ -2068,6 +2316,20 @@ struct target {
      * any others.
      */
     struct target_thread *blocking_thread;
+
+    /*
+     * This should be a load context corresponding to TID_GLOBAL.
+     * Target backends should create it in their init() functions.  If
+     * they set the global_tlctxt_is_dynamic bit above, as well,
+     * target_global_tlctxt() will attempt to replace the value of the
+     * ->region member with the region associated with the current IP.
+     * This supports backends that create a single static region
+     * spanning the entire target.
+     *
+     * target_global_tlctxt() will return this structure; it should never
+     * be freed.
+     */
+    struct target_location_ctxt *global_tlctxt;
 
     /*
      * This is for target backends to use if they wish.
@@ -2145,42 +2407,43 @@ struct target {
     int action_id_counter;
 
     /*
-     * If we mmap any of the target's memory, this hashtable will have
-     * the map entry.
+     * If we cache any of the target's v2p mappings or mmap its memory,
+     * this is the struct the backends should initialize, populate, and
+     * use.  See memcache.h...  For now, backends interact with the
+     * memcache, and the target API does not.  Backends should control
+     * it for now.
      */
-    GHashTable *mmaps;
+    struct memcache *memcache;
 
     /* Cache of loaded code, by address range. */
     clrange_t code_ranges;
-
-    /* One or more opcodes that create a software breakpoint */
-    void *breakpoint_instrs;
-    unsigned int breakpoint_instrs_len;
-    /* How many opcodes are in the above sequence, so we can single-step
-     * past them all.
-     */
-    unsigned int breakpoint_instr_count;
-
-    void *ret_instrs;
-    unsigned int ret_instrs_len;
-    unsigned int ret_instr_count;
-
-    void *full_ret_instrs;
-    unsigned int full_ret_instrs_len;
-    unsigned int full_ret_instr_count;
 };
 
 struct target_ops {
     int (*snprintf)(struct target *target,char *buf,int bufsiz);
 
-    /* init any target state, like a private per-target state struct */
+    /*
+     * init any target state, like a private per-target state struct.
+     *
+     * If the backend needs to attach to the target and pause it now so
+     * that it can initialize, that is allowed -- but we don't expect
+     * it.
+     *
+     * XXX: what about personalities that might try to read the target's
+     * reg/mem to initialize???
+     */
     int (*init)(struct target *target);
-    /* init any target state, like a private per-target state struct */
+    /*
+     * Destroy any target state and perform any final cleanup specific
+     * to the backend.
+     */
     int (*fini)(struct target *target);
-    /* actually connect to the target to enable read/write */
+    /*
+     * Actually connect to the target to enable read/write.
+     */
     int (*attach)(struct target *target);
     /* detach from target, but don't unload */
-    int (*detach)(struct target *target);
+    int (*detach)(struct target *target,int stay_paused);
     /* destroy the target */
     int (*kill)(struct target *target,int sig);
 
@@ -2200,9 +2463,6 @@ struct target_ops {
     int (*loaddebugfiles)(struct target *target,
 			  struct addrspace *space,
 			  struct memregion *region);
-    /* have it detect its kind, with its ops.  This function must set
-     * target->kind_ops.(os|process). */
-    target_kind_t (*loadkind)(struct target *target);
     /* Once regions and debugfiles are loaded, we call this -- it's a
      * second-pass init, basically.
      */
@@ -2258,6 +2518,18 @@ struct target_ops {
     target_debug_handler_t handle_interrupted_step;
 
     /*
+     * A single function that allows a target backend to be notified of
+     * key target events.  This allows a backend to be notified of
+     * changes that its personality makes; or for an overlay target
+     * backend to be notified when the underlying target senses an event
+     * that is relevant to the overlay.
+     */
+    void (*handle_event)(struct target *target,struct target_event *event);
+
+    int (*obj_flags_propagate)(struct target *target,
+			       obj_flags_t orf,obj_flags_t nandf);
+
+    /*
      * "Underlay" targets (that support overlays) must define these
      * functions.
      */
@@ -2279,8 +2551,9 @@ struct target_ops {
      * Overlay targets must support this if their exceptions come from
      * the underlying target.
      */
-    target_status_t (*handle_overlay_exception)(struct target *overlay,tid_t tid,
-						ADDR ipval,int *again);
+    target_status_t (*handle_overlay_exception)(struct target *overlay,
+						target_exception_flags_t flags,
+						tid_t tid,ADDR ipval,int *again);
 
     /* get target status. */
     target_status_t (*status)(struct target *target);
@@ -2328,13 +2601,6 @@ struct target_ops {
     unsigned long (*write_phys)(struct target *target,ADDR paddr,
 				unsigned long length,unsigned char *buf);
 
-    /* Get target-specific register name. */
-    char *(*regname)(struct target *target,REG reg);
-    /* Get target-specific DWARF reg number for the target-specific name. */
-    REG (*dwregno_targetname)(struct target *target,char *name);
-    /* Get target-specific DWARF reg number for the "common" register. */
-    REG (*dwregno)(struct target *target,common_reg_t reg);
-
     /**
      ** Many of the following operations can be parameterized by a thread id.
      **/
@@ -2356,9 +2622,187 @@ struct target_ops {
     int (*flush_thread)(struct target *target,tid_t tid);
     int (*flush_current_thread)(struct target *target);
     int (*flush_all_threads)(struct target *target);
-    int (*invalidate_all_threads)(struct target *target);
+    int (*invalidate_thread)(struct target *target,struct target_thread *tthread);
     int (*gc_threads)(struct target *target);
-    int (*thread_snprintf)(struct target_thread *tthread,
+    int (*thread_snprintf)(struct target *target,struct target_thread *tthread,
+			   char *buf,int bufsiz,
+			   int detail,char *sep,char *key_val_sep);
+
+    /*
+     * Register stuff.
+     *
+     * A backend can use several strategies to implement register handling.
+     *
+     * 1) Implement the methods below, and handle caching itself.  This
+     * would be more suitable to on-demand register loading (i.e., if
+     * you're not going to load all registers in the thread load
+     * methods).
+     *
+     * 2) Use the regcache, and set all these methods to the
+     * target_regcache_* versions.  Then you must load all registers in
+     * the thread loader methods, and flush all dirty registers in the
+     * thread flush methods.  In some ways, this is currently the
+     * preferred style, because then there is some linkage that a user
+     * could/should expect between the backend and the arch's registers
+     * (in that the backend should load all the arch registers!).  But
+     * the downside is the double buffering and copying
+     * overhead... because backends that can load multiple registers
+     * from a single copy in memory might well just copy that whole
+     * section and write it out once.  However, the regcache also helps
+     * you track dirty registers on a more fine-grained level.
+     *
+     *  If the target backend is going to use our
+     * generic regcache support, these should all be set to the
+     * target_regcache_* functions, or to NULL!  If it does not use
+     * regcache, all of these must be set to custom functions.
+     *
+     * If it does use regcache, its thread-loading functions *must* call
+     * the target_regcache_init_reg functions to load registers.
+     *
+     * This may seem a bit weird, and it does force the thread loaders
+     * to pre-populate the cache.  BUT, that is why we have the
+     * initreg_tidctxt method below.  The target_init_reg_tidctxt
+     * function calls that backend function if it is defined; else, it
+     * sticks the reg into the regcache.  So, as a backend developer, if
+     * you want to make sure you control your own register caching, and
+     * want to support the target_init_reg_tidctxt backend/personality
+     * helper function, you must define initreg_tidctxt.
+     *
+     * That is the guts of the compromise of supporting an optional
+     * regcache, or allowing the backend to support its own caching --
+     * while still allowing a personality to *not* manage its own
+     * caching.
+     *
+     * (Realistically, these functions need to be implemented; it's just
+     * a matter of how the backend wants to flush a cache of pending
+     * register writes at target_resume as it flushes its threads.  Many
+     * backends may implement readreg/writereg as calls to
+     * readreg/writereg_tidctxt, where the tidctxt is the thread's
+     * current context).
+     */
+    REGVAL (*readreg)(struct target *target,tid_t tid,REG reg);
+    int (*writereg)(struct target *target,tid_t tid,REG reg,REGVAL value);
+    GHashTable *(*copy_registers)(struct target *target,tid_t tid);
+
+    REGVAL (*readreg_tidctxt)(struct target *target,
+			      tid_t tid,thread_ctxt_t tidctxt,REG reg);
+    int (*writereg_tidctxt)(struct target *target,
+			    tid_t tid,thread_ctxt_t tidctxt,REG reg,REGVAL value);
+
+    /* unwind support */
+    struct target_location_ctxt *(*unwind)(struct target *target,tid_t tid);
+    int (*unwind_read_reg)(struct target_location_ctxt *tlctxt,
+			   REG reg,REGVAL *o_regval);
+    struct target_location_ctxt_frame *
+    (*unwind_prev)(struct target_location_ctxt *tlctxt);
+
+    /* breakpoint/watchpoint stuff */
+    int (*probe_register_symbol)(struct target *target,tid_t tid,
+				 struct probe *probe,struct bsymbol *bsymbol,
+				 probepoint_style_t style,
+				 probepoint_whence_t whence,
+				 probepoint_watchsize_t watchsize);
+    struct target_memmod *(*insert_sw_breakpoint)(struct target *target,tid_t tid,
+						  ADDR addr);
+    int (*remove_sw_breakpoint)(struct target *target,tid_t tid,
+				struct target_memmod *mmod);
+    int (*enable_sw_breakpoint)(struct target *target,tid_t tid,
+				struct target_memmod *mmod);
+    int (*disable_sw_breakpoint)(struct target *target,tid_t tid,
+				 struct target_memmod *mmod);
+    int (*change_sw_breakpoint)(struct target *target,tid_t tid,
+				struct target_memmod *mmod,
+				unsigned char *code,unsigned long code_len);
+    REG (*get_unused_debug_reg)(struct target *target,tid_t tid);
+    int (*set_hw_breakpoint)(struct target *target,tid_t tid,REG reg,ADDR addr);
+    int (*set_hw_watchpoint)(struct target *target,tid_t tid,REG reg,ADDR addr,
+			     probepoint_whence_t whence,
+			     probepoint_watchsize_t watchsize);
+    int (*unset_hw_breakpoint)(struct target *target,tid_t tid,REG reg);
+    int (*unset_hw_watchpoint)(struct target *target,tid_t tid,REG reg);
+    int (*disable_hw_breakpoints)(struct target *target,tid_t tid);
+    int (*enable_hw_breakpoints)(struct target *target,tid_t tid);
+    int (*disable_hw_breakpoint)(struct target *target,tid_t tid,REG dreg);
+    int (*enable_hw_breakpoint)(struct target *target,tid_t tid,REG dreg);
+    int (*notify_sw_breakpoint)(struct target *target,ADDR addr,
+				int notification);
+    int (*singlestep)(struct target *target,tid_t tid,int isbp,
+		      struct target *overlay);
+    int (*singlestep_end)(struct target *target,tid_t tid,
+			  struct target *overlay);
+
+    /* Instruction-specific stuff for stepping. */
+    /*
+     * Returns > 0 if the instruction might switch contexts; 0
+     * if not; -1 on error.
+     */
+    int (*instr_can_switch_context)(struct target *target,ADDR addr);
+
+    /*
+     * Stuff for counters.  Each target should provide its TSC
+     * timestamp, an internal notion of time since boot in nanoseconds,
+     * and if they support indexed execution, a "cycle counter" or
+     * something.
+     */
+    uint64_t (*get_tsc)(struct target *target);
+    uint64_t (*get_time)(struct target *target);
+    uint64_t (*get_counter)(struct target *target);
+
+    int (*enable_feature)(struct target *target,int feature,void *arg);
+    int (*disable_feature)(struct target *target,int feature);
+};
+
+struct target_personality_ops {
+    int (*snprintf)(struct target *target,char *buf,int bufsiz);
+
+    int (*attach)(struct target *target);
+    int (*init)(struct target *target);
+    int (*fini)(struct target *target);
+
+    int (*loadspaces)(struct target *target);
+    int (*loadregions)(struct target *target,
+		       struct addrspace *space);
+    int (*loaddebugfiles)(struct target *target,
+			  struct addrspace *space,
+			  struct memregion *region);
+
+    int (*postloadinit)(struct target *target);
+
+    int (*set_active_probing)(struct target *target,active_probe_flags_t flags);
+
+    int (*postopened)(struct target *target);
+
+    void (*handle_event)(struct target *target,struct target_event *event);
+    int (*obj_flags_propagate)(struct target *target,
+			       obj_flags_t orf,obj_flags_t nandf);
+
+    int (*handle_exception)(struct target *target,
+			    target_exception_flags_t flags);
+
+    unsigned char *(*read)(struct target *target,ADDR addr,
+			   unsigned long length,unsigned char *buf);
+    unsigned long (*write)(struct target *target,ADDR addr,
+			   unsigned long length,unsigned char *buf);
+    int (*addr_v2p)(struct target *target,tid_t tid,ADDR vaddr,ADDR *paddr);
+    unsigned char *(*read_phys)(struct target *target,ADDR paddr,
+				unsigned long length,unsigned char *buf);
+    unsigned long (*write_phys)(struct target *target,ADDR paddr,
+				unsigned long length,unsigned char *buf);
+
+    void (*free_thread_state)(struct target *target,void *state);
+    struct array_list *(*list_available_tids)(struct target *target);
+    struct target_thread *(*load_thread)(struct target *target,tid_t tid,
+					 int force);
+    struct target_thread *(*load_current_thread)(struct target *target,
+						 int force);
+    int (*load_available_threads)(struct target *target,int force);
+    int (*pause_thread)(struct target *target,tid_t tid,int nowait);
+    /* flush target(:tid) machine state */
+    int (*flush_thread)(struct target *target,tid_t tid);
+    int (*flush_current_thread)(struct target *target);
+    int (*invalidate_thread)(struct target *target,struct target_thread *tthread);
+    int (*gc_threads)(struct target *target);
+    int (*thread_snprintf)(struct target *target,struct target_thread *tthread,
 			   char *buf,int bufsiz,
 			   int detail,char *sep,char *key_val_sep);
 
@@ -2466,9 +2910,6 @@ struct value {
     /* The memrange this value exists in. */
     struct memrange *range;
 
-    /* The region stamp at load time. */
-    uint32_t region_stamp;
-
     int bufsiz;
     char *buf;
 
@@ -2476,9 +2917,6 @@ struct value {
 	    isreg:1,
 	    isstring:1,
 	    isconst:1;
-
-    /* If this value is mmap'd instead of alloc'd, store that too. */
-    struct mmap_entry *mmap;
 
     /*
      * The location of the value.

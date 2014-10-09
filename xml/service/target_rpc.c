@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -93,7 +93,7 @@ static int target_rpc_monitor_fini(struct monitor *monitor,
 
     target_free_spec(target->spec);
     target->spec = NULL;
-    target_free(target);
+    target_finalize(target);
 
     return 0;
 }
@@ -211,35 +211,92 @@ static int _target_generic_rpc_listener_notifier(struct generic_rpc_listener *l,
 }
 
 enum _vmi1__targetEventType 
-t_target_state_change_type_t_to_x_targetEventType(target_state_change_type_t chtype) {
+t_target_event_t_to_x_targetEventType(target_event_t chtype) {
     switch (chtype) {
-    case TARGET_STATE_CHANGE_EXITED:
+    case T_EVENT_EXITED:
 	return _vmi1__targetEventType__exited;
-    case TARGET_STATE_CHANGE_EXITING:
+    case T_EVENT_EXITING:
 	return _vmi1__targetEventType__exiting;
-    case TARGET_STATE_CHANGE_ERROR:
+    case T_EVENT_ERROR:
 	return _vmi1__targetEventType__error;
-    case TARGET_STATE_CHANGE_THREAD_CREATED:
-	return _vmi1__targetEventType__threadCreated;
-    case TARGET_STATE_CHANGE_THREAD_EXITED:
-	return _vmi1__targetEventType__threadExited;
-    case TARGET_STATE_CHANGE_THREAD_EXITING:
-	return _vmi1__targetEventType__threadExiting;
-    case TARGET_STATE_CHANGE_REGION_NEW:
-	return _vmi1__targetEventType__regionNew;
-    case TARGET_STATE_CHANGE_REGION_MOD:
-	return _vmi1__targetEventType__regionMod;
-    case TARGET_STATE_CHANGE_REGION_DEL:
-	return _vmi1__targetEventType__regionDel;
-    case TARGET_STATE_CHANGE_RANGE_NEW:
-	return _vmi1__targetEventType__rangeNew;
-    case TARGET_STATE_CHANGE_RANGE_MOD:
-	return _vmi1__targetEventType__rangeMod;
-    case TARGET_STATE_CHANGE_RANGE_DEL:
-	return _vmi1__targetEventType__rangeDel;
+
+    case T_EVENT_OS_THREAD_CREATED:
+	return _vmi1__targetEventType__osThreadCreated;
+    case T_EVENT_OS_THREAD_EXITED:
+	return _vmi1__targetEventType__osThreadExited;
+    case T_EVENT_OS_THREAD_EXITING:
+	return _vmi1__targetEventType__osThreadExiting;
+    case T_EVENT_OS_SPACE_NEW:
+	return _vmi1__targetEventType__osSpaceNew;
+    case T_EVENT_OS_SPACE_MOD:
+	return _vmi1__targetEventType__osSpaceMod;
+    case T_EVENT_OS_SPACE_DEL:
+	return _vmi1__targetEventType__osSpaceDel;
+    case T_EVENT_OS_REGION_NEW:
+	return _vmi1__targetEventType__osRegionNew;
+    case T_EVENT_OS_REGION_MOD:
+	return _vmi1__targetEventType__osRegionMod;
+    case T_EVENT_OS_REGION_DEL:
+	return _vmi1__targetEventType__osRegionDel;
+    case T_EVENT_OS_RANGE_NEW:
+	return _vmi1__targetEventType__osRangeNew;
+    case T_EVENT_OS_RANGE_MOD:
+	return _vmi1__targetEventType__osRangeMod;
+    case T_EVENT_OS_RANGE_DEL:
+	return _vmi1__targetEventType__osRangeDel;
+
+    case T_EVENT_OS_PROCESS_THREAD_CREATED:
+	return _vmi1__targetEventType__osProcessThreadCreated;
+    case T_EVENT_OS_PROCESS_THREAD_EXITED:
+	return _vmi1__targetEventType__osProcessThreadExited;
+    case T_EVENT_OS_PROCESS_THREAD_EXITING:
+	return _vmi1__targetEventType__osProcessThreadExiting;
+    case T_EVENT_OS_PROCESS_SPACE_NEW:
+	return _vmi1__targetEventType__osProcessSpaceNew;
+    case T_EVENT_OS_PROCESS_SPACE_MOD:
+	return _vmi1__targetEventType__osProcessSpaceMod;
+    case T_EVENT_OS_PROCESS_SPACE_DEL:
+	return _vmi1__targetEventType__osProcessSpaceDel;
+    case T_EVENT_OS_PROCESS_REGION_NEW:
+	return _vmi1__targetEventType__osProcessRegionNew;
+    case T_EVENT_OS_PROCESS_REGION_MOD:
+	return _vmi1__targetEventType__osProcessRegionMod;
+    case T_EVENT_OS_PROCESS_REGION_DEL:
+	return _vmi1__targetEventType__osProcessRegionDel;
+    case T_EVENT_OS_PROCESS_RANGE_NEW:
+	return _vmi1__targetEventType__osProcessRangeNew;
+    case T_EVENT_OS_PROCESS_RANGE_MOD:
+	return _vmi1__targetEventType__osProcessRangeMod;
+    case T_EVENT_OS_PROCESS_RANGE_DEL:
+	return _vmi1__targetEventType__osProcessRangeDel;
+
+    case T_EVENT_PROCESS_THREAD_CREATED:
+	return _vmi1__targetEventType__processThreadCreated;
+    case T_EVENT_PROCESS_THREAD_EXITED:
+	return _vmi1__targetEventType__processThreadExited;
+    case T_EVENT_PROCESS_THREAD_EXITING:
+	return _vmi1__targetEventType__processThreadExiting;
+    case T_EVENT_PROCESS_SPACE_NEW:
+	return _vmi1__targetEventType__processSpaceNew;
+    case T_EVENT_PROCESS_SPACE_MOD:
+	return _vmi1__targetEventType__processSpaceMod;
+    case T_EVENT_PROCESS_SPACE_DEL:
+	return _vmi1__targetEventType__processSpaceDel;
+    case T_EVENT_PROCESS_REGION_NEW:
+	return _vmi1__targetEventType__processRegionNew;
+    case T_EVENT_PROCESS_REGION_MOD:
+	return _vmi1__targetEventType__processRegionMod;
+    case T_EVENT_PROCESS_REGION_DEL:
+	return _vmi1__targetEventType__processRegionDel;
+    case T_EVENT_PROCESS_RANGE_NEW:
+	return _vmi1__targetEventType__processRangeNew;
+    case T_EVENT_PROCESS_RANGE_MOD:
+	return _vmi1__targetEventType__processRangeMod;
+    case T_EVENT_PROCESS_RANGE_DEL:
+	return _vmi1__targetEventType__processRangeDel;
 
     default:
-	verror("BUG: bad target_state_change_type_t %d; returning UINT_MAX\n",
+	verror("BUG: bad target_event_t %d; returning UINT_MAX\n",
 	       chtype);
 	return UINT_MAX;
     }
@@ -249,13 +306,10 @@ static int target_rpc_monitor_notify(void *obj) {
     struct target *target = (struct target *)obj;
     struct target_rpc_listener_target_data ltd;
     struct soap encoder;
-    struct target_state_change *change;
+    struct target_event *event;
     int i;
 
     if (!obj)
-	return 0;
-
-    if (array_list_len(target->state_changes) < 1) 
 	return 0;
 
     /*
@@ -282,6 +336,7 @@ static int target_rpc_monitor_notify(void *obj) {
     soap_init(&encoder);
     ltd.reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
 
+    /*
     array_list_foreach(target->state_changes,i,change) {
 	ltd.event.targetEventType = 
 	    t_target_state_change_type_t_to_x_targetEventType(change->chtype);
@@ -303,6 +358,7 @@ static int target_rpc_monitor_notify(void *obj) {
 					_target_generic_rpc_listener_notifier,
 					&ltd);
     }
+    */
 
     /*
      * Clean up temp/serialization data, but don't kill the sock if we
@@ -314,11 +370,6 @@ static int target_rpc_monitor_notify(void *obj) {
     soap_done(&encoder);
 
     pthread_mutex_unlock(&target_rpc_mutex);
-
-    /*
-     * XXX: maybe shouldn't do this here...
-     */
-    target_clear_state_changes(target);
 
     return 0;
 }
@@ -828,7 +879,7 @@ int vmi1__InstantiateTarget(struct soap *soap,
 
 	if (target_open(t)) {
 	    verror("could not open target!\n");
-	    target_free(t);
+	    target_finalize(t);
 	    target_free_spec(s);
 	    g_hash_table_destroy(reftab);
 	    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
@@ -1101,7 +1152,7 @@ int vmi1__InstantiateOverlayTarget(struct soap *soap,
 
 	if (target_open(t)) {
 	    verror("could not open target!\n");
-	    target_free(t);
+	    target_finalize(t);
 	    target_free_spec(s);
 	    g_hash_table_destroy(reftab);
 	    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
@@ -1582,7 +1633,7 @@ struct action *x_ActionSpecT_to_t_action(struct soap *soap,
 					 struct target *target) {
     struct action *action = NULL;
     action_type_t atype;
-    REG reg;
+    REG reg = 0;
     char *ddata;
 
     atype = x_ActionTypeT_to_t_action_type_t(soap,spec->type);
@@ -1591,8 +1642,9 @@ struct action *x_ActionSpecT_to_t_action(struct soap *soap,
     else if (atype == ACTION_REGMOD && spec->union_ActionSpecT.regmod
 	&& spec->union_ActionSpecT.regmod->registerValue
 	&& spec->union_ActionSpecT.regmod->registerValue->name) {
-	reg = target_dw_reg_no_targetname(target,spec->union_ActionSpecT.regmod->registerValue->name);
-	if (reg == 0 && errno == EINVAL) {
+	if (target_regno(target,
+			 spec->union_ActionSpecT.regmod->registerValue->name,
+			 &reg)) {
 	    verror("bad register number in regmod action!\n");
 	    return NULL;
 	}

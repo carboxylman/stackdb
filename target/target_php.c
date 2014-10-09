@@ -18,7 +18,9 @@
 
 #include <sys/types.h>
 #include <unistd.h>
+#include <glib.h>
 
+#include "object.h"
 #include "binfile.h"
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
@@ -228,10 +230,10 @@ static struct value *php_TSRMG(struct target *target,ADDR tsrm_ls,int rsrc_id,
     */
 
     /* Apply the unshuffled (rsrc_id - 1) rsrc_id index into the array. */
-    ptr += (target->base->ptrsize * (rsrc_id - 1));
+    ptr += (target->base->arch->ptrsize * (rsrc_id - 1));
 
     /* Read it to get the pointer at that array index. */
-    if (!target_read_addr(target->base,ptr,target->base->ptrsize,
+    if (!target_read_addr(target->base,ptr,target->base->arch->ptrsize,
 			  (unsigned char *)&ptr)) {
 	verror("could not read tsrm_ls idx %d (%d) 0x%"PRIxADDR
 	       " (0x%"PRIxADDR")!\n",
@@ -952,7 +954,7 @@ static int php_snprintf(struct target *target,char *buf,int bufsiz);
 static int php_init(struct target *target);
 static int php_postloadinit(struct target *target);
 static int php_attach(struct target *target);
-static int php_detach(struct target *target);
+static int php_detach(struct target *target,int stay_paused);
 static int php_fini(struct target *target);
 static int php_loadspaces(struct target *target);
 static int php_loadregions(struct target *target,struct addrspace *space);
@@ -970,9 +972,6 @@ static struct value *php_read_symbol(struct target *target,
 				     struct target_location_ctxt *tlctxt,
 				     struct bsymbol *bsymbol,
 				     load_flags_t flags);
-static char *php_reg_name(struct target *target,REG reg);
-static REG php_dwregno_targetname(struct target *target,char *name);
-static REG php_dw_reg_no(struct target *target,common_reg_t reg);
 
 static tid_t php_gettid(struct target *target);
 static void php_free_thread_state(struct target *target,void *state);
@@ -986,13 +985,14 @@ static int php_load_available_threads(struct target *target,int force);
 static int php_flush_thread(struct target *target,tid_t tid);
 static int php_flush_current_thread(struct target *target);
 static int php_flush_all_threads(struct target *target);
-static int php_invalidate_all_threads(struct target *target);
-static int php_thread_snprintf(struct target_thread *tthread,
+static int php_invalidate_thread(struct target *target,
+				 struct target_thread *tthread);
+static int php_thread_snprintf(struct target *target,
+			       struct target_thread *tthread,
 			       char *buf,int bufsiz,
 			       int detail,char *sep,char *kvsep);
 static REGVAL php_read_reg(struct target *target,tid_t tid,REG reg);
 static int php_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value);
-static GHashTable *php_copy_registers(struct target *target,tid_t tid);
 
 static struct target_location_ctxt *php_unwind(struct target *target,tid_t tid);
 static int php_unwind_read_reg(struct target_location_ctxt *tlctxt,
@@ -1038,10 +1038,6 @@ struct target_ops php_ops = {
 
     .read_symbol = php_read_symbol,
 
-    .regname = php_reg_name,
-    .dwregno_targetname = php_dwregno_targetname,
-    .dwregno = php_dw_reg_no,
-
     .gettid = php_gettid,
     .free_thread_state = php_free_thread_state,
 
@@ -1056,7 +1052,7 @@ struct target_ops php_ops = {
     .flush_thread = php_flush_thread,
     .flush_current_thread = php_flush_current_thread,
     .flush_all_threads = php_flush_all_threads,
-    .invalidate_all_threads = php_invalidate_all_threads,
+    .invalidate_thread = php_invalidate_thread,
     .thread_snprintf = php_thread_snprintf,
 
     .attach_evloop = NULL,
@@ -1064,7 +1060,6 @@ struct target_ops php_ops = {
 
     .readreg = php_read_reg,
     .writereg = php_write_reg,
-    .copy_registers = php_copy_registers,
 
     .unwind = php_unwind,
     .unwind_read_reg = php_unwind_read_reg,
@@ -1087,6 +1082,12 @@ static int php_init(struct target *target) {
     struct target *base = target->base;
     tid_t base_tid = target->base_tid;
 
+    if (target->spec->stay_paused) {
+	verror("PHP driver cannot leave target process closed on exit!\n");
+	errno = EINVAL;
+	return -1;
+    }
+
     /*
      * Setup target mode stuff.
      */
@@ -1095,9 +1096,7 @@ static int php_init(struct target *target) {
     target->writeable = base->writeable;
     target->mmapable = 0;
     /* NB: only native arch supported!  i.e., no 32-bit emu on 64-bit host. */
-    target->endian = base->endian;
-    target->wordsize = base->wordsize;
-    target->ptrsize = base->ptrsize;
+    target->arch = base->arch;
 
     /* Which register is the fbreg is dependent on host cpu type, not
      * target cpu type.
@@ -1152,7 +1151,7 @@ static int php_init(struct target *target) {
     ptstate = calloc(1,sizeof(*ptstate));
     ptstate->base_tlctxt = 
 	target_location_ctxt_create(base,target->base_tid,NULL);
-    target->current_thread = target_create_thread(target,base_tid,ptstate);
+    target->current_thread = target_create_thread(target,base_tid,ptstate,NULL);
     target_reuse_thread_as_global(target,target->current_thread);
     target_thread_set_status(target->current_thread,THREAD_STATUS_RUNNING);
 
@@ -1202,12 +1201,8 @@ static int php_attach(struct target *target) {
 
     /* Create a default lookup/load context. */
     /* Cheat: grab the first region :). */
-    list_for_each_entry(space,&target->spaces,space) {
-	list_for_each_entry(region,&space->regions,region) {
-	    break;
-	}
-	break;
-    }
+    space = (struct addrspace *)g_list_nth_data(target->spaces,0);
+    region = (struct memregion *)g_list_nth_data(space->regions,0);
 
     pstate->default_tlctxt = 
 	target_location_ctxt_create(target,target->base_tid,region);
@@ -1411,7 +1406,7 @@ static int php_attach(struct target *target) {
 
 		/* Deref the first pointer to the array. */
 		if (!target_read_addr(target->base,ptstate->ztsinfo.tsrm_ls,
-				      target->base->ptrsize,
+				      target->base->arch->ptrsize,
 				      (unsigned char *)&derefed_tsrm_ls)) {
 		    verror("could not read tsrm_ls 0x%"PRIxADDR"!\n",
 			   ptstate->ztsinfo.tsrm_ls);
@@ -1447,7 +1442,7 @@ static int php_attach(struct target *target) {
     return -1;
 }
 
-static int php_detach(struct target *target) {
+static int php_detach(struct target *target,int stay_paused) {
     /*
      * Just detach all our threads.
      */
@@ -1455,13 +1450,7 @@ static int php_detach(struct target *target) {
 }
 
 static int php_loadspaces(struct target *target) {
-    struct addrspace *space = addrspace_create(target,"php",target->base_tid);
-
-    space->target = target;
-    RHOLD(space,target);
-
-    list_add_tail(&space->space,&target->spaces);
-
+    addrspace_create(target,"php",target->base_tid);
     return 0;
 }
 
@@ -1509,7 +1498,7 @@ static int php_loaddebugfiles(struct target *target,
     struct symbol *base;
     char buf[64];
 
-    vdebug(5,LA_TARGET,LF_XVP,"tid %d\n",target->base_tid);
+    vdebug(5,LA_TARGET,LF_PHP,"tid %d\n",target->base_tid);
 
     pstate->debugfile_symbol_counter = 0;
 
@@ -1552,7 +1541,7 @@ static int php_loaddebugfiles(struct target *target,
 			 LOADTYPE_FULL,symbol_read_owned_scope(builtin_root));
     base->datatype_code = DATATYPE_BASE;
     symbol_set_encoding(base,ENCODING_BOOLEAN);
-    symbol_set_bytesize(base,target->wordsize);
+    symbol_set_bytesize(base,target->arch->wordsize);
     symbol_insert_symbol(builtin_root,base);
     pstate->base_symbols[PHP_BASE_BOOL] = base;
 
@@ -1561,7 +1550,7 @@ static int php_loaddebugfiles(struct target *target,
 			 LOADTYPE_FULL,symbol_read_owned_scope(builtin_root));
     base->datatype_code = DATATYPE_BASE;
     symbol_set_encoding(base,ENCODING_SIGNED);
-    symbol_set_bytesize(base,target->wordsize);
+    symbol_set_bytesize(base,target->arch->wordsize);
     symbol_insert_symbol(builtin_root,base);
     pstate->base_symbols[PHP_BASE_LONG] = base;
 
@@ -1570,7 +1559,7 @@ static int php_loaddebugfiles(struct target *target,
 			 LOADTYPE_FULL,symbol_read_owned_scope(builtin_root));
     base->datatype_code = DATATYPE_BASE;
     symbol_set_encoding(base,ENCODING_FLOAT);
-    symbol_set_bytesize(base,target->wordsize);
+    symbol_set_bytesize(base,target->arch->wordsize);
     symbol_insert_symbol(builtin_root,base);
     pstate->base_symbols[PHP_BASE_DOUBLE] = base;
 
@@ -1881,8 +1870,8 @@ static struct value *php_read_symbol(struct target *target,
 	final = 0; // - 8
 	if (tlctxtf && tlctxtf->frame == 0)
 	    stack_top_addr -= 8;
-	target_read_addr(base,stack_top_addr - (arg_count - argslot) * target->ptrsize,
-			 base->ptrsize,(unsigned char *)&final);
+	target_read_addr(base,stack_top_addr - (arg_count - argslot) * base->arch->ptrsize,
+			 base->arch->ptrsize,(unsigned char *)&final);
 
 	zval_v = target_load_type(base,pstate->zend_zval_type,final,
 				  LOAD_FLAG_NONE);
@@ -1922,25 +1911,13 @@ static struct value *php_read_symbol(struct target *target,
     return NULL;
 }
 
-static char *php_reg_name(struct target *target,REG reg) {
-    return target->base->ops->regname(target->base,reg);
-}
-
-static REG php_dwregno_targetname(struct target *target,char *name) {
-    return target->base->ops->dwregno_targetname(target->base,name);
-}
-
-static REG php_dw_reg_no(struct target *target,common_reg_t reg) {
-    return target->base->ops->dwregno(target->base,reg);
-}
-
 static tid_t php_gettid(struct target *target) {
     struct target_thread *tthread;
 
     // XXX: fix!
     return target->base_tid;
 
-    if (target->current_thread && target->current_thread->valid)
+    if (target->current_thread && OBJVALID(target->current_thread))
 	return target->current_thread->tid;
 
     tthread = php_load_current_thread(target,0);
@@ -2003,7 +1980,7 @@ php_load_current_thread(struct target *target,int force) {
 
     /* XXX: should we return the primary thread, or NULL? */
     if (!__is_our_tid(target,uthread->tid)) {
-	vwarnopt(9,LA_TARGET,LF_XVP,
+	vwarnopt(9,LA_TARGET,LF_PHP,
 		 "base target current tid %d is not in tgid %d!\n",
 		 uthread->tid,target->base_tid);
 	errno = ESRCH;
@@ -2034,7 +2011,7 @@ static int php_flush_thread(struct target *target,tid_t tid) {
     struct target_thread *tthread;
 
     tthread = target_lookup_thread(target,tid);
-    if (!tthread->dirty)
+    if (!OBJDIRTY(tthread))
 	return 0;
 
     if (!__is_our_tid(target,tid)) {
@@ -2051,7 +2028,7 @@ static int php_flush_thread(struct target *target,tid_t tid) {
     }
     */
 
-    tthread->dirty = 0;
+    OBJSCLEAN(tthread);
 
     return 0;
 }
@@ -2066,35 +2043,26 @@ static int php_flush_all_threads(struct target *target) {
     return 0; //php_flush_thread(target,target->base_tid);
 }
 
-static int php_invalidate_all_threads(struct target *target) {
-    GHashTableIter iter;
-    struct target_thread *tthread;
+static int php_invalidate_thread(struct target *target,
+				 struct target_thread *tthread) {
     struct php_thread_state *ptstate;
 
-    g_hash_table_iter_init(&iter,target->threads);
-    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
-	ptstate = (struct php_thread_state *)tthread->state;
+    ptstate = (struct php_thread_state *)tthread->state;
 
-	tthread->valid = 0;
+    OBJSINVALID(tthread);
 
-	if (ptstate->current_execute_data_v) {
-	    value_free(ptstate->current_execute_data_v);
-	    ptstate->current_execute_data_v = NULL;
-	}
-
-	tthread->valid = 0;
+    if (ptstate->current_execute_data_v) {
+	value_free(ptstate->current_execute_data_v);
+	ptstate->current_execute_data_v = NULL;
     }
 
     return 0;
 }
 
-static int php_thread_snprintf(struct target_thread *tthread,
+static int php_thread_snprintf(struct target *target,
+			       struct target_thread *tthread,
 			       char *buf,int bufsiz,
 			       int detail,char *sep,char *kvsep) {
-    struct target *target;
-
-    target = tthread->target;
-
     if (!__is_our_tid(target,tthread->tid)) {
 	verror("tid %d is not in tgid %d!\n",
 	       tthread->tid,tthread->target->base_tid);
@@ -2102,7 +2070,7 @@ static int php_thread_snprintf(struct target_thread *tthread,
 	return -1;
     }
 
-    return target->base->ops->thread_snprintf(target->base_thread,
+    return target->base->ops->thread_snprintf(target->base,target->base_thread,
 					      buf,bufsiz,detail,sep,kvsep);
 }
 
@@ -2116,10 +2084,6 @@ static REGVAL php_read_reg(struct target *target,tid_t tid,REG reg) {
 static int php_write_reg(struct target *target,tid_t tid,REG reg,
 				    REGVAL value) {
     return target->base->ops->writereg(target->base,tid,reg,value);
-}
-
-static GHashTable *php_copy_registers(struct target *target,tid_t tid) {
-    return target->base->ops->copy_registers(target->base,tid);
 }
 
 static struct target_location_ctxt *php_unwind(struct target *target,tid_t tid) {
@@ -2759,7 +2723,7 @@ int __php_location_ops_getaddrsize(struct location_ctxt *lctxt) {
     struct target_location_ctxt *tlctxt;
 
     tlctxt = (struct target_location_ctxt *)lctxt->priv;
-    return tlctxt->thread->target->wordsize;
+    return tlctxt->thread->target->arch->wordsize;
 }
 
 int __php_location_ops_getregno(struct location_ctxt *lctxt,
@@ -2799,7 +2763,7 @@ int __php_location_ops_readword(struct location_ctxt *lctxt,
     tlctxt = (struct target_location_ctxt *)lctxt->priv;
 
     rc = target_read_addr(tlctxt->thread->target,real_addr,
-			  tlctxt->thread->target->ptrsize,(unsigned char *)pval);
+			  tlctxt->thread->target->arch->ptrsize,(unsigned char *)pval);
     if (rc != (unsigned char *)pval) {
 	verror("could not read 0x%"PRIxADDR": %s!\n",
 	       real_addr,strerror(errno));
@@ -2817,9 +2781,9 @@ int __php_location_ops_writeword(struct location_ctxt *lctxt,
     tlctxt = (struct target_location_ctxt *)lctxt->priv;
 
     rc = target_write_addr(tlctxt->thread->target,real_addr,
-			   tlctxt->thread->target->ptrsize,
+			   tlctxt->thread->target->arch->ptrsize,
 			   (unsigned char *)&pval);
-    if (rc != tlctxt->thread->target->ptrsize) {
+    if (rc != tlctxt->thread->target->arch->ptrsize) {
 	verror("could not write 0x%"PRIxADDR" to 0x%"PRIxADDR": %s!\n",
 	       pval,real_addr,strerror(errno));
 	return -1;

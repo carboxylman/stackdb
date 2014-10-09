@@ -16,10 +16,15 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include "config.h"
+
+#include <errno.h>
 #include <assert.h>
 #include <glib.h>
+#include <dlfcn.h>
 #include "glib_wrapper.h"
-
+#include "arch.h"
+#include "regcache.h"
 #include "rfilter.h"
 #include "binfile.h"
 #include "dwdebug.h"
@@ -31,13 +36,15 @@
 #include "target_linux_userproc.h"
 #ifdef ENABLE_XENSUPPORT
 #include "target_xen_vm.h"
-#include "target_xen_vm_process.h"
 #endif
+#include "target_os_process.h"
 #include "target_php.h"
+#include "target_gdb.h"
 
 /**
  ** Globals.
  **/
+extern void os_linux_generic_register(void);
 
 /*
  * A simple global target ID counter.  Callers of target_instantiate or
@@ -54,6 +61,7 @@ static int next_target_id = 1;
 static int init_done = 0;
 
 static GHashTable *target_id_tab = NULL;
+static GHashTable *target_personality_tab = NULL;
 
 void target_init(void) {
     if (init_done)
@@ -63,6 +71,11 @@ void target_init(void) {
 
     target_id_tab = g_hash_table_new_full(g_direct_hash,g_direct_equal,
 					  NULL,NULL);
+    target_personality_tab = g_hash_table_new_full(g_str_hash,g_str_equal,
+						   NULL,NULL);
+
+    /* Register the default personalities. */
+    os_linux_generic_register();
 
     init_done = 1;
 }
@@ -70,6 +83,7 @@ void target_init(void) {
 void target_fini(void) {
     GHashTableIter iter;
     struct target *t;
+    gpointer kp,vp;
 
     if (!init_done)
 	return;
@@ -78,12 +92,25 @@ void target_fini(void) {
     while (g_hash_table_size(target_id_tab) > 0) {
 	g_hash_table_iter_init(&iter,target_id_tab);
 	while (g_hash_table_iter_next(&iter,NULL,(gpointer)&t)) {
-	    target_free(t);
+	    target_finalize(t);
 	    break;
 	}
     }
     g_hash_table_destroy(target_id_tab);
     target_id_tab = NULL;
+
+    /*
+     * Don't free the struct target_personality_ops; it should be
+     * statically linked in.
+     */
+    g_hash_table_iter_init(&iter,target_personality_tab);
+    while (g_hash_table_iter_next(&iter,&kp,&vp)) {
+	free(kp);
+	free(vp);
+	break;
+    }
+    g_hash_table_destroy(target_personality_tab);
+    target_personality_tab = NULL;
 
     dwdebug_fini();
 
@@ -120,6 +147,10 @@ struct target *target_lookup_target_id(int id) {
  **/
 error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state);
 
+#define TARGET_ARGP_PERSONALITY     0x333333
+#define TARGET_ARGP_PERSONALITY_LIB 0x333334
+#define TARGET_ARGP_START_PAUSED    0x333335
+
 struct argp_option target_argp_opts[] = {
     { "debug",'d',"LEVEL",0,"Set/increase the debugging level.",-3 },
     { "log-flags",'l',"FLAG,FLAG,...",0,"Set the debugging flags",-3 },
@@ -127,10 +158,15 @@ struct argp_option target_argp_opts[] = {
     { "target-type",'t',"TYPENAME",0,
       "Forcibly set the target type (ptrace"
 #ifdef ENABLE_XENSUPPORT
-      ",xen,xen-process"
+      ",xen"
 #endif
-      ").",-3 },
-    { "start-paused",'P',0,0,"Leave target paused after launch.",-3 },
+      ",gdb,os-process,php).",-3 },
+    { "personality",TARGET_ARGP_PERSONALITY,"PERSONALITY",0,
+      "Forcibly set the target personality (linux,process,php).",-3 },
+    { "personality-lib",TARGET_ARGP_PERSONALITY_LIB,"PERSONALITY_LIB_FILENAME",0,
+      "Specify a shared library where the personality specified by --personality should be loaded from.",-3 },
+    { "start-paused",TARGET_ARGP_START_PAUSED,0,0,"Leave target paused after launch.",-3 },
+    { "stay-paused",'P',0,0,"Keep target paused at detach.",-3 },
     { "soft-breakpoints",'s',0,0,"Force software breakpoints.",-3 },
     { "debugfile-load-opts",'F',"LOAD-OPTS",0,"Add a set of debugfile load options.",-3 },
     { "breakpoint-mode",'L',"STRICT-LEVEL",0,"Set/increase the breakpoint mode level.",-3 },
@@ -172,18 +208,31 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
 	    return -1;
 	}
     }
-    else if (spec->target_type == TARGET_TYPE_XEN_PROCESS) {
+#endif
+    else if (spec->target_type == TARGET_TYPE_OS_PROCESS) {
+	/* NB: os_process_spec has nothing; don't do anything. */
 	/*
-	 * XXX: xen_vm_spec_process has nothing; don't do anything.
-	 */
-	/*
-	if ((rc = xen_vm_process_spec_to_argv(spec,&backend_argc,&backend_argv))) {
-	    verror("xen_vm_process_spec_to_argv failed!\n");
+	if ((rc = os_process_spec_to_argv(spec,&backend_argc,&backend_argv))) {
+	    verror("os_process_spec_to_argv failed!\n");
 	    return -1;
 	}
 	*/
     }
-#endif
+    else if (spec->target_type == TARGET_TYPE_PHP) {
+	/* NB: php_spec has nothing; don't do anything. */
+	/*
+	if ((rc = php_spec_to_argv(spec,&backend_argc,&backend_argv))) {
+	    verror("php_spec_to_argv failed!\n");
+	    return -1;
+	}
+	*/
+    }
+    else if (spec->target_type == TARGET_TYPE_GDB) {
+	if ((rc = gdb_spec_to_argv(spec,&backend_argc,&backend_argv))) {
+	    verror("gdb_spec_to_argv failed!\n");
+	    return -1;
+	}
+    }
     else {
 	verror("unsupported backend type %d!\n",spec->target_type);
 	return -1;
@@ -209,6 +258,8 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
      */
     if (spec->start_paused) 
 	ac += 1;
+    if (spec->stay_paused)
+	ac += 1;
     if (spec->style == PROBEPOINT_SW)
 	ac += 1;
     if (spec->bpmode > 0)
@@ -223,12 +274,13 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
 	ac += 2;
     if (spec->kill_on_close) 
 	ac += 1;
+    if (spec->personality)
+	ac += 2;
+    if (spec->personality_lib)
+	ac += 2;
     if (spec->debugfile_root_prefix)
 	ac += 2;
-    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY
-	|| spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT
-	|| spec->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY 
-	|| spec->active_probe_flags & ACTIVE_PROBE_FLAG_OTHER)
+    if (spec->ap_flags & APF_ALL)
 	ac += 2;
 
     ac += backend_argc;
@@ -252,15 +304,22 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
 #ifdef ENABLE_XENSUPPORT
     else if (spec->target_type == TARGET_TYPE_XEN)
 	av[j++] = strdup("xen");
-    else if (spec->target_type == TARGET_TYPE_XEN_PROCESS)
-	av[j++] = strdup("xen-process");
 #endif
+    else if (spec->target_type == TARGET_TYPE_GDB)
+	av[j++] = strdup("gdb");
+    else if (spec->target_type == TARGET_TYPE_OS_PROCESS)
+	av[j++] = strdup("os-process");
+    else if (spec->target_type == TARGET_TYPE_PHP)
+	av[j++] = strdup("php");
     else
 	av[j++] = strdup("UNKNOWN");
 
     /* Do the generic opts. */
     if (spec->start_paused) {
-	av[j++] = strdup("-P");
+	av[j++] = strdup("--start-paused");
+    }
+    if (spec->stay_paused) {
+	av[j++] = strdup("--stay-paused");
     }
     if (spec->style == PROBEPOINT_SW) {
 	av[j++] = strdup("-s");
@@ -292,35 +351,97 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
     if (spec->kill_on_close) {
 	av[j++] = strdup("-k");
     }
+    if (spec->personality) {
+	av[j++] = strdup("--personality");
+	av[j++] = strdup(spec->personality);
+    }
+    if (spec->personality_lib) {
+	av[j++] = strdup("--personality-lib");
+	av[j++] = strdup(spec->personality_lib);
+    }
     if (spec->debugfile_root_prefix) {
 	av[j++] = strdup("-R");
 	av[j++] = strdup(spec->debugfile_root_prefix);
     }
-    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY
-	|| spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT
-	|| spec->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY 
-	|| spec->active_probe_flags & ACTIVE_PROBE_FLAG_OTHER) {
+    if (spec->ap_flags & APF_ALL) {
 	av[j++] = strdup("-a");
 	len = 0;
-	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)
+
+	if (spec->ap_flags & APF_THREAD_ENTRY)
 	    len += sizeof("thread_entry,");
-	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)
+	if (spec->ap_flags & APF_THREAD_EXIT)
 	    len += sizeof("thread_exit,");
-	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)
+	if (spec->ap_flags & APF_MEMORY)
 	    len += sizeof("memory,");
-	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_OTHER)
+	if (spec->ap_flags & APF_OTHER)
 	    len += sizeof("other,");
+
+	if (spec->ap_flags & APF_OS_THREAD_ENTRY)
+	    len += sizeof("os_thread_entry,");
+	if (spec->ap_flags & APF_OS_THREAD_EXIT)
+	    len += sizeof("os_thread_exit,");
+	if (spec->ap_flags & APF_OS_MEMORY)
+	    len += sizeof("os_memory,");
+	if (spec->ap_flags & APF_OS_OTHER)
+	    len += sizeof("os_other,");
+
+	if (spec->ap_flags & APF_PROCESS_THREAD_ENTRY)
+	    len += sizeof("process_thread_entry,");
+	if (spec->ap_flags & APF_PROCESS_THREAD_EXIT)
+	    len += sizeof("process_thread_exit,");
+	if (spec->ap_flags & APF_PROCESS_MEMORY)
+	    len += sizeof("process_memory,");
+	if (spec->ap_flags & APF_PROCESS_OTHER)
+	    len += sizeof("process_other,");
+
+	if (spec->ap_flags & APF_APP_THREAD_ENTRY)
+	    len += sizeof("app_thread_entry,");
+	if (spec->ap_flags & APF_APP_THREAD_EXIT)
+	    len += sizeof("app_thread_exit,");
+	if (spec->ap_flags & APF_APP_MEMORY)
+	    len += sizeof("app_memory,");
+	if (spec->ap_flags & APF_APP_OTHER)
+	    len += sizeof("app_other,");
+
 	len += 1;
 	av[j] = malloc(len);
 	rc = 0;
-	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)
+
+	if (spec->ap_flags & APF_THREAD_ENTRY)
 	    rc += snprintf(av[j] + rc,len - rc,"%s","thread_entry,");
-	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)
+	if (spec->ap_flags & APF_THREAD_EXIT)
 	    rc += snprintf(av[j] + rc,len - rc,"%s","thread_exit,");
-	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)
+	if (spec->ap_flags & APF_MEMORY)
 	    rc += snprintf(av[j] + rc,len - rc,"%s","memory,");
-	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_OTHER)
+	if (spec->ap_flags & APF_OTHER)
 	    rc += snprintf(av[j] + rc,len - rc,"%s","other,");
+
+	if (spec->ap_flags & APF_OS_THREAD_ENTRY)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","os_thread_entry,");
+	if (spec->ap_flags & APF_OS_THREAD_EXIT)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","os_thread_exit,");
+	if (spec->ap_flags & APF_OS_MEMORY)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","os_memory,");
+	if (spec->ap_flags & APF_OS_OTHER)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","os_other,");
+
+	if (spec->ap_flags & APF_PROCESS_THREAD_ENTRY)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","process_thread_entry,");
+	if (spec->ap_flags & APF_PROCESS_THREAD_EXIT)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","process_thread_exit,");
+	if (spec->ap_flags & APF_PROCESS_MEMORY)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","process_memory,");
+	if (spec->ap_flags & APF_PROCESS_OTHER)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","process_other,");
+
+	if (spec->ap_flags & APF_APP_THREAD_ENTRY)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","app_thread_entry,");
+	if (spec->ap_flags & APF_APP_THREAD_EXIT)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","app_thread_exit,");
+	if (spec->ap_flags & APF_APP_MEMORY)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","app_memory,");
+	if (spec->ap_flags & APF_APP_OTHER)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","app_other,");
 
 	++j;
     }
@@ -378,7 +499,7 @@ struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
      * These are our subparsers.  They are optional, so we have to build
      * them manually.
      */
-    struct argp_child target_argp_children[3];
+    struct argp_child target_argp_children[4];
     /*
      * This is the "main" target arg parser, to be used if the caller
      * has no arguments.
@@ -438,6 +559,13 @@ struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
 	++tstate.num_children;
     }
 #endif
+    if (target_types & TARGET_TYPE_GDB) {
+	target_argp_children[tstate.num_children].argp = &gdb_argp;
+	target_argp_children[tstate.num_children].flags = 0;
+	target_argp_children[tstate.num_children].header = gdb_argp_header;
+	target_argp_children[tstate.num_children].group = 0;
+	++tstate.num_children;
+    }
 
     target_argp_children[tstate.num_children].argp = NULL;
     target_argp_children[tstate.num_children].flags = 0;
@@ -480,6 +608,7 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     target_type_t tmptype;
     char *saveptr;
     char *token;
+    int shf;
 
     if (tstate)
 	spec = tstate->spec;
@@ -515,13 +644,15 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	if (strcmp(arg,"ptrace") == 0)
 	    tmptype = TARGET_TYPE_PTRACE;
 #ifdef ENABLE_XENSUPPORT
-	else if (strcmp(arg,"xen-process") == 0) 
-	    tmptype = TARGET_TYPE_XEN_PROCESS;
 	else if (strcmp(arg,"xen") == 0) 
 	    tmptype = TARGET_TYPE_XEN;
 #endif
+	else if (strcmp(arg,"os-process") == 0) 
+	    tmptype = TARGET_TYPE_OS_PROCESS;
 	else if (strcmp(arg,"php") == 0) 
 	    tmptype = TARGET_TYPE_PHP;
+	else if (strcmp(arg,"gdb") == 0)
+	    tmptype = TARGET_TYPE_GDB;
 	else {
 	    verror("bad target type %s!\n",arg);
 	    return EINVAL;
@@ -538,13 +669,15 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	    if (tmptype == TARGET_TYPE_PTRACE)
 		spec->backend_spec = linux_userproc_build_spec();
 #ifdef ENABLE_XENSUPPORT
-	    else if (strcmp(arg,"xen-process") == 0) 
-		spec->backend_spec = xen_vm_process_build_spec();
 	    else if (strcmp(arg,"xen") == 0) 
 		spec->backend_spec = xen_vm_build_spec();
 #endif
+	    else if (strcmp(arg,"os-process") == 0) 
+		spec->backend_spec = os_process_build_spec();
 	    else if (strcmp(arg,"php") == 0) 
 		spec->backend_spec = php_build_spec();
+	    else if (tmptype == TARGET_TYPE_GDB)
+		spec->backend_spec = gdb_build_spec();
 	}
 
 	break;
@@ -612,8 +745,11 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	    array_list_append(spec->debugfile_load_opts_list,opts);
 	    break;
 	}
-    case 'P':
+    case TARGET_ARGP_START_PAUSED:
 	spec->start_paused = 1;
+	break;
+    case 'P':
+	spec->stay_paused = 1;
 	break;
     case 'L':
 	if (arg)
@@ -636,6 +772,12 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case 'k':
 	spec->kill_on_close = 1;
 	break;
+    case TARGET_ARGP_PERSONALITY:
+	spec->personality = strdup(arg);
+	break;
+    case TARGET_ARGP_PERSONALITY_LIB:
+	spec->personality_lib = strdup(arg);
+	break;
     case 'R':
 	spec->debugfile_root_prefix = strdup(arg);
 	break;
@@ -643,14 +785,33 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	argcopy = strdup(arg);
 	saveptr = NULL;
 	while ((token = strtok_r((!saveptr) ? argcopy : NULL,",",&saveptr))) {
+	    if (strncmp(token,"os_",2) == 0) {
+		token += 3;
+		shf = 8;
+	    }
+	    else if (strncmp(token,"process_",8) == 0) {
+		token += 8;
+		shf = 16;
+	    }
+	    else if (strncmp(token,"proc_",5) == 0) {
+		token += 5;
+		shf = 16;
+	    }
+	    else if (strncmp(token,"app_",4) == 0) {
+		token += 4;
+		shf = 24;
+	    }
+	    else
+		shf = 0;
+
 	    if (strcmp("thread_entry",token) == 0)
-		spec->active_probe_flags |= ACTIVE_PROBE_FLAG_THREAD_ENTRY;
+		spec->ap_flags |= (APF_THREAD_ENTRY << shf);
 	    else if (strcmp("thread_exit",token) == 0)
-		spec->active_probe_flags |= ACTIVE_PROBE_FLAG_THREAD_EXIT;
+		spec->ap_flags |= (APF_THREAD_EXIT << shf);
 	    else if (strcmp("memory",token) == 0)
-		spec->active_probe_flags |= ACTIVE_PROBE_FLAG_MEMORY;
+		spec->ap_flags |= (APF_MEMORY << shf);
 	    else if (strcmp("other",token) == 0)
-		spec->active_probe_flags |= ACTIVE_PROBE_FLAG_OTHER;
+		spec->ap_flags |= (APF_OTHER << shf);
 	    else {
 		verror("unrecognized active probe flag '%s'!\n",token);
 		return EINVAL;
@@ -740,6 +901,9 @@ void target_gkv_destroy(struct target *target) {
     gpointer kp,vp;
     char *key;
     struct target_gkv_info *gkvi;
+
+    if (!target->gkv_store)
+	return;
 
     g_hash_table_iter_init(&iter,target->gkv_store);
     while (g_hash_table_iter_next(&iter,&kp,&vp)) {
@@ -896,64 +1060,42 @@ void target_thread_gkv_destroy(struct target *target,
     tthread->gkv_store = NULL;
 }
 
-void target_add_state_change(struct target *target,tid_t tid,
-			     target_state_change_type_t chtype,
-			     unsigned long code,unsigned long data,
-			     ADDR start,ADDR end,char *msg) {
-    struct target_state_change *retval = calloc(1,sizeof(*retval));
-
-    retval->tid = tid;
-    retval->chtype = chtype;
-    retval->code = code;
-    retval->data = data;
-    retval->start = start;
-    retval->end = end;
-    if (msg)
-	retval->msg = strdup(msg);
-
-    vdebug(5,LA_TARGET,LF_TARGET,
-	   "state changed (chtype=%d,code=0x%lx,data=0x%lx) on target(%s)\n",
-	   chtype,code,data,target->name);
-
-    array_list_append(target->state_changes,retval);
-}
-
-void target_clear_state_changes(struct target *target) {
-    struct target_state_change *change;
-    int i;
-
-    if (!target->state_changes)
-	return;
-
-    if (array_list_len(target->state_changes)) {
-	vdebug(5,LA_TARGET,LF_TARGET,
-	       "clearing %d state changes on target(%s)\n",
-	       array_list_len(target->state_changes),target->name);
-
-	array_list_foreach(target->state_changes,i,change) {
-	    if (change->msg)
-		free(change->msg);
-	    free(change);
-	}
-    }
-    array_list_remove_all(target->state_changes,64);
-}
-
-void target_free(struct target *target) {
+REFCNT target_free(struct target *target,int force) {
     struct addrspace *space;
-    struct addrspace *tmp;
     int rc;
-    int i;
     struct action *action;
     struct probe *probe;
-    struct array_list *list;
-    REFCNT trefcnt;
-    void *key;
+    GList *list;
     GHashTableIter iter;
     struct target *overlay;
     char *tmpname;
     struct target_thread *tthread;
+    REFCNT trefcnt;
+    REFCNT retval;
+    GList *t1,*t2;
 
+    assert(target);
+
+    if (target->refcnt) {
+	if (!force) {
+	    verror("cannot free (%d refs) target %s\n",
+		   target->refcnt,target->name);
+	    return target->refcnt;
+	}
+	else {
+	    vwarn("forcing free (%d refs) target %s\n",
+		   target->refcnt,target->name);
+	}
+    }
+
+    /* NB: take a temp ref so that any RPUTWs don't double-call; see common.h */
+    RWGUARD(target);
+
+    /*
+     * Close target first.  This will also close any overlays atop us.
+     * NB: do this first to make sure all live state is closed, before
+     * we free anything else.
+     */
     if (target->opened) {
 	vdebug(3,LA_TARGET,LF_TARGET,
 	       "target(%s) not closed; closing first!\n",target->name);
@@ -962,14 +1104,48 @@ void target_free(struct target *target) {
 
     vdebug(5,LA_TARGET,LF_TARGET,"freeing target(%s)\n",target->name);
 
-    if (target->state_changes) {
-	vwarnopt(4,LA_TARGET,LF_TARGET,
-		 "removing %d state change events; backend BUG?\n",
-		 array_list_len(target->state_changes));
-	target_clear_state_changes(target);
-	array_list_free(target->state_changes);
-	target->state_changes = NULL;
+    /*
+     * Do it for all the overlays first.  Since we might be calling
+     * target_free either from the underlying target, or the user might
+     * have called on this target directly (and this would result in
+     * target_detach_overlay getting called on us), we need to protect
+     * the iter while loop and restart it over and over again.
+     */
+    while (g_hash_table_size(target->overlays) > 0) {
+	g_hash_table_iter_init(&iter,target->overlays);
+	g_hash_table_iter_next(&iter,NULL,(gpointer)&overlay);
+
+	tmpname = strdup(overlay->name);
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "detaching overlay target(%s)\n",tmpname);
+	target_detach_overlay(target,overlay->base_tid);
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "detached overlay target(%s)\n",tmpname);
+	free(tmpname);
     }
+    g_hash_table_destroy(target->overlays);
+    target->overlays = NULL;
+    g_hash_table_destroy(target->overlay_aliases);
+    target->overlay_aliases = NULL;
+
+    /*
+     * If we were an overlay, remove ourself from the underlying
+     * target.
+     */
+    if (target->base) {
+	target_detach_overlay(target->base,target->base_tid);
+	RPUTW(target->base,target,target,trefcnt);
+	target->base = NULL;
+	if (target->base_thread) {
+	    RPUTW(target->base_thread,target_thread,target,trefcnt);
+	    target->base_thread = NULL;
+	}
+	target->base_tid = 0;
+    }
+
+    /*
+     * Ok, now we can actually free the target data structures.
+     */
 
     /*
      * Free actions, then probes,  We cannot call probe_free/action_free
@@ -986,57 +1162,32 @@ void target_free(struct target *target) {
      * probe's key to check the hashtable.  So we have to iterate over
      * keys!
      */
-    list = array_list_create_from_g_hash_table_keys(target->actions);
-    array_list_foreach(list,i,key) {
-	action = (struct action *)g_hash_table_lookup(target->actions,key);
+    list = g_hash_table_get_values(target->actions);
+    v_g_list_foreach(list,t1,action) {
 	if (action) 
 	    action_free(action,1);
     }
+    g_list_free(list);
     g_hash_table_destroy(target->actions);
-    array_list_free(list);
+    target->actions = NULL;
 
-    list = array_list_create_from_g_hash_table_keys(target->probes);
-    array_list_foreach(list,i,key) {
-	probe = (struct probe *)g_hash_table_lookup(target->probes,key);
+    list = g_hash_table_get_values(target->probes);
+    v_g_list_foreach(list,t1,probe) {
 	if (probe) 
 	    probe_free(probe,1);
     }
     g_hash_table_destroy(target->probes);
-    array_list_free(list);
+    target->probes = NULL;
+    g_list_free(list);
 
     g_hash_table_destroy(target->soft_probepoints);
-
-    /*
-     * If we were an overlay, remove ourself from the underlying
-     * target.
-     */
-    if (target->base)
-	target_detach_overlay(target->base,target->base_tid);
-
-    /*
-     * Do it for all the overlays first.  Since we might be calling
-     * target_free either from the underlying target, or the user might
-     * have called on this target directly, we need to protect the iter
-     * while loop and restart it over and over again.
-     */
-    while (g_hash_table_size(target->overlays) > 0) {
-	g_hash_table_iter_init(&iter,target->overlays);
-	g_hash_table_iter_next(&iter,NULL,(gpointer)&overlay);
-
-	tmpname = strdup(target->name);
-	vdebug(5,LA_TARGET,LF_TARGET,
-	       "freeing overlay target(%s)\n",tmpname);
-	target_free(overlay);
-	vdebug(5,LA_TARGET,LF_TARGET,
-	       "freed overlay target(%s)\n",tmpname);
-	free(tmpname);
-    }
-    g_hash_table_destroy(target->overlays);
-    g_hash_table_destroy(target->overlay_aliases);
+    target->soft_probepoints = NULL;
 
     /* These were freed when we closed the target. */
     g_hash_table_destroy(target->mmods);
+    target->mmods = NULL;
     g_hash_table_destroy(target->phys_mmods);
+    target->phys_mmods = NULL;
 
     /*
      * If the target backend didn't already do it, 
@@ -1044,36 +1195,61 @@ void target_free(struct target *target) {
      * manually because targets are allowed to "reuse" one of their real
      * threads as the "global" thread.
      */
-    g_hash_table_iter_init(&iter,target->threads);
-    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
-	if (tthread == target->global_thread) {
-	    g_hash_table_iter_remove(&iter);
-	}
-	else {
-	    target_delete_thread(target,tthread,1);
-	    g_hash_table_iter_remove(&iter);
+    list = g_hash_table_get_values(target->threads);
+    v_g_list_foreach(list,t1,tthread) {
+	target_detach_thread(target,tthread);
+    }
+    g_list_free(list);
+    target->global_thread = NULL;
+    target->current_thread = NULL;
+
+    /* Unload the debugfiles we might hold, if we can */
+    v_g_list_foreach_safe(target->spaces,t1,t2,space) {
+	RPUT(space,addrspace,target,trefcnt);
+    }
+    g_list_free(target->spaces);
+    target->spaces = NULL;
+
+    /*
+     * NB: must fini the personality in case it held refs to any of our
+     * threads, or to the target itself.
+     */
+    if (target->personality_ops && target->personality_ops->fini) {
+	vdebug(5,LA_TARGET,LF_TARGET,"fini target(%s) (personality)\n",
+	       target->name);
+	if ((rc = target->personality_ops->fini(target))) {
+	    verror("fini target(%s) (personality) failed; continuing anyway!!\n",
+		   target->name);
 	}
     }
-    if (target->global_thread)
-	target_delete_thread(target,target->global_thread,0);
+
+    /*
+     * Ok, now that we've removed our live state, and (attempted) to
+     * remove our children, see if anything still holds a weak ref to
+     * us.  If not, continue!
+     */
+
+    if (target->refcntw) {
+	if (!force) {
+	    verror("cannot free (%d wrefs) target %s\n",
+		   target->refcntw,target->name);
+	    return target->refcntw;
+	}
+	else {
+	    vwarn("forcing free (%d wrefs) target %s\n",
+		   target->refcntw,target->name);
+	}
+    }
 
     vdebug(5,LA_TARGET,LF_TARGET,"fini target(%s)\n",target->name);
     if ((rc = target->ops->fini(target))) {
-	verror("fini target(%s) failed; not finishing free!\n",target->name);
-	return;
+	verror("fini target(%s) failed; continuing anyway!\n",target->name);
     }
 
-    /* Target should not mess with these after close! */
-    target->global_thread = NULL;
+    target_gkv_destroy(target);
 
     g_hash_table_destroy(target->threads);
-
-    g_hash_table_destroy(target->mmaps);
-
-    /* Unload the debugfiles we might hold, if we can */
-    list_for_each_entry_safe(space,tmp,&target->spaces,space) {
-	RPUT(space,addrspace,target,trefcnt);
-    }
+    target->threads = NULL;
 
     g_hash_table_destroy(target->config);
     target->config = NULL;
@@ -1084,28 +1260,16 @@ void target_free(struct target *target) {
 	target->binfile = NULL;
     }
 
-    if (target->breakpoint_instrs)
-	free(target->breakpoint_instrs);
-
-    if (target->ret_instrs)
-	free(target->ret_instrs);
-
-    if (target->full_ret_instrs)
-	free(target->full_ret_instrs);
-
-    if (target->name)
+    if (target->name) {
 	free(target->name);
+	target->name = NULL;
+    }
 
-    if (target_id_tab)
-	g_hash_table_remove(target_id_tab,(gpointer)(uintptr_t)target->id);
+    retval = target->refcnt + target->refcntw - 1;
 
     free(target);
-}
 
-void ghash_mmap_entry_free(gpointer data) {
-    struct mmap_entry *mme = (struct mmap_entry *)data;
-
-    free(mme);
+    return retval;
 }
 
 struct target_ops *target_get_ops(target_type_t target_type) {
@@ -1114,11 +1278,13 @@ struct target_ops *target_get_ops(target_type_t target_type) {
 #ifdef ENABLE_XENSUPPORT
     else if (target_type == TARGET_TYPE_XEN)
 	return &xen_vm_ops;
-    else if (target_type == TARGET_TYPE_XEN_PROCESS)
-	return &xen_vm_process_ops;
 #endif
+    else if (target_type == TARGET_TYPE_OS_PROCESS)
+	return &os_process_ops;
     else if (target_type == TARGET_TYPE_PHP)
 	return &php_ops;
+    else if (target_type == TARGET_TYPE_GDB)
+	return &gdb_ops;
     else
 	return NULL;
 }
@@ -1151,8 +1317,6 @@ struct target *target_create(char *type,struct target_spec *spec) {
 	retval->id = spec->target_id;
     }
 
-    retval->state_changes = array_list_create(0);
-
     retval->ops = ops;
     retval->spec = spec;
 
@@ -1162,12 +1326,6 @@ struct target *target_create(char *type,struct target_spec *spec) {
 
     /* Keys are always copied; values get user-custom dtors */
     retval->gkv_store = g_hash_table_new_full(g_str_hash,g_str_equal,free,NULL);
-
-    INIT_LIST_HEAD(&retval->spaces);
-
-    retval->mmaps = g_hash_table_new_full(g_direct_hash,g_direct_equal,
-					  /* No names to free! */
-					  NULL,ghash_mmap_entry_free);
 
     retval->code_ranges = clrange_create();
 
@@ -1198,29 +1356,48 @@ struct target *target_create(char *type,struct target_spec *spec) {
     //*(((gint *)retval->soft_probepoints)+1) = 1;
     //*(((gint *)retval->soft_probepoints)) = 0;
 
-    if (target_id_tab)
+    if (target_id_tab) {
 	g_hash_table_insert(target_id_tab,
 			    (gpointer)(uintptr_t)retval->id,retval);
+	RHOLD(retval,target_id_tab);
+    }
 
     return retval;
 }
 
-struct mmap_entry *target_lookup_mmap_entry(struct target *target,
-					    ADDR base_addr) {
-    /* XXX: fill later. */
-    return NULL;
-}
+int target_finalize(struct target *target) {
+    REFCNT trefcnt;
 
-void target_attach_mmap_entry(struct target *target,
-			      struct mmap_entry *mme) {
-    /* XXX: fill later. */
-    return;
-}
+    /*
+     * If we were an overlay, remove ourself from the underlying
+     * target.
+     */
+    if (target->base) {
+	target_detach_overlay(target->base,target->base_tid);
+	RPUTW(target->base,target,target,trefcnt);
+	target->base = NULL;
+	if (target->base_thread) {
+	    RPUTW(target->base_thread,target_thread,target,trefcnt);
+	    target->base_thread = NULL;
+	}
+	target->base_tid = 0;
+    }
 
-void target_release_mmap_entry(struct target *target,
-			       struct mmap_entry *mme) {
-    /* XXX: fill later. */
-    return;
+    if (!target_id_tab) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    if (g_hash_table_lookup(target_id_tab,(gpointer)(uintptr_t)target->id)
+	!= target) {
+	errno = ESRCH;
+	return -1;
+    }
+
+    g_hash_table_remove(target_id_tab,(gpointer)(uintptr_t)target->id);
+    RPUT(target,target,target_id_tab,trefcnt);
+
+    return 0;
 }
 
 /*
@@ -1232,8 +1409,8 @@ int target_associate_debugfile(struct target *target,
 
     /* if they already loaded this debugfile into this region, error */
     if (g_hash_table_lookup(region->debugfiles,debugfile->filename)) {
-	verror("debugfile(%s) already in use in region(%s) in space (%s)!\n",
-	       debugfile->filename,region->name,region->space->idstr);
+	verror("debugfile(%s) already in use in region(%s) in space (%s:0x%"PRIxADDR")!\n",
+	       debugfile->filename,region->name,region->space->name,region->space->tag);
 	errno = EBUSY;
 	return -1;
     }
@@ -1245,15 +1422,16 @@ int target_associate_debugfile(struct target *target,
     vdebug(1,LA_TARGET,LF_TARGET,
 	   "loaded and associated debugfile(%s) for region(%s,"
 	   "base_phys=0x%"PRIxADDR",base_virt=0x%"PRIxADDR")"
-	   " in space (%s,%d)\n",
+	   " in space (%s:0x%PRIxADDR)\n",
 	   debugfile->filename,region->name,
 	   region->base_phys_addr,region->base_virt_addr,
-	   region->space->name,region->space->id);
+	   region->space->name,region->space->name,region->space->tag);
 
     return 0;
 }
 
 struct scope *target_lookup_addr(struct target *target,uint64_t addr) {
+    GList *t1,*t2;
     struct addrspace *space;
     struct memregion *region;
     struct symbol *root;
@@ -1262,11 +1440,8 @@ struct scope *target_lookup_addr(struct target *target,uint64_t addr) {
     gpointer value;
     ADDR obj_addr;
 
-    if (list_empty(&target->spaces))
-	return NULL;
-
-    list_for_each_entry(space,&target->spaces,space) {
-	list_for_each_entry(region,&space->regions,region) {
+    v_g_list_foreach(target->spaces,t1,space) {
+	v_g_list_foreach(space->regions,t2,region) {
 	    if (memregion_contains_real(region,addr))
 		goto found;
 	}
@@ -1296,6 +1471,7 @@ struct scope *target_lookup_addr(struct target *target,uint64_t addr) {
 }
 
 struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr) {
+    GList *t1,*t2;
     struct addrspace *space;
     struct memregion *region;
     GHashTableIter iter;
@@ -1305,15 +1481,12 @@ struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr) {
     struct lsymbol *lsymbol;
     struct memrange *range;
 
-    if (list_empty(&target->spaces))
-	return NULL;
-
     vdebug(9,LA_TARGET,LF_SYMBOL,
 	   "trying to find symbol at address 0x%"PRIxADDR"\n",
 	   addr);
 
-    list_for_each_entry(space,&target->spaces,space) {
-	list_for_each_entry(region,&space->regions,region) {
+    v_g_list_foreach(target->spaces,t1,space) {
+	v_g_list_foreach(space->regions,t2,region) {
 	    if ((range = memregion_find_range_real(region,addr)))
 		goto found;
 	}
@@ -1349,16 +1522,17 @@ int target_lookup_sym_addr_alt(struct target *target,ADDR addr,
     struct bsymbol *bsymbol;
     struct lsymbol *primary_ls,*alt_ls;
     struct memrange *range;
+    GList *t1,*t2;
 
-    if (list_empty(&target->spaces))
+    if (!target->spaces)
 	return -1;
 
     vdebug(9,LA_TARGET,LF_SYMBOL,
 	   "trying to find symbol at address 0x%"PRIxADDR"\n",
 	   addr);
 
-    list_for_each_entry(space,&target->spaces,space) {
-	list_for_each_entry(region,&space->regions,region) {
+    v_g_list_foreach(target->spaces,t1,space) {
+	v_g_list_foreach(space->regions,t2,region) {
 	    if ((range = memregion_find_range_real(region,addr)))
 		goto found;
 	}
@@ -1405,6 +1579,7 @@ int target_lookup_sym_addr_alt(struct target *target,ADDR addr,
 struct bsymbol *target_lookup_sym(struct target *target,
 				  const char *name,const char *delim,
 				  char *srcfile,symbol_type_flag_t ftype) {
+    GList *t1,*t2;
     struct addrspace *space;
     struct bsymbol *bsymbol;
     struct lsymbol *lsymbol = NULL;
@@ -1414,7 +1589,7 @@ struct bsymbol *target_lookup_sym(struct target *target,
     gpointer key;
     struct rfilter *rf = NULL;
 
-    if (list_empty(&target->spaces))
+    if (!target->spaces)
 	return NULL;
 
     if (srcfile) {
@@ -1422,8 +1597,8 @@ struct bsymbol *target_lookup_sym(struct target *target,
 	rfilter_add(rf,srcfile,RF_ACCEPT,NULL);
     }
 
-    list_for_each_entry(space,&target->spaces,space) {
-	list_for_each_entry(region,&space->regions,region) {
+    v_g_list_foreach(target->spaces,t1,space) {
+	v_g_list_foreach(space->regions,t2,region) {
 	    g_hash_table_iter_init(&iter,region->debugfiles);
 	    while (g_hash_table_iter_next(&iter,(gpointer)&key,
 					  (gpointer)&debugfile)) {
@@ -1472,6 +1647,7 @@ struct bsymbol *target_lookup_sym_member(struct target *target,
 struct bsymbol *target_lookup_sym_line(struct target *target,
 				       char *filename,int line,
 				       SMOFFSET *offset,ADDR *addr) {
+    GList *t1,*t2;
     struct addrspace *space;
     struct bsymbol *bsymbol;
     struct lsymbol *lsymbol = NULL;
@@ -1482,11 +1658,11 @@ struct bsymbol *target_lookup_sym_line(struct target *target,
     ADDR taddr;
     SMOFFSET toffset;
 
-    if (list_empty(&target->spaces))
+    if (!target->spaces)
 	return NULL;
 
-    list_for_each_entry(space,&target->spaces,space) {
-	list_for_each_entry(region,&space->regions,region) {
+    v_g_list_foreach(target->spaces,t1,space) {
+	v_g_list_foreach(space->regions,t2,region) {
 	    g_hash_table_iter_init(&iter,region->debugfiles);
 	    while (g_hash_table_iter_next(&iter,(gpointer)&key,
 					  (gpointer)&debugfile)) {
@@ -1520,6 +1696,7 @@ struct bsymbol *target_lookup_sym_line(struct target *target,
 }
 
 int target_lookup_line_addr(struct target *target,char *srcfile,ADDR addr) {
+    GList *t1,*t2;
     struct addrspace *space;
     struct memregion *region;
     GHashTableIter iter;
@@ -1528,15 +1705,15 @@ int target_lookup_line_addr(struct target *target,char *srcfile,ADDR addr) {
     struct memrange *range;
     int line = -1;
 
-    if (list_empty(&target->spaces))
+    if (!target->spaces)
 	return -1;
 
     vdebug(9,LA_TARGET,LF_SYMBOL,
 	   "trying to find line for address 0x%"PRIxADDR"\n",
 	   addr);
 
-    list_for_each_entry(space,&target->spaces,space) {
-	list_for_each_entry(region,&space->regions,region) {
+    v_g_list_foreach(target->spaces,t1,space) {
+	v_g_list_foreach(space->regions,t2,region) {
 	    if ((range = memregion_find_range_real(region,addr)))
 		goto found;
 	}
@@ -1566,16 +1743,17 @@ int target_lookup_filename_line_addr(struct target *target,
     struct debugfile *debugfile;
     struct memrange *range;
     int rline = -1;
-
-    if (list_empty(&target->spaces))
+    GList *t1,*t2;
+ 
+    if (!target->spaces)
 	return -1;
 
     vdebug(9,LA_TARGET,LF_SYMBOL,
 	   "trying to find line for address 0x%"PRIxADDR"\n",
 	   addr);
 
-    list_for_each_entry(space,&target->spaces,space) {
-	list_for_each_entry(region,&space->regions,region) {
+    v_g_list_foreach(target->spaces,t1,space) {
+	v_g_list_foreach(space->regions,t2,region) {
 	    if ((range = memregion_find_range_real(region,addr)))
 		goto found;
 	}
@@ -1849,12 +2027,8 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 			       ADDR addr,load_flags_t flags) {
     struct symbol *datatype = type;
     struct value *value;
-    struct memregion *region;
     struct memrange *range;
     ADDR ptraddr;
-    struct location ptrloc;
-    struct mmap_entry *mmap;
-    char *offset_buf;
 
     datatype = symbol_type_skip_qualifiers(type);
 
@@ -1889,7 +2063,6 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 	       symbol_get_name(type),addr);
 	return NULL;
     }
-    region = range->region;
 
     if (!ptraddr) {
 	verror("last pointer was NULL!\n");
@@ -1926,44 +2099,6 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 
 	vdebug(9,LA_TARGET,LF_TSYMBOL,
 	       "autoloaded char * with len %d\n",value->bufsiz);
-
-	/* success! */
-	goto out;
-    }
-    else if (flags & LOAD_FLAG_MUST_MMAP || flags & LOAD_FLAG_SHOULD_MMAP) {
-	ptrloc.loctype = LOCTYPE_REALADDR;
-	ptrloc.l.addr = ptraddr != addr ? ptraddr : addr;
-
-	mmap = location_mmap(target,region,&ptrloc,
-			     flags,&offset_buf,NULL,&range);
-	value = value_create_noalloc(NULL,range,NULL,datatype);
-	if (!value) {
-	    verror("could not create value: %s\n",strerror(errno));
-	    goto errout;
-	}
-	if (!value->mmap && flags & LOAD_FLAG_MUST_MMAP) {
-	    value->buf = NULL;
-	    goto errout;
-	}
-	else if (!value->mmap) {
-	    /* fall back to regular load */
-	    value->bufsiz = symbol_type_full_bytesize(datatype);
-	    value->buf = malloc(value->bufsiz);
-	    if (!value->buf) {
-		value->bufsiz = 0;
-		goto errout;
-	    }
-
-	    if (!__target_load_addr_real(target,range,ptrloc.l.addr,flags,
-					 (unsigned char *)value->buf,
-					 value->bufsiz)) 
-		goto errout;
-
-	    value_set_addr(value,ptrloc.l.addr);
-	}
-	else {
-	    value_set_mmap(value,ptrloc.l.addr,mmap,offset_buf);
-	}
 
 	/* success! */
 	goto out;
@@ -2006,12 +2141,6 @@ struct value *target_load_type_regval(struct target *target,struct symbol *type,
     ADDR ptraddr;
     size_t sz;
     struct target_thread *tthread;
-
-    if (flags & LOAD_FLAG_MUST_MMAP) {
-	verror("cannot mmap reg type!\n");
-	errno = EINVAL;
-	return NULL;
-    }
 
     tthread = target_lookup_thread(target,tid);
     if (!tthread) {
@@ -2415,13 +2544,6 @@ struct value *target_load_value_member(struct target *target,
 	}
     }
     else if (rc == LOCTYPE_REG) {
-	if (flags & LOAD_FLAG_MUST_MMAP) {
-	    verror("symbol %s: cannot mmap register value!\n",
-		   lsymbol_get_name(ls));
-	    errno = EINVAL;
-	    goto errout;
-	}
-
 	reg = LOCATION_REG(&tloc);
 
         regval = target_read_reg(target,tid,reg);
@@ -2434,7 +2556,7 @@ struct value *target_load_value_member(struct target *target,
 	datatype = symbol_get_datatype(symbol);
 	rbuf = malloc(symbol_get_bytesize(datatype));
 
-        if (target->wordsize == 4 && __WORDSIZE == 64) {
+        if (target->arch->wordsize == 4 && __WORDSIZE == 64) {
             /* If the target is 32-bit on 64-bit host, we have to grab
              * the lower 32 bits of the regval.
              */
@@ -2459,18 +2581,11 @@ struct value *target_load_value_member(struct target *target,
 	value_set_reg(value,reg);
     }
     else if (rc == LOCTYPE_IMPLICIT_WORD) {
-	if (flags & LOAD_FLAG_MUST_MMAP) {
-	    verror("symbol %s: cannot mmap implicit value!\n",
-		   lsymbol_get_name(ls));
-	    errno = EINVAL;
-	    goto errout;
-	}
-
 	word = LOCATION_WORD(&tloc);
 	datatype = symbol_get_datatype(symbol);
 	rbuf = malloc(symbol_get_bytesize(datatype));
 
-        if (target->wordsize == 4 && __WORDSIZE == 64) {
+        if (target->arch->wordsize == 4 && __WORDSIZE == 64) {
             /* If the target is 32-bit on 64-bit host, we have to grab
              * the lower 32 bits of the regval.
              */
@@ -2654,13 +2769,6 @@ struct value *target_load_symbol(struct target *target,
 	}
     }
     else if (rc == LOCTYPE_REG) {
-	if (flags & LOAD_FLAG_MUST_MMAP) {
-	    verror("symbol %s: cannot mmap register value!\n",
-		   lsymbol_get_name(lsymbol));
-	    errno = EINVAL;
-	    goto errout;
-	}
-
 	reg = LOCATION_REG(&tloc);
 
         if (target_location_ctxt_read_reg(tlctxt,reg,&regval)) {
@@ -2672,7 +2780,7 @@ struct value *target_load_symbol(struct target *target,
 	datatype = symbol_type_skip_qualifiers(symbol_get_datatype(symbol));
 	rbuf = malloc(symbol_get_bytesize(datatype));
 
-        if (target->wordsize == 4 && __WORDSIZE == 64) {
+        if (target->arch->wordsize == 4 && __WORDSIZE == 64) {
             /* If the target is 32-bit on 64-bit host, we have to grab
              * the lower 32 bits of the regval.
              */
@@ -2697,19 +2805,12 @@ struct value *target_load_symbol(struct target *target,
 	value_set_reg(value,reg);
     }
     else if (rc == LOCTYPE_IMPLICIT_WORD) {
-	if (flags & LOAD_FLAG_MUST_MMAP) {
-	    verror("symbol %s: cannot mmap implicit value!\n",
-		   lsymbol_get_name(lsymbol));
-	    errno = EINVAL;
-	    goto errout;
-	}
-
 	word = LOCATION_WORD(&tloc);
 
 	datatype = symbol_type_skip_qualifiers(symbol_get_datatype(symbol));
 	rbuf = malloc(symbol_get_bytesize(datatype));
 
-        if (target->wordsize == 4 && __WORDSIZE == 64) {
+        if (target->arch->wordsize == 4 && __WORDSIZE == 64) {
             /* If the target is 32-bit on 64-bit host, we have to grab
              * the lower 32 bits of the regval.
              */
@@ -2843,12 +2944,13 @@ int target_find_memory_real(struct target *target,ADDR addr,
 			    struct addrspace **space_saveptr,
 			    struct memregion **region_saveptr,
 			    struct memrange **range_saveptr) {
+    GList *t1;
     struct addrspace *space;
 
-    if (list_empty(&target->spaces))
+    if (!target->spaces)
 	return 0;
 
-    list_for_each_entry(space,&target->spaces,space) {
+    v_g_list_foreach(target->spaces,t1,space) {
 	if (addrspace_find_range_real(space,addr,
 				      region_saveptr,range_saveptr)) {
 	    if (space_saveptr) 
@@ -2863,11 +2965,12 @@ int target_find_memory_real(struct target *target,ADDR addr,
 }
 
 int target_contains_real(struct target *target,ADDR addr) {
+    GList *t1,*t2;
     struct addrspace *space;
     struct memregion *region;
 
-    list_for_each_entry(space,&target->spaces,space) {
-	list_for_each_entry(region,&space->regions,region) {
+    v_g_list_foreach(target->spaces,t1,space) {
+	v_g_list_foreach(space->regions,t2,region) {
 	    if (memregion_contains_real(region,addr))
 		return 1;
 	}
@@ -2904,7 +3007,7 @@ ADDR target_load_pointers(struct target *target,ADDR addr,int count,
 	}
 
 	if (!__target_load_addr_real(target,range,paddr,LOAD_FLAG_NONE,
-				     (unsigned char *)&paddr,target->ptrsize)) {
+				     (unsigned char *)&paddr,target->arch->ptrsize)) {
 	    verror("could not load ptr #%d at 0x%"PRIxADDR"\n",i,paddr);
 	    errno = EFAULT;
 	    goto errout;
@@ -2936,13 +3039,6 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
     struct memrange *range = NULL;
     int nptrs = 0;
 
-    /*
-     * Don't allow any load flags through for this!  We don't want
-     * to mmap just for pointers.
-     */
-    ptrloadflags &= ~LOAD_FLAG_MUST_MMAP;
-    ptrloadflags &= ~LOAD_FLAG_SHOULD_MMAP;
-
     while (SYMBOL_IST_PTR(datatype)) {
 	if (((flags & LOAD_FLAG_AUTO_DEREF) && SYMBOL_IST_PTR(datatype))
 	    || ((flags & LOAD_FLAG_AUTO_STRING) 
@@ -2970,7 +3066,7 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
 
 	    if (!__target_load_addr_real(target,range,paddr,ptrloadflags,
 					 (unsigned char *)&paddr,
-					 target->ptrsize)) {
+					 target->arch->ptrsize)) {
 		verror("could not load ptr 0x%"PRIxADDR"\n",paddr);
 		errno = EFAULT;
 		goto errout;
@@ -3007,18 +3103,11 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
  * Load a raw value (i.e., no symbol or type info) using an object
  * file-based location (i.e., a fixed object-relative address) and a
  * specific region.
- *
- * Note: you cannot mmap raw values; they must be copied from target memory.
  */
 struct value *target_load_addr_obj(struct target *target,struct memregion *region,
 				   ADDR obj_addr,load_flags_t flags,int len) {
     ADDR real;
     struct memrange *range;
-
-    if (flags & LOAD_FLAG_MUST_MMAP) {
-	errno = EINVAL;
-	return NULL;
-    }
 
     errno = 0;
     real = memregion_relocate(region,obj_addr,&range);
@@ -3030,18 +3119,11 @@ struct value *target_load_addr_obj(struct target *target,struct memregion *regio
 
 /*
  * Load a raw value (i.e., no symbol or type info) using a real address.
- *
- * Note: you cannot mmap raw values; they must be copied from target memory.
  */
 struct value *target_load_addr_real(struct target *target,ADDR addr,
 				    load_flags_t flags,int len) {
     struct memrange *range;
     struct value *value;
-
-    if (flags & LOAD_FLAG_MUST_MMAP) {
-	errno = EINVAL;
-	return NULL;
-    }
 
     if (!target_find_memory_real(target,addr,NULL,NULL,&range)) {
 	verror("could not find range containing addr 0x%"PRIxADDR"!\n",addr);
@@ -3107,15 +3189,15 @@ unsigned char *__target_load_addr_real(struct target *target,
 
 int target_lookup_safe_disasm_range(struct target *target,ADDR addr,
 				    ADDR *start,ADDR *end,void **data) {
+    GList *t1,*t2;
     struct addrspace *space;
     struct memregion *region;
     struct memrange *range = NULL;
-
     struct clf_range_data *crd;
 
     /* Find which region contains this address. */
-    list_for_each_entry(space,&target->spaces,space) {
-	list_for_each_entry(region,&space->regions,region) {
+    v_g_list_foreach(target->spaces,t1,space) {
+	v_g_list_foreach(space->regions,t2,region) {
 	    if ((range = memregion_find_range_real(region,addr)))
 		break;
 	}
@@ -3142,15 +3224,15 @@ int target_lookup_safe_disasm_range(struct target *target,ADDR addr,
 
 int target_lookup_next_safe_disasm_range(struct target *target,ADDR addr,
 					 ADDR *start,ADDR *end,void **data) {
+    GList *t1,*t2;
     struct addrspace *space;
     struct memregion *region;
     struct memrange *range = NULL;
-
     struct clf_range_data *crd;
 
     /* Find which region contains this address. */
-    list_for_each_entry(space,&target->spaces,space) {
-	list_for_each_entry(region,&space->regions,region) {
+    v_g_list_foreach(target->spaces,t1,space) {
+	v_g_list_foreach(space->regions,t2,region) {
 	    if ((range = memregion_find_range_real(region,addr)))
 		break;
 	}
@@ -3344,16 +3426,23 @@ void target_tid_set_status(struct target *target,tid_t tid,
 }
 
 struct target_thread *target_create_thread(struct target *target,tid_t tid,
-					   void *tstate) {
+					   void *tstate,void *tpstate) {
     struct target_thread *t = (struct target_thread *)calloc(1,sizeof(*t));
 
     vdebug(3,LA_TARGET,LF_THREAD,"thread %"PRIiTID"\n",tid);
 
-    t->target = target;
     t->tid = tid;
     t->state = tstate;
+    t->personality_state = tpstate;
+
+    /*
+     * Don't *build* the regcaches yet -- just the per-thread_ctxt pointers.
+     */
+    t->regcaches = (struct regcache **) \
+	calloc(target->max_thread_ctxt,sizeof(*t->regcaches));
 
     t->ptid = -1;
+    t->tgid = -1;
     t->uid = -1;
     t->gid = -1;
 
@@ -3366,7 +3455,14 @@ struct target_thread *target_create_thread(struct target *target,tid_t tid,
     /* Keys are always copied; values get user-custom dtors */
     t->gkv_store = g_hash_table_new_full(g_str_hash,g_str_equal,free,NULL);
 
-    g_hash_table_insert(target->threads,(gpointer)(ptr_t)tid,t);
+    if (target) {
+	t->target = target;
+	RHOLDW(target,t);
+
+	/* This is basically what target_attach_thread would do if it existed */
+	g_hash_table_insert(target->threads,(gpointer)(ptr_t)tid,t);
+	RHOLD(t,target);
+    }
 
     return t;
 }
@@ -3376,6 +3472,8 @@ void target_reuse_thread_as_global(struct target *target,
     vdebug(3,LA_TARGET,LF_THREAD,"thread %"PRIiTID" as global %"PRIiTID"\n",
 	   thread->tid,TID_GLOBAL);
     g_hash_table_insert(target->threads,(gpointer)TID_GLOBAL,thread);
+    /* Hold a second ref to it! */
+    RHOLD(thread,target);
     target->global_thread = thread;
 }
 
@@ -3383,11 +3481,7 @@ void target_detach_thread(struct target *target,struct target_thread *tthread) {
     GHashTableIter iter;
     struct probepoint *probepoint;
     struct thread_action_context *tac,*ttac;
-
-    /*
-     * Destroy any thread generic keys first.
-     */
-    target_thread_gkv_destroy(target,tthread);
+    REFCNT trefcnt;
 
     /*
      * If this thread has an overlay target, detach that first!
@@ -3411,26 +3505,6 @@ void target_detach_thread(struct target *target,struct target_thread *tthread) {
     }
 
     g_hash_table_remove_all(tthread->hard_probepoints);
-}
-
-void target_delete_thread(struct target *target,struct target_thread *tthread,
-			  int nohashdelete) {
-    vdebug(3,LA_TARGET,LF_THREAD,"thread %"PRIiTID"\n",tthread->tid);
-
-    /*
-     * If this thread has an overlay target, delete that first!
-     */
-
-
-    /*
-     * If this function is being called as a target being detached,
-     * these probepoints must be freed *before* this function is called;
-     * this is a last-minute check that works well because sometimes
-     * this function is called during normal target runtime as threads
-     * come and go.
-     */
-
-    target_detach_thread(target,tthread);
 
     /*
      * Once we're done with the underlying target, tell it the overlay
@@ -3439,30 +3513,139 @@ void target_delete_thread(struct target *target,struct target_thread *tthread,
     if (target->base)
 	target_detach_overlay_thread(target->base,target,tthread->tid);
 
+    /*
+     * Remove it from our hashtable and drop the ref!
+     */
+    g_hash_table_remove(target->threads,(gpointer)(uintptr_t)tthread->tid);
+    OBJSDEAD(tthread,target_thread);
+    RPUT(tthread,target_thread,target,trefcnt);
+}
+
+int target_thread_obj_flags_propagate(struct target_thread *tthread,
+				   obj_flags_t orf,obj_flags_t nandf) {
+    return 0;
+}
+/*
+ * target_delete_thread is for *internal* driver use; target_thread_free
+ * is the RPUT destructor.  That is because the target is the owner of
+ * the thread.  Hm, can we merge those things???
+ */
+REFCNT target_thread_free(struct target_thread *tthread,int force) {
+    REFCNT retval = tthread->refcnt;
+    REFCNT trefcnt;
+    unsigned int i;
+    struct target *target = tthread->target;
+
+    assert(tthread);
+
+    if (tthread->refcnt) {
+	if (!force) {
+	    verror("cannot free (%d refs) thread %"PRIiTID"\n",
+		   tthread->refcnt,tthread->tid);
+	    return tthread->refcnt;
+	}
+	else {
+	    vwarn("forcing free (%d refs) thread %"PRIiTID"\n",
+		   tthread->refcnt,tthread->tid);
+	}
+    }
+
+    RWGUARD(tthread);
+
+    vdebug(5,LA_TARGET,LF_TARGET,"freeing thread %"PRIiTID"\n",tthread->tid);
+
+    /*
+     * If this function is being called as a target being detached,
+     * these probepoints must be freed *before* this function is called;
+     * this is a last-minute check that works well because sometimes
+     * this function is called during normal target runtime as threads
+     * come and go.
+     */
+    if (target && OBJLIVE(tthread))
+	target_detach_thread(target,tthread);
+
+    /*
+     * Threads don't own children yet; so the weak refcnt is pretty
+     * meaningless.  But still, support it.
+     */
+    if (tthread->refcntw) {
+	if (!force) {
+	    verror("cannot free (%d wrefs) thread %"PRIiTID"\n",
+		   tthread->refcntw,tthread->tid);
+	    return tthread->refcntw;
+	}
+	else {
+	    vwarn("forced free (%d wrefs) thread %"PRIiTID"\n",
+		   tthread->refcntw,tthread->tid);
+	}
+
+	if (retval <= 0)
+	    retval = tthread->refcntw;
+    }
+
+    /*
+     * Ok, delete it!
+     */
+
+    /*
+     * Destroy any thread generic keys first.
+     */
+    if (target)
+	target_thread_gkv_destroy(target,tthread);
+
     array_list_free(tthread->tpc_stack);
     tthread->tpc_stack = NULL;
 
     g_hash_table_destroy(tthread->hard_probepoints);
     tthread->hard_probepoints = NULL;
 
-    if (tthread->state) {
-	if (tthread->target->ops->free_thread_state) 
-	    tthread->target->ops->free_thread_state(tthread->target,
-						    tthread->state);
+    if (target && tthread->personality_state) {
+	if (target->personality_ops && target->personality_ops->free_thread_state)
+	    target->personality_ops->free_thread_state(target,
+						       tthread->personality_state);
 	else
-	    free(tthread->state);
+	    free(tthread->personality_state);
+
+	tthread->personality_state = NULL;
     }
 
-    if (!nohashdelete) 
-	g_hash_table_remove(target->threads,(gpointer)(ptr_t)tthread->tid);
+    if (target) {
+	for (i = 0; i < target->max_thread_ctxt; ++i) {
+	    if (tthread->regcaches[i]) {
+		regcache_destroy(tthread->regcaches[i]);
+		tthread->regcaches[i] = NULL;
+	    }
+	}
+    }
+    free(tthread->regcaches);
+    tthread->regcaches = NULL;
+
+    if (target && tthread->state) {
+	if (target->ops->free_thread_state) 
+	    target->ops->free_thread_state(target,tthread->state);
+	else
+	    free(tthread->state);
+
+	tthread->state = NULL;
+    }
+
+    if (target) {
+	RPUTW(target,target,tthread,trefcnt);
+	target = NULL;
+    }
+ 
+    retval = tthread->refcnt + tthread->refcntw - 1;
 
     free(tthread);
+
+    return retval;
 }
 
 /*
  * We recognize several keys:
  *   tid -- the thread id
  *   ptid -- the thread's parent thread id
+ *   tgid -- the thread group id
  *   tidhier -- a common-separated list of tids starting with the
  *     current tid, and then moving up the hierarchy to the root.
  *   name -- the thread's name
@@ -3526,6 +3709,9 @@ int target_thread_filter_check(struct target *target,tid_t tid,
 	else if (strncmp(tfr->value_name,"tid",strlen("tid")) == 0) {
 	    rc = snprintf(vstrbuf,sizeof(vstrbuf),"%"PRIiTID,tthread->tid);
 	}
+	else if (strncmp(tfr->value_name,"tgid",strlen("tgid")) == 0) {
+	    rc = snprintf(vstrbuf,sizeof(vstrbuf),"%"PRIiTID,tthread->tgid);
+	}
 	else if (strncmp(tfr->value_name,"ptid",strlen("ptid")) == 0) {
 	    rc = snprintf(vstrbuf,sizeof(vstrbuf),"%"PRIiTID,tthread->ptid);
 	}
@@ -3584,6 +3770,66 @@ int target_thread_filter_check(struct target *target,tid_t tid,
     return 0;
 }
 
+int target_invalidate_thread(struct target *target,
+			     struct target_thread *tthread) {
+    unsigned int i;
+
+    if (target->ops->invalidate_thread)
+	target->ops->invalidate_thread(target,tthread);
+    else if (target->personality_ops 
+	     && target->personality_ops->invalidate_thread)
+	target->personality_ops->invalidate_thread(target,tthread);
+
+    /*
+     * XXX: Invalidate any valid regcaches.  Not sure we should do this
+     * here...
+     */
+    for (i = 0; i < target->max_thread_ctxt; ++i) {
+	if (tthread->regcaches[i]) {
+	    regcache_invalidate(tthread->regcaches[i]);
+	}
+    }
+
+    OBJSINVALID(tthread);
+
+    if (OBJDIRTY(tthread))
+	vwarn("invalidated dirty thread %"PRIiTID"; BUG?\n",tthread->tid);
+
+    return 0;
+}
+
+static int __target_invalidate_all_threads(struct target *target) {
+    GHashTableIter iter;
+    struct target_thread *tthread;
+    unsigned int i;
+
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
+	if (target->ops->invalidate_thread)
+	    target->ops->invalidate_thread(target,tthread);
+	else if (target->personality_ops 
+		 && target->personality_ops->invalidate_thread)
+	    target->personality_ops->invalidate_thread(target,tthread);
+
+	/*
+	 * XXX: Invalidate any valid regcaches.  Not sure we should do this
+	 * here...
+	 */
+	for (i = 0; i < target->max_thread_ctxt; ++i) {
+	    if (tthread->regcaches[i]) {
+		regcache_invalidate(tthread->regcaches[i]);
+	    }
+	}
+
+	OBJSINVALID(tthread);
+
+	if (OBJDIRTY(tthread))
+	    vwarn("invalidated dirty thread %"PRIiTID"; BUG?\n",tthread->tid);
+    }
+
+    return 0;
+}
+
 int target_invalidate_all_threads(struct target *target) {
     GHashTableIter iter;
     struct target *overlay;
@@ -3604,38 +3850,13 @@ int target_invalidate_all_threads(struct target *target) {
 	       "invalidating all overlay target(%s) threads (%d)\n",overlay->name,rc);
     }
 
-    if (target->ops->invalidate_all_threads)
-	return target->ops->invalidate_all_threads(target);
-    else 
-	return __target_invalidate_all_threads(target);
+    return __target_invalidate_all_threads(target);
 }
 
-int __target_invalidate_all_threads(struct target *target) {
-    GHashTableIter iter;
-    struct target_thread *tthread;
-
-    g_hash_table_iter_init(&iter,target->threads);
-    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
-	tthread->valid = 0;
-	if (tthread->dirty)
-	    vwarn("invalidated dirty thread %"PRIiTID"; BUG?\n",tthread->tid);
-    }
-
-    return 0;
-}
-
-int __target_invalidate_thread(struct target *target,
-			       struct target_thread *tthread) {
-    tthread->valid = 0;
-    if (tthread->dirty)
-	vwarn("invalidated dirty thread %"PRIiTID"; BUG?\n",tthread->tid);
-
-    return 0;
-}
-
-target_status_t target_notify_overlay(struct target *overlay,tid_t tid,ADDR ipval,
-				      int *again) {
-    return overlay->ops->handle_overlay_exception(overlay,tid,ipval,again);
+target_status_t target_notify_overlay(struct target *overlay,
+				      target_exception_flags_t flags,
+				      tid_t tid,ADDR ipval,int *again) {
+    return overlay->ops->handle_overlay_exception(overlay,flags,tid,ipval,again);
 }
 
 struct target *target_lookup_overlay(struct target *target,tid_t tid) {
@@ -3654,6 +3875,7 @@ void target_detach_overlay(struct target *base,tid_t overlaytid) {
     GHashTableIter iter;
     struct target *overlay;
     gpointer vp;
+    REFCNT trefcnt;
 
     overlay = (struct target *) \
 	g_hash_table_lookup(base->overlays,(gpointer)(uintptr_t)overlaytid);
@@ -3665,6 +3887,8 @@ void target_detach_overlay(struct target *base,tid_t overlaytid) {
 	    if (vp == overlay)
 		g_hash_table_iter_remove(&iter);
 	}
+
+	RPUT(overlay,target,base,trefcnt);
     }
 }
 
@@ -3688,9 +3912,10 @@ int target_attach_overlay_thread(struct target *base,struct target *overlay,
     }
 
     rc = base->ops->attach_overlay_thread(base,overlay,newtid);
-    if (rc == 0)
+    if (rc == 0) {
 	g_hash_table_insert(base->overlay_aliases,(gpointer)(uintptr_t)newtid,
 			    overlay);
+    }
 
     return rc;
 }
@@ -3698,6 +3923,7 @@ int target_attach_overlay_thread(struct target *base,struct target *overlay,
 int target_detach_overlay_thread(struct target *base,struct target *overlay,
 				 tid_t tid) {
     int rc;
+    struct target_thread *tthread;
 
     if (tid == overlay->base_tid) {
 	errno = EINVAL;
@@ -3709,11 +3935,67 @@ int target_detach_overlay_thread(struct target *base,struct target *overlay,
 	return -1;
     }
 
-    rc = base->ops->detach_overlay_thread(base,overlay,tid);
-    if (rc == 0)
+    tthread = (struct target_thread *) \
 	g_hash_table_lookup(base->overlay_aliases,(gpointer)(uintptr_t)tid);
 
+    /* May have already gone... */
+    if (!tthread)
+	return 0;
+
+    rc = base->ops->detach_overlay_thread(base,overlay,tid);
+    if (rc == 0) {
+	g_hash_table_remove(base->overlay_aliases,(gpointer)(uintptr_t)tid);
+    }
+
     return rc;
+}
+
+int target_attach_space(struct target *target,struct addrspace *space) {
+    GList *t1;
+    struct addrspace *lpc;
+
+    /* make sure this space doesn't already exist: */
+    v_g_list_foreach(target->spaces,t1,lpc) {
+	if (((space->name && strcmp(space->name,lpc->name) == 0)
+	     || (space->name == NULL && lpc->name == NULL))
+	    && space->tag == lpc->tag) {
+	    verror("addrspace(%s:0x%"PRIxADDR") already attached to target %s!\n",
+		   space->name,space->tag,target->name);
+	    errno = EEXIST;
+	    return -1;
+	}
+    }
+
+    target->spaces = g_list_append(target->spaces,space);
+    RHOLD(space,target);
+
+    return 0;
+}
+
+int target_detach_space(struct target *target,struct addrspace *space) {
+    GList *t1;
+    REFCNT trefcnt;
+
+    if (!space->target || target != space->target) {
+	verror("space(%s:0x%"PRIxADDR") not on target %s!\n",
+	       space->name,space->tag,target ? target->name : NULL);
+	errno = EINVAL;
+	return -1;
+    }
+
+    t1 = g_list_find(target->spaces,space);
+    if (!t1) {
+	verror("space(%s:0x%"PRIxADDR") not on target %s!\n",
+	       space->name,space->tag,target ? target->name : NULL);
+	errno = ESRCH;
+	return -1;
+    }
+
+    target->spaces = g_list_remove_link(target->spaces,t1);
+
+    RPUT(space,addrspace,target,trefcnt);
+
+    return 0;
 }
 
 struct probepoint *target_lookup_probepoint(struct target *target,
@@ -3889,7 +4171,7 @@ result_t target_memmod_emulate_bp_handler(struct target *target,tid_t tid,
     }
 
     /* Reset ip. */
-    ipval -= target->breakpoint_instrs_len; //target_memmod_length(target,mmod);
+    ipval -= target->arch->breakpoint_instrs_len; //target_memmod_length(target,mmod);
     if (target_write_reg(target,tid,target->ipregno,ipval)) {
 	verror("could not write IP!\n");
 	goto errout;
@@ -3978,7 +4260,7 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
 					   unsigned char *code,
 					   unsigned int code_len) {
     struct target_memmod *mmod;
-    unsigned char *ibuf;
+    unsigned char *ibuf = NULL;
     unsigned int ibuf_len;
     unsigned int rc;
     struct target_thread *tthread;
@@ -3999,54 +4281,56 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
     mmod->addr = addr;
     mmod->is_phys = is_phys;
 
-    /*
-     * Backup the original memory.  If debugging, read at least
-     * 8 bytes so we can see what was there and dump it for debug
-     * purposes.  It is a bit wasteful in that case, but no big
-     * deal.
-     */
-    if (code_len > 8)
-	ibuf_len = code_len;
-    else 
-	ibuf_len = 8;
-    ibuf = calloc(1,ibuf_len);
+    if (code) {
+	/*
+	 * Backup the original memory.  If debugging, read at least
+	 * 8 bytes so we can see what was there and dump it for debug
+	 * purposes.  It is a bit wasteful in that case, but no big
+	 * deal.
+	 */
+	if (code_len > 8)
+	    ibuf_len = code_len;
+	else 
+	    ibuf_len = 8;
+	ibuf = calloc(1,ibuf_len);
 
-    if (is_phys) 
-	rcc = target_read_physaddr(target,addr,ibuf_len,ibuf);
-    else
-	rcc = target_read_addr(target,addr,ibuf_len,ibuf);
+	if (is_phys) 
+	    rcc = target_read_physaddr(target,addr,ibuf_len,ibuf);
+	else
+	    rcc = target_read_addr(target,addr,ibuf_len,ibuf);
 
-    if (!rcc) {
-	array_list_free(mmod->threads);
-	free(ibuf);
-	free(mmod);
-	verror("could not read %u bytes at 0x%"PRIxADDR"!\n",
-	       ibuf_len,addr);
-	return NULL;
-    }
+	if (!rcc) {
+	    array_list_free(mmod->threads);
+	    free(ibuf);
+	    free(mmod);
+	    verror("could not read %u bytes at 0x%"PRIxADDR"!\n",
+		   ibuf_len,addr);
+	    return NULL;
+	}
 
-    mmod->orig_len = code_len;
-    mmod->orig = calloc(1,mmod->orig_len);
+	mmod->orig_len = code_len;
+	mmod->orig = calloc(1,mmod->orig_len);
 
-    memcpy(mmod->orig,ibuf,mmod->orig_len);
+	memcpy(mmod->orig,ibuf,mmod->orig_len);
 
-    mmod->mod = malloc(code_len);
-    mmod->mod_len = code_len;
-    memcpy(mmod->mod,code,mmod->mod_len);
+	mmod->mod = malloc(code_len);
+	mmod->mod_len = code_len;
+	memcpy(mmod->mod,code,mmod->mod_len);
 
-    if (is_phys)
-	rc = target_write_physaddr(target,addr,mmod->mod_len,mmod->mod);
-    else
-	rc = target_write_addr(target,addr,mmod->mod_len,mmod->mod);
+	if (is_phys)
+	    rc = target_write_physaddr(target,addr,mmod->mod_len,mmod->mod);
+	else
+	    rc = target_write_addr(target,addr,mmod->mod_len,mmod->mod);
 
-    if (rc != mmod->mod_len) {
-	array_list_free(mmod->threads);
-	free(mmod->mod);
-	free(mmod->orig);
-	free(mmod);
-	verror("could not write %lu subst bytes at 0x%"PRIxADDR"!\n",
-	       mmod->orig_len,addr);
-	return NULL;
+	if (rc != mmod->mod_len) {
+	    array_list_free(mmod->threads);
+	    free(mmod->mod);
+	    free(mmod->orig);
+	    free(mmod);
+	    verror("could not write %lu subst bytes at 0x%"PRIxADDR"!\n",
+		   mmod->orig_len,addr);
+	    return NULL;
+	}
     }
 
     if (is_phys)
@@ -4056,15 +4340,23 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
 
     array_list_append(mmod->threads,tthread);
 
-    vdebug(5,LA_TARGET,LF_TARGET,
-	   "created memmod at 0x%"PRIxADDR" (is_phys=%d) tid %"PRIiTID";"
-	   " inserted new bytes (orig mem: %02hhx %02hhx %02hhx %02hhx"
-	   " %02hhx %02hhx %02hhx %02hhx)\n",
-	   mmod->addr,is_phys,tid,
-	   (int)ibuf[0],(int)ibuf[1],(int)ibuf[2],(int)ibuf[3],
-	   (int)ibuf[4],(int)ibuf[5],(int)ibuf[6],(int)ibuf[7]);
+    if (code) {
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "created memmod at 0x%"PRIxADDR" (is_phys=%d) tid %"PRIiTID";"
+	       " inserted new bytes (orig mem: %02hhx %02hhx %02hhx %02hhx"
+	       " %02hhx %02hhx %02hhx %02hhx)\n",
+	       mmod->addr,is_phys,tid,
+	       (int)ibuf[0],(int)ibuf[1],(int)ibuf[2],(int)ibuf[3],
+	       (int)ibuf[4],(int)ibuf[5],(int)ibuf[6],(int)ibuf[7]);
+    }
+    else {
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "created (fake) memmod at 0x%"PRIxADDR" (is_phys=%d) tid %"PRIiTID"\n",
+	       mmod->addr,is_phys,tid);
+    }
 
-    free(ibuf);
+    if (ibuf)
+	free(ibuf);
 
     return mmod;
 }
@@ -4095,10 +4387,12 @@ struct target_memmod *target_memmod_lookup(struct target *target,tid_t tid,
 	vdebug(16,LA_TARGET,LF_TARGET,
 	       "found mmod 0x%"PRIxADDR" (phys=%d)\n",
 	       mmod->addr,mmod->is_phys);
+    /*
     else 
 	vwarnopt(16,LA_TARGET,LF_TARGET,
 		 "did not find mmod for 0x%"PRIxADDR" (is_phys=%d)!\n",
 		 addr,is_phys);
+    */
 
     return mmod;
 }
@@ -4168,11 +4462,13 @@ int target_memmod_free(struct target *target,tid_t tid,
 	if (mmod->mod)
 	    free(mmod->mod);
 
-	rc = writer(target,addr,mmod->orig_len,mmod->orig);
-	if (rc != mmod->orig_len) {
-	    verror("could not restore orig memory at 0x%"PRIxADDR";"
-		   " but cannot do anything!\n",addr);
-	    retval = -1;
+	if (mmod->orig) {
+	    rc = writer(target,addr,mmod->orig_len,mmod->orig);
+	    if (rc != mmod->orig_len) {
+		verror("could not restore orig memory at 0x%"PRIxADDR";"
+		       " but cannot do anything!\n",addr);
+		retval = -1;
+	    }
 	}
 
 	vdebug(5,LA_TARGET,LF_TARGET,
@@ -4455,6 +4751,10 @@ int target_memmod_set_tmp(struct target *target,tid_t tid,
     return 0;
 }
 
+struct target_location_ctxt *target_global_tlctxt(struct target *target) {
+    return target->global_tlctxt;
+}
+
 struct target_location_ctxt *
 target_location_ctxt_create(struct target *target,tid_t tid,
 			    struct memregion *region) {
@@ -4670,7 +4970,10 @@ int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
     if (!tlctxt)
 	return -1;
 
-    ipreg = target_dw_reg_no(target,CREG_IP);
+    if (target_cregno(target,CREG_IP,&ipreg)) {
+	verror("target(%s:%"PRIiTID") has no IP reg!\n",target->name,tid);
+	return -1;
+    }
 
     j = 0;
     while (1) {
@@ -4928,11 +5231,8 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
     struct bsymbol *bsymbol = NULL;
     struct bsymbol *alt_bsymbol = NULL;
     REG rbp;
-    REG rsp;
-    ADDR bp = 0,sp = 0,stack_retaddr = 0,old_bp = 0,old_sp = 0;
-    gpointer v;
-    int i;
-    ADDR tmp;
+    REG rsp = -1;
+    ADDR bp = 0,sp = 0,old_bp = 0,old_sp = 0;
 
     if (!tlctxt->frames) {
 	errno = EINVAL;
@@ -4953,7 +5253,7 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
     tlctxtf = (struct target_location_ctxt_frame *) \
 	array_list_item(tlctxt->frames,tlctxt->lctxt->current_frame);
 
-    rsp = target_dw_reg_no(tlctxt->thread->target,CREG_SP);
+    rsp = tlctxt->thread->target->spregno;
     errno = 0;
     rc = location_ctxt_read_reg(tlctxt->lctxt,rsp,&sp);
 
@@ -4961,13 +5261,13 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
 	vdebug(8,LA_TARGET,LF_TUNW,"    current stack:\n");
 	char *pp;
 	char *tmp;
-	tmp = malloc(__SWC * tlctxt->thread->target->wordsize);
+	tmp = malloc(__SWC * tlctxt->thread->target->arch->wordsize);
 	target_read_addr(tlctxt->thread->target,sp,
-			 __SWC * tlctxt->thread->target->wordsize,
+			 __SWC * tlctxt->thread->target->arch->wordsize,
 			 (unsigned char *)tmp);
-	pp = tmp + (__SWC - 1) * tlctxt->thread->target->wordsize;
+	pp = tmp + (__SWC - 1) * tlctxt->thread->target->arch->wordsize;
 	while (pp >= tmp) {
-	    if (tlctxt->thread->target->wordsize == 8) {
+	    if (tlctxt->thread->target->arch->wordsize == 8) {
 		vdebug(8,LA_TARGET,LF_TUNW,"      0x%"PRIxADDR" == %"PRIxADDR"\n",
 		       sp + (pp - tmp),*(uint64_t *)pp);
 	    }
@@ -4975,7 +5275,7 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
 		vdebug(8,LA_TARGET,LF_TUNW,"      0x%"PRIxADDR" == %"PRIxADDR"\n",
 		       sp + (pp - tmp),(ADDR)*(uint32_t *)pp);
 	    }
-	    pp -= tlctxt->thread->target->wordsize;
+	    pp -= tlctxt->thread->target->arch->wordsize;
 	}
 	vdebug(8,LA_TARGET,LF_TUNW,"\n");
 	free(tmp);
@@ -4984,22 +5284,22 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
 	vdebug(8,LA_TARGET,LF_TUNW,"    current (beyond) stack:\n");
 	char *pp;
 	char *tmp;
-	tmp = malloc(__SWC * tlctxt->thread->target->wordsize);
+	tmp = malloc(__SWC * tlctxt->thread->target->arch->wordsize);
 	target_read_addr(tlctxt->thread->target,
-			 sp - __SWC * tlctxt->thread->target->wordsize,
-			 __SWC * tlctxt->thread->target->wordsize,
+			 sp - __SWC * tlctxt->thread->target->arch->wordsize,
+			 __SWC * tlctxt->thread->target->arch->wordsize,
 			 (unsigned char *)tmp);
-	pp = tmp + (__SWC - 1) * tlctxt->thread->target->wordsize;
+	pp = tmp + (__SWC - 1) * tlctxt->thread->target->arch->wordsize;
 	while (pp >= tmp) {
-	    if (tlctxt->thread->target->wordsize == 8) {
+	    if (tlctxt->thread->target->arch->wordsize == 8) {
 		vdebug(8,LA_TARGET,LF_TUNW,"      0x%"PRIxADDR" == %"PRIxADDR"\n",
-		       sp - __SWC * tlctxt->thread->target->wordsize + (pp - tmp),*(uint64_t *)pp);
+		       sp - __SWC * tlctxt->thread->target->arch->wordsize + (pp - tmp),*(uint64_t *)pp);
 	    }
 	    else {
 		vdebug(8,LA_TARGET,LF_TUNW,"      0x%"PRIxADDR" == %"PRIxADDR"\n",
-		       sp - __SWC * tlctxt->thread->target->wordsize + (pp - tmp),(ADDR)*(uint32_t *)pp);
+		       sp - __SWC * tlctxt->thread->target->arch->wordsize + (pp - tmp),(ADDR)*(uint32_t *)pp);
 	    }
-	    pp -= tlctxt->thread->target->wordsize;
+	    pp -= tlctxt->thread->target->arch->wordsize;
 	}
 	vdebug(8,LA_TARGET,LF_TUNW,"\n");
 	free(tmp);
@@ -5023,7 +5323,11 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
 	 * and frame pointer + 16 to reg retaddr.  Check it against what
 	 * we have, and feel good hopefully.
 	 */
-	rbp = target_dw_reg_no(tlctxt->thread->target,CREG_BP);
+	if (target_cregno(tlctxt->thread->target,CREG_BP,&rbp)) {
+	    verror("target %s has no frame pointer register!\n",
+		   tlctxt->thread->target->name);
+	    return NULL;
+	}
 	errno = 0;
 	rc = location_ctxt_read_reg(tlctxt->lctxt,rbp,&bp);
 	if (rc) {
@@ -5101,6 +5405,687 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
 	   tlctxt->lctxt->current_frame,retaddr);
 
     return new;
+}
+
+/**
+ ** Personality stuff.
+ **/
+int target_personality_load(char *filename) {
+    unsigned int current_size;
+    void *lib;
+
+    current_size = g_hash_table_size(target_personality_tab);
+
+    /*
+     * NB: we want subsequent libraries to be able to reuse symbols from
+     * this library if necessary... "overloading".
+     */
+    lib = dlopen(filename,RTLD_NOW | RTLD_GLOBAL);
+    if (!lib) {
+	verror("could not load '%s': %s (%s)\n",
+	       filename,dlerror(),strerror(errno));
+	return -1;
+    }
+
+    /* Don't make this fatal, for now... */
+    if (g_hash_table_size(target_personality_tab) == current_size) {
+	vwarn("loaded library %s, but it did not add itself to the"
+	      " personality table!  Duplicate personality ID?\n",filename);
+    }
+
+    return 0;
+}
+
+int target_personality_register(char *personality,target_personality_t pt,
+				struct target_personality_ops *ptops,void *pops) {
+    struct target_personality_info *tpi = NULL;
+
+    if (g_hash_table_lookup(target_personality_tab,(gpointer)personality)) {
+	verror("Personality %s already registered; cannot register.\n",
+	       personality);
+	errno = EALREADY;
+	return -1;
+    }
+
+    tpi = calloc(1,sizeof(*tpi));
+    tpi->personality = strdup(personality);
+    tpi->ptype = pt;
+    tpi->ptops = ptops;
+    tpi->pops = pops;
+    
+    g_hash_table_insert(target_personality_tab,(gpointer)tpi->personality,
+			(gpointer)tpi);
+    return 0;
+}
+
+int target_personality_attach(struct target *target,
+			      char *personality,char *personality_lib) {
+    struct target_personality_info *tpi;
+    char *buf;
+    int bufsiz;
+
+    if (!target_personality_tab) {
+	verror("Target library improperly initialized -- call target_init!\n");
+	errno = EINVAL;
+	return -1;
+    }
+
+    /*
+     * If this is specified, try to load it first!
+     */
+    if (personality_lib) {
+	if (target_personality_load(personality_lib)) {
+	    vwarn("failed to load library '%s'; will try to find"
+		  " personality '%s' elsewhere!\n",personality_lib,personality);
+	}
+    }
+
+    tpi = (struct target_personality_info *) \
+	g_hash_table_lookup(target_personality_tab,(gpointer)personality);
+    if (tpi)
+	goto tpinit;
+    else if (personality_lib) {
+	vwarn("could not find personality '%s' after trying to load"
+	      " personality library '%s'\n",personality,personality_lib);
+    }
+
+    /*
+     * Try to load it from a shared lib.  The shared lib must either
+     * provide _init() (or better yet, a routine with
+     * __attribute__((constructor)) ); and this routine must register
+     * the personality library with the target library.
+     *
+     * Try several strings.  Just <personality>.so;
+     * stackdb_<personality>.so; vmi_<personality>.so .
+     */
+    bufsiz = strlen(personality) + strlen(".so") + strlen("stackdb") + 1;
+    buf = malloc(bufsiz);
+    snprintf(buf,bufsiz,"%s.so",personality);
+    if (target_personality_load(buf) == 0) {
+	if ((tpi = (struct target_personality_info *) \
+	     g_hash_table_lookup(target_personality_tab,(gpointer)personality))) {
+	    free(buf);
+	    goto tpinit;
+	}
+	else {
+	    vwarn("loaded library '%s', but it did not provide personality '%s'!\n",
+		  buf,personality);
+	}
+    }
+
+    snprintf(buf,bufsiz,"stackdb_%s.so",personality);
+    if (target_personality_load(buf) == 0) {
+	if ((tpi = (struct target_personality_info *) \
+	     g_hash_table_lookup(target_personality_tab,(gpointer)personality))) {
+	    free(buf);
+	    goto tpinit;
+	}
+	else {
+	    vwarn("loaded library '%s', but it did not provide personality '%s'!\n",
+		  buf,personality);
+	}
+    }
+
+    snprintf(buf,bufsiz,"vmi_%s.so",personality);
+    if (target_personality_load(buf) == 0) {
+	if ((tpi = (struct target_personality_info *) \
+	     g_hash_table_lookup(target_personality_tab,(gpointer)personality))) {
+	    free(buf);
+	    goto tpinit;
+	}
+	else {
+	    vwarn("loaded library '%s', but it did not provide personality '%s'!\n",
+		  buf,personality);
+	}
+    }
+
+    free(buf);
+    verror("could not find personality '%s'!\n",personality);
+    errno = ESRCH;
+    return -1;
+
+ tpinit:
+    if (tpi->ptops->attach(target)) {
+	vwarn("Failed to attach personality '%s' on target %d!\n",
+	      personality,target->id);
+	return -1;
+    }
+    else {
+	target->personality_ops = tpi->ptops;
+	target->__personality_specific_ops = tpi->pops;
+
+	vdebug(2,LA_TARGET,LF_TARGET,
+	       "initialized personality '%s' for target %d!\n",
+	       personality,target->id);
+
+	return 0;
+    }
+}
+
+/**
+ ** Register helpers, for the cases where the target is using our
+ ** regcache support.
+ **/
+
+#define TARGET_REGCACHE_ALLOC(tctxt,errretval)				\
+    do {								\
+        if (tctxt > target->max_thread_ctxt) {				\
+	    verror("target %d only has max thread ctxt %d (%d specified)!\n", \
+		   target->id,target->max_thread_ctxt,tctxt);		\
+	    errno = EINVAL;						\
+	    return errretval;						\
+	}								\
+        tthread = target_load_thread(target,tid,0);			\
+	if (!tthread) {							\
+	    verror("target %d could not load thread %d!\n",target->id,tid);	\
+	    errno = ESRCH;						\
+	    return (errretval);						\
+	}								\
+	if (!tthread->regcaches[tctxt]) {				\
+	    tthread->regcaches[tctxt] = regcache_create(target->arch);	\
+	}								\
+	regcache = tthread->regcaches[tctxt];				\
+    } while(0)
+
+#define TARGET_REGCACHE_ALLOC_NT(tctxt,errretval)			\
+    do {								\
+        if (tctxt > target->max_thread_ctxt) {				\
+	    verror("target %d only has max thread ctxt %d (%d specified)!\n", \
+		   target->id,target->max_thread_ctxt,tctxt);		\
+	    errno = EINVAL;						\
+	    return errretval;						\
+	}								\
+	if (!tthread->regcaches[tctxt]) {				\
+	    tthread->regcaches[tctxt] = regcache_create(target->arch);	\
+	}								\
+	regcache = tthread->regcaches[tctxt];				\
+    } while(0)
+
+#define TARGET_REGCACHE_GET(tctxt,errretval)				\
+    do {								\
+        if (tctxt > target->max_thread_ctxt) {				\
+	    verror("target %d only has max thread ctxt %d (%d specified)!\n", \
+		   target->id,target->max_thread_ctxt,tctxt);		\
+	    errno = EINVAL;						\
+	    return errretval;						\
+	}								\
+        tthread = target_load_thread(target,tid,0);			\
+	if (!tthread) {							\
+	    verror("target %d could not load thread %d!\n",target->id,tid);	\
+	    errno = ESRCH;						\
+	    return (errretval);						\
+	}								\
+	if (!tthread->regcaches[tctxt]) {				\
+	    verror("target %d could not load thread %d!\n",target->id,tid); \
+	    errno = EADDRNOTAVAIL;					\
+	    return (errretval);						\
+	}								\
+	regcache = tthread->regcaches[tctxt];				\
+    } while(0)
+
+int target_regcache_init_reg_tidctxt(struct target *target,
+				     struct target_thread *tthread,
+				     thread_ctxt_t tctxt,
+				     REG reg,REGVAL regval) {
+    struct regcache *regcache;
+
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "target %d init reg %s in thid %d ctxt %d 0x%"PRIxREGVAL"\n",
+	   target->id,target_regname(target,reg),tthread->tid,tctxt,regval);
+
+    TARGET_REGCACHE_ALLOC_NT(tctxt,-1);
+
+    if (regcache_init_reg(regcache,reg,regval)) {
+	verror("target %d thread %d reg %d: could not init reg!\n",
+	       target->id,tthread->tid,reg);
+	return -1;
+    }
+
+    return 0;
+}
+
+int target_regcache_init_done(struct target *target,
+			      tid_t tid,thread_ctxt_t tctxt) {
+    struct target_thread *tthread;
+    struct regcache *regcache;
+
+    TARGET_REGCACHE_ALLOC(tctxt,-1);
+
+    if (regcache_init_done(regcache)) {
+	vwarn("failed -- target %d thid %d tctxt %d\n",target->id,tid,tctxt);
+	return -1;
+    }
+    else {
+	vdebug(16,LA_TARGET,LF_TARGET,
+	       "target %d thid %d tctxt %d\n",target->id,tid,tctxt);
+	return 0;
+    }
+}
+
+int target_regcache_foreach_dirty(struct target *target,
+				  struct target_thread *tthread,
+				  thread_ctxt_t tctxt,
+				  target_regcache_regval_handler_t regh,
+				  target_regcache_rawval_handler_t rawh,
+				  void *priv) {
+    int i;
+    struct regcache *regcache;
+
+    if (tctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,tctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    if (!(regcache = tthread->regcaches[tctxt]))
+	return 0;
+
+    /*
+     * XXX: too bad, but to make this efficient, this function has to
+     * have direct knowledge of the regcache struct.  Otherwise we'd
+     * have two layers of callbacks, or some other inefficiency... so
+     * just do this for now.
+     */
+    for (i = 0; i < regcache->arch->regcount; ++i) {
+	if (!(regcache->flags[i] & REGCACHE_VALID)
+	    || !(regcache->flags[i] & REGCACHE_DIRTY))
+	    continue;
+
+	if (regcache->flags[i] & REGCACHE_ALLOC)
+	    rawh(target,tthread,tctxt,i,(void *)regcache->values[i],
+		 arch_regsize(regcache->arch,i),priv);
+	else
+	    regh(target,tthread,tctxt,i,regcache->values[i],priv);
+    }
+
+    return 0;
+}
+
+REGVAL target_regcache_readreg(struct target *target,tid_t tid,REG reg) {
+    struct target_thread *tthread;
+    struct regcache *regcache;
+    REGVAL regval = 0;
+
+    tthread = target_load_thread(target,tid,0);
+    if (!tthread) {
+	verror("target %d could not load thread %d!\n",target->id,tid);
+	errno = ESRCH;
+	return 0;
+    }
+
+    if (tthread->tidctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (thid %d currently %d)!\n",
+	       target->id,target->max_thread_ctxt,tid,tthread->tidctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "target %d reading reg %s in thid %d ctxt %d\n",
+	   target->id,target_regname(target,reg),tid,tthread->tidctxt);
+
+    if (!tthread->regcaches[tthread->tidctxt]) {
+	vwarnopt(9,LA_TARGET,LF_TARGET,
+		 "target %d could not load thread %d!\n",target->id,tid);
+	errno = EADDRNOTAVAIL;
+	return 0;
+    }
+    regcache = tthread->regcaches[tthread->tidctxt];
+
+    if (regcache_read_reg(regcache,reg,&regval)) {
+	vwarnopt(9,LA_TARGET,LF_TARGET,
+		 "target %d thread %d reg %d: could not read!\n",
+		 target->id,tid,reg);
+	return 0;
+    }
+
+    return regval;
+}
+
+int target_regcache_writereg(struct target *target,tid_t tid,
+			     REG reg,REGVAL value) {
+    struct target_thread *tthread;
+    struct regcache *regcache;
+
+    tthread = target_load_thread(target,tid,0);
+    if (!tthread) {
+	verror("target %d could not load thread %d!\n",target->id,tid);
+	errno = ESRCH;
+	return 0;
+    }
+
+    if (tthread->tidctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (thid %d currently %d)!\n",
+	       target->id,target->max_thread_ctxt,tid,tthread->tidctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "target %d reading reg %s in thid %d ctxt %d 0x%"PRIxREGVAL"\n",
+	   target->id,target_regname(target,reg),tid,tthread->tidctxt,value);
+
+    if (!tthread->regcaches[tthread->tidctxt]) {
+	verror("target %d could not load thread %d!\n",target->id,tid);
+	errno = EADDRNOTAVAIL;
+	return 0;
+    }
+    regcache = tthread->regcaches[tthread->tidctxt];
+
+    if (regcache_write_reg(regcache,reg,value)) {
+	verror("target %d thread %d reg %d: could not write!\n",
+	       target->id,tid,reg);
+	return -1;
+    }
+
+    OBJSDIRTY(tthread);
+
+    return 0;
+}
+
+int target_regcache_readreg_ifdirty(struct target *target,
+				    struct target_thread *tthread,
+				    thread_ctxt_t tctxt,REG reg,REGVAL *regval) {
+    if (tctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,tctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    if (!tthread->regcaches[tctxt])
+	return 0;
+    else
+	return regcache_read_reg_ifdirty(tthread->regcaches[tctxt],reg,regval);
+}
+
+int target_regcache_isdirty_reg(struct target *target,
+				struct target_thread *tthread,
+				thread_ctxt_t tctxt,REG reg) {
+    if (tctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,tctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    if (!tthread->regcaches[tctxt])
+	return 0;
+    else
+	return regcache_isdirty_reg(tthread->regcaches[tctxt],reg);
+}
+
+int target_regcache_isdirty_reg_range(struct target *target,
+				      struct target_thread *tthread,
+				      thread_ctxt_t tctxt,REG start,REG end) {
+    if (tctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,tctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    if (!tthread->regcaches[tctxt])
+	return 0;
+    else
+	return regcache_isdirty_reg_range(tthread->regcaches[tctxt],start,end);
+}
+
+struct regcache *target_regcache_get(struct target *target,
+				     struct target_thread *tthread,
+				     thread_ctxt_t tctxt) {
+    if (tctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,tctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    return tthread->regcaches[tctxt];
+}
+
+int target_regcache_snprintf(struct target *target,struct target_thread *tthread,
+			     thread_ctxt_t tctxt,char *buf,int bufsiz,
+			     int detail,char *sep,char *kvsep,int flags) {
+    int rc;
+    int nrc;
+
+    if (tctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,tctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    if (!tthread->regcaches[tctxt])
+	return 0;
+    else {
+	rc = snprintf(buf,bufsiz,"%stctxt%s%d",sep,kvsep,tctxt);
+	if (rc < 0)
+	    return rc;
+	nrc = regcache_snprintf(tthread->regcaches[tctxt],
+				(rc >= bufsiz) ? NULL : buf + rc,
+				(rc >= bufsiz) ? 0 : bufsiz - rc,
+				detail,sep,kvsep,flags);
+	if (nrc < 0)
+	    return nrc;
+	else
+	    return rc + nrc;
+    }
+}
+
+int target_regcache_zero(struct target *target,struct target_thread *tthread,
+			 thread_ctxt_t tctxt) {
+    if (tctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,tctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    if (!tthread->regcaches[tctxt])
+	return 0;
+    else {
+	regcache_zero(tthread->regcaches[tctxt]);
+	return 0;
+    }
+}
+
+int target_regcache_mark_flushed(struct target *target,
+				 struct target_thread *tthread,
+				 thread_ctxt_t tctxt) {
+    if (tctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,tctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    if (!tthread->regcaches[tctxt])
+	return 0;
+
+    regcache_mark_flushed(tthread->regcaches[tctxt]);
+
+    return 0;
+}
+
+int target_regcache_invalidate(struct target *target,
+			       struct target_thread *tthread,
+			       thread_ctxt_t tctxt) {
+    if (tctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,tctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    if (!tthread->regcaches[tctxt])
+	return 0;
+
+    regcache_invalidate(tthread->regcaches[tctxt]);
+
+    return 0;
+}
+
+int target_regcache_copy_all(struct target_thread *sthread,
+			     thread_ctxt_t stidctxt,
+			     struct target_thread *dthread,
+			     thread_ctxt_t dtidctxt) {
+    struct target *target = sthread->target;
+
+    if (stidctxt > target->max_thread_ctxt
+	|| dtidctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d/%d specified)!\n",
+	       target->id,target->max_thread_ctxt,stidctxt,dtidctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "copying thid %d ctxt %d to thid %d ctxt %d\n",
+	   sthread->tid,stidctxt,dthread->tid,dtidctxt);
+
+    if (!sthread->regcaches[stidctxt])
+	return 0;
+
+    if (!dthread->regcaches[dtidctxt])
+	dthread->regcaches[dtidctxt] = regcache_create(dthread->target->arch);
+
+    return regcache_copy_all(sthread->regcaches[stidctxt],
+			     dthread->regcaches[dtidctxt]);
+}
+
+int target_regcache_copy_all_zero(struct target_thread *sthread,
+				  thread_ctxt_t stidctxt,
+				  struct target_thread *dthread,
+				  thread_ctxt_t dtidctxt) {
+    struct target *target = sthread->target;
+
+    if (stidctxt > target->max_thread_ctxt
+	|| dtidctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d/%d specified)!\n",
+	       target->id,target->max_thread_ctxt,stidctxt,dtidctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    if (dthread->regcaches[dtidctxt])
+	regcache_zero(dthread->regcaches[dtidctxt]);
+
+    return target_regcache_copy_all(sthread,stidctxt,dthread,dtidctxt);
+}
+
+int target_regcache_copy_from(struct target_thread *dthread,
+			      thread_ctxt_t dtidctxt,
+			      struct regcache *sregcache) {
+    struct target *target = dthread->target;
+
+    if (dtidctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,dtidctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "copying regcache to thid %d ctxt %d\n",
+	   dthread->tid,dtidctxt);
+
+    if (!dthread->regcaches[dtidctxt])
+	dthread->regcaches[dtidctxt] = regcache_create(dthread->target->arch);
+
+    return regcache_copy_all(sregcache,dthread->regcaches[dtidctxt]);
+}
+
+int target_regcache_copy_dirty_to(struct target_thread *sthread,
+				  thread_ctxt_t stidctxt,
+				  struct regcache *dregcache) {
+    struct target *target = sthread->target;
+
+    if (stidctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,stidctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "copying regcache to thid %d ctxt %d\n",
+	   sthread->tid,stidctxt);
+
+    if (!sthread->regcaches[stidctxt])
+	sthread->regcaches[stidctxt] = regcache_create(sthread->target->arch);
+
+    return regcache_copy_dirty(sthread->regcaches[stidctxt],dregcache);
+}
+
+GHashTable *target_regcache_copy_registers(struct target *target,tid_t tid) {
+    return target_regcache_copy_registers_tidctxt(target,tid,
+						  THREAD_CTXT_DEFAULT);
+}
+
+GHashTable *target_regcache_copy_registers_tidctxt(struct target *target,
+						   tid_t tid,
+						   thread_ctxt_t tidctxt) {
+    struct target_thread *tthread;
+    struct regcache *regcache;
+
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "target %d copying in thid %d ctxt %d\n",
+	   target->id,tid,tidctxt);
+
+    TARGET_REGCACHE_GET(tidctxt,0);
+
+    if (!regcache)
+	return NULL;
+
+    return regcache_copy_registers(regcache);
+}
+
+REGVAL target_regcache_readreg_tidctxt(struct target *target,
+				       tid_t tid,thread_ctxt_t tidctxt,
+				       REG reg) {
+    struct target_thread *tthread;
+    struct regcache *regcache;
+    REGVAL regval = 0;
+
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "target %d reading reg %s in thid %d ctxt %d\n",
+	   target->id,target_regname(target,reg),tid,tidctxt);
+
+    TARGET_REGCACHE_GET(tidctxt,0);
+
+    if (regcache_read_reg(regcache,reg,&regval)) {
+	verror("target %d thread %d reg %d ctxt %d: could not read!\n",
+	       target->id,tid,reg,tidctxt);
+	return 0;
+    }
+
+    return regval;
+}
+
+int target_regcache_writereg_tidctxt(struct target *target,
+				     tid_t tid,thread_ctxt_t tidctxt,
+				     REG reg,REGVAL value) {
+    struct target_thread *tthread;
+    struct regcache *regcache;
+
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "target %d writing reg %s in thid %d ctxt %d 0x%"PRIxREGVAL"\n",
+	   target->id,target_regname(target,reg),tid,tidctxt,value);
+
+    TARGET_REGCACHE_GET(tidctxt,0);
+
+    if (regcache_write_reg(regcache,reg,value)) {
+	verror("target %d thread %d reg %d ctxt %d: could not write!\n",
+	       target->id,tid,reg,tidctxt);
+	return -1;
+    }
+
+    OBJSDIRTY(tthread);
+
+    return 0;
 }
 
 /*

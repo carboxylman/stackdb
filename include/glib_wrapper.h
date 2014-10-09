@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 The University of Utah
+ * Copyright (c) 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -20,6 +20,42 @@
 #define _UTIL_GLIB_H
 
 #include <glib.h>
+
+/*
+ * A little cast to quickly use any numeric type (for sizeof(type) <=
+ * sizeof(uintptr_t), anyway) as a GHashTable gpointer key.
+ */
+#define VGINTKEY gpointer)(uintptr_t
+
+/**
+ * This function iterates through the current list.  It does not guard
+ * against list modifications!
+ */
+#define v_g_list_foreach(glhead,glcur,elm)				\
+    for ((glcur) = (glhead),						\
+	     (elm) = (glcur) ? (typeof(elm))(glcur)->data : NULL;	\
+	 (glcur) != NULL;						\
+	 (glcur) = g_list_next(glcur),					\
+	     (elm) = (glcur) ? (typeof(elm))(glcur)->data : NULL) 
+/**
+ * This function is safe and guards against list modifications, as long
+ * as anything you call inside it only  deletes *the current* item.
+ * Just make sure if you call any of those functions that might delete
+ * the item, you don't use it again!
+ */
+#define v_g_list_foreach_safe(glhead,glcur,glnext,elm)			\
+    for ((glcur) = (glhead),						\
+	     (glnext) = (glcur) ? g_list_next(glcur) : NULL,		\
+	     (elm) = (glcur) ? (typeof(elm))(glcur)->data : NULL;	\
+	 (glcur) != NULL;						\
+	 (glcur) = (glnext),						\
+	     (glnext) = (glnext) ? g_list_next(glnext) : NULL,		\
+	     (elm) = (glcur) ? (typeof(elm))(glcur)->data : NULL)
+
+#define v_g_list_foreach_remove(glhead,glcur,glnext)			\
+    do {								\
+	(glhead) = g_list_remove_link(glhead,glcur); 			\
+    } while (0)
 
 #define v_g_slist_foreach(gslhead,gslcur,elm)				\
     for ((gslcur) = (gslhead),						\

@@ -53,7 +53,6 @@ int main(int argc,char **argv) {
     int doreverse = 0;
     int doranges = 1;
     char *endptr = NULL;
-    int nofree = 0;
     struct lsymbol *s;
     struct lsymbol *s2;
     struct symbol *is;
@@ -71,7 +70,7 @@ int main(int argc,char **argv) {
 
     dwdebug_init();
 
-    while ((ch = getopt(argc, argv, "d::w::gDMl:F:TGSNErI:i:R")) != -1) {
+    while ((ch = getopt(argc, argv, "d::w::gDMl:F:TGSErI:i:R")) != -1) {
 	switch(ch) {
 	case 'd':
 	    if (optarg) {
@@ -155,9 +154,6 @@ int main(int argc,char **argv) {
 	    break;
 	case 'E':
 	    doelfsymtab = 0;
-	    break;
-	case 'N':
-	    nofree = 1;
 	    break;
 	case 'r':
 	    doreverse = 1;
@@ -330,9 +326,6 @@ int main(int argc,char **argv) {
 	    }
 	}
     }
-
-    if (!nofree)
-	debugfile_release(debugfile);
 
     dwdebug_fini();
 

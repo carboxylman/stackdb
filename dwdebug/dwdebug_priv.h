@@ -19,6 +19,7 @@
 #ifndef __DWDEBUG_PRIV_H__
 #define __DWDEBUG_PRIV_H__
 
+#include "arch.h"
 #include "dwdebug.h"
 
 #define LOGDUMPSYMBOL(dl,lt,lf,s)					\

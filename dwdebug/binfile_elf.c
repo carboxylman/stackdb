@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -31,6 +31,7 @@
 
 #include "config.h"
 #include "common.h"
+#include "arch.h"
 #include "log.h"
 #include "output.h"
 #include "list.h"
@@ -73,48 +74,45 @@ struct binfile_ops elf_binfile_ops = {
     .free_instance = elf_binfile_free_instance,
 };
 
-static int elf_get_arch_info(Elf *elf,int *wordsize,int *endian) {
+static struct arch *elf_get_arch(Elf *elf) {
     char *eident;
+    GElf_Ehdr ehdr;
+    struct arch *arch;
 
-    /* read the ident stuff to get wordsize and endianness info */
+    if (!gelf_getehdr(elf,&ehdr)) {
+	verror("cannot read ELF header: %s",elf_errmsg(-1));
+	return NULL;
+    }
+
+    /* read the ident stuff to get machine, wordsize, and endianness info */
     if (!(eident = elf_getident(elf,NULL))) {
 	verror("elf_getident: %s\n",elf_errmsg(elf_errno()));
-	return -1;
-    }
-
-    if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
-	if (wordsize)
-	    *wordsize = 4;
-	vdebug(3,LA_DEBUG,LF_ELF,"32-bit\n");
-    }
-    else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
-	if (wordsize) 
-	    *wordsize = 8;
-	vdebug(3,LA_DEBUG,LF_ELF,"64-bit\n");
-    }
-    else {
-	verror("unknown elf class %d; not 32/64 bit!\n",
-	       (uint8_t)eident[EI_CLASS]);
-	return -1;
+	return NULL;
     }
 
     if ((uint8_t)eident[EI_DATA] == ELFDATA2LSB) {
-	if (endian)
-	    *endian = DATA_LITTLE_ENDIAN;
 	vdebug(3,LA_DEBUG,LF_DFILE,"little endian\n");
     }
     else if ((uint8_t)eident[EI_DATA] == ELFDATA2MSB) {
-	if (endian)
-	    *endian = DATA_BIG_ENDIAN;
-	vdebug(3,LA_DEBUG,LF_DFILE,"big endian\n");
+	verror("big endian ELF files unsupported; no arch for them\n");
+	return NULL;
     }
     else {
 	verror("unknown elf data %d; not big/little endian!\n",
 	       (uint8_t)eident[EI_DATA]);
-	return -1;
+	return NULL;
     }
 
-    return 0;
+    if (ehdr.e_machine == EM_386)
+	arch = arch_get(ARCH_X86);
+    else if (ehdr.e_machine == EM_X86_64)
+	arch = arch_get(ARCH_X86_64);
+    else {
+	verror("unsupported elf machine type %d!\n",ehdr.e_machine);
+	return NULL;
+    }
+
+    return arch;
 }
 
 static const char *elf_binfile_get_backend_name(void) {
@@ -123,6 +121,7 @@ static const char *elf_binfile_get_backend_name(void) {
 
 static int elf_binfile_close(struct binfile *binfile) {
     struct binfile_elf *bfelf = (struct binfile_elf *)binfile->priv;
+    int had_dwfl = 0;
 
     if (bfelf->ebl) {
 	ebl_closebackend(bfelf->ebl);
@@ -131,10 +130,20 @@ static int elf_binfile_close(struct binfile *binfile) {
     if (bfelf->dwfl) {
 	dwfl_end(bfelf->dwfl);
 	bfelf->dwfl = NULL;
+	had_dwfl = 1;
     }
     if (bfelf->elf) {
-	elf_end(bfelf->elf);
-	bfelf->elf = NULL;
+	if (binfile->image && had_dwfl) {
+	    /*
+	     * NB: dwfl_end already called elf_end; don't!  See
+	     * dwarf_load_debuginfo().
+	     */
+	    bfelf->elf = NULL;
+	}
+	else if (bfelf->elf) {
+	    elf_end(bfelf->elf);
+	    bfelf->elf = NULL;
+	}
     }
     if (binfile->fd > -1) {
 	close(binfile->fd);
@@ -345,11 +354,11 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
     Elf_Scn *scn;
     Elf_Data *edata;
     uint8_t *done_sections;
-    char *kallsyms_str;
+    char *config_str;
     int kallsyms = 0;
     int kallsyms_after_init = 0;
-    char *set_module_ronx_str;
     int set_module_ronx = 0;
+    int module_unload = 1;
     int major = 0,minor = 0,patch = 0;
     char *tmp;
 
@@ -392,8 +401,8 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
 	if ((tmp = (char *)g_hash_table_lookup(config,"__VERSION_PATCH")))
 	    patch = atoi(tmp);
 
-	kallsyms_str = g_hash_table_lookup(config,"CONFIG_KALLSYMS");
-	if (kallsyms_str && (*kallsyms_str == 'y' || *kallsyms_str == 'Y'))
+	config_str = g_hash_table_lookup(config,"CONFIG_KALLSYMS");
+	if (config_str && (*config_str == 'y' || *config_str == 'Y'))
 	    kallsyms = 1;
 
 	if (kallsyms
@@ -401,11 +410,17 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
 		|| (major == 2 && minor == 6 && patch >= 32)))
 	    kallsyms_after_init = 1;
 
-	set_module_ronx_str = 
+	config_str = 
 	    g_hash_table_lookup(config,"CONFIG_DEBUG_SET_MODULE_RONX");
-	if (set_module_ronx_str 
-	    && (*set_module_ronx_str == 'y' || *set_module_ronx_str == 'Y'))
+	if (config_str 
+	    && (*config_str == 'y' || *config_str == 'Y'))
 	    set_module_ronx = 1;
+
+	config_str = 
+	    g_hash_table_lookup(config,"CONFIG_MODULE_UNLOAD");
+	if (config_str 
+	    && (*config_str == 'n' || *config_str == 'N'))
+	    module_unload = 0;
     }
 
     /*
@@ -436,7 +451,25 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
 	    && (strcmp(secname,".symtab") == 0
 		|| strcmp(secname,".strtab") == 0))
 	    bfielf->shdrs[i].sh_flags |= SHF_ALLOC;
-	else if (strcmp(secname,".modinfo") == 0) 
+
+	/*
+	 * Per-CPU data is special.
+	 */
+	if (strcmp(secname,".data..percpu") == 0)
+	    bfielf->shdrs[i].sh_flags &= ~(unsigned long)SHF_ALLOC;
+
+	/*
+	 * Don't load version info, nor modinfo
+	 */
+	if (strcmp(secname,"__versions") == 0)
+	    bfielf->shdrs[i].sh_flags &= ~(unsigned long)SHF_ALLOC;
+	if (strcmp(secname,".modinfo") == 0) 
+	    bfielf->shdrs[i].sh_flags &= ~(unsigned long)SHF_ALLOC;
+
+	/*
+	 * Don't load exit sections if CONFIG_MODULE_UNLOAD is n.
+	 */
+	if (!module_unload && strncmp(secname,".exit",5) == 0)
 	    bfielf->shdrs[i].sh_flags &= ~(unsigned long)SHF_ALLOC;
     }
 
@@ -754,8 +787,8 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 	goto errout;
     }
 
-    if (elf_get_arch_info(bfelf->elf,&bf->wordsize,&bf->endian)) {
-	verror("could not get arch info!\n");
+    if (!(bf->arch = elf_get_arch(bfelf->elf))) {
+	verror("could not get arch for %s!\n",bf->filename);
 	goto errout;
     }
 
@@ -942,7 +975,7 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 		     * recombine sections.
 		     */
 		    if (!(bfelf->shdrs[rsym.st_shndx].sh_flags & SHF_ALLOC)) {
-			vdebug(20,LA_DEBUG,LF_ELF,
+			vdebug(9,LA_DEBUG,LF_ELF,
 			       "skipping reloc for non-alloc section %d\n",
 			       rsym.st_shndx);
 			continue;
@@ -980,7 +1013,7 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 				 rsymidx,j,i);
 			continue;
 		    }
-		    memcpy(bf->image+rcoffset,&rvalue,bf->wordsize);
+		    memcpy(bf->image+rcoffset,&rvalue,bf->arch->wordsize);
 		    break;
 		case R_386_PC32:
 		    /* Sv + Ad - P (r_offset?) */
@@ -993,7 +1026,7 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 				 rsymidx,j,i);
 			continue;
 		    }
-		    memcpy(bf->image+rcoffset,&rvalue,bf->wordsize);
+		    memcpy(bf->image+rcoffset,&rvalue,bf->arch->wordsize);
 		    break;
 		default:
 		    verror("cannot handle relocation type %d for symbol %d"
@@ -1027,13 +1060,16 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 		    goto errout;
 		}
 
-		shdr_new->sh_flags = bfelfinst->shdrs[i].sh_flags;
+		if (shdr_new->sh_flags != bfelfinst->shdrs[i].sh_flags) {
+		    shdr_new->sh_flags = bfelfinst->shdrs[i].sh_flags;
 
-		if (gelf_update_shdr(scn,shdr_new)) {
-		    vwarnopt(3,LA_DEBUG,LF_ELF,
-			     "could not update sh_flags for section %d; skipping"
-			     " but debuginfo reloc might be broken!\n",i);
-		    continue;
+		    if (gelf_update_shdr(scn,shdr_new)) {
+			vwarnopt(3,LA_DEBUG,LF_ELF,
+				 "could not update sh_flags for section %d;"
+				 " skipping; debuginfo reloc might be broken!\n",
+				 i);
+			continue;
+		    }
 		}
 	    }
 	}
@@ -1218,7 +1254,7 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 	    ndata = edata->d_buf;
 	    nend = ndata + edata->d_size;
 	    while (ndata < nend) {
-		if (bf->wordsize == 8) {
+		if (bf->arch->wordsize == 8) {
 		    nthdr64 = (Elf64_Nhdr *)ndata;
 		    /* skip past the header and the name string and its
 		     * padding */
