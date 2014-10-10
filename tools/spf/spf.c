@@ -268,7 +268,7 @@ void print_thread_context(FILE *stream,struct target *target,tid_t tid,
     struct target_thread *tthread;
     char buf[4096];
     struct array_list *tids;
-    int i;
+    int i,j;
     int rc;
     int didmaintid = 0;
     tid_t ttid;
@@ -384,7 +384,7 @@ void print_thread_context(FILE *stream,struct target *target,tid_t tid,
 	    array_list_prepend(otl,overlay);
 	}
 
-	array_list_foreach(otl,i,overlay) {
+	array_list_foreach(otl,j,overlay) {
 	    target_close(overlay);
 	    target_finalize(overlay);
 	}
