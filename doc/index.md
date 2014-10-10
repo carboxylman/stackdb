@@ -11,8 +11,8 @@ You can browse the Stackdb documentation online (HTML and PDF) formats.
     [Hacker Guide](stackdb-hacker-guide.pdf)
   * PDF, single page: [All](stackdb-alldocs.pdf)
 
-  * Doxygen auto-generated API listings: <api/html/index.html>,
-    <api/html/classes.html>, <api/html/globals_func.html>
+  * Doxygen auto-generated API listings: [Index](api/html/index.html),
+    [Data Structures](api/html/classes.html), [Functions](api/html/globals_func.html)
 
 You can also simply read the plain text source files in the `doc/`
 subdirectory in the Stackdb source tree.
