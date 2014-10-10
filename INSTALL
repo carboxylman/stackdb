@@ -1,9 +1,9 @@
-Installing StackDB
+Installing Stackdb
 ==================
 
-Currently, you must install StackDB from source.  StackDB is available
-via git at http://git-public.flux.utah.edu/git/a3/vmi.git .  StackDB is
-only available for Linux, and for `x86/x86_64` architectures.  StackDB
+Currently, you must install Stackdb from source.  Stackdb is available
+via git at http://git-public.flux.utah.edu/git/a3/vmi.git .  Stackdb is
+only available for Linux, and for `x86/x86_64` architectures.  Stackdb
 itself will likely build on non-Linux UNIX-like OSes; but first, because
 it depends on elfutils; and second, because we have only been interested
 in applying it to platforms that are best-supported under Linux (such as
@@ -12,7 +12,7 @@ Xen and QEMU/KVM), we do not support other build environments.
 Dependencies
 ------------
 
-To build StackDB, your system must have the following packages installed:
+To build Stackdb, your system must have the following packages installed:
 
   * [glib] >= 2.29;
   * [elfutils] (>= 0.137 should be fine, but ideally you will want
@@ -30,20 +30,20 @@ instructions below if you feel the need to do so.
 
 ### Optional Packages ###
 
-StackDB's functionality can be enhanced by installing the following
-packages and enabling them when building StackDB.
+Stackdb's functionality can be enhanced by installing the following
+packages and enabling them when building Stackdb.
 
-  * [Xen] (if you want StackDB to attach to to Xen VMs, you'll need the
+  * [Xen] (if you want Stackdb to attach to to Xen VMs, you'll need the
     Xen binaries, *and* the libxc development headers/libs);
-  * [Qemu] (if you want StackDB to attach to QEMU/KVM VMs, you'll need
+  * [Qemu] (if you want Stackdb to attach to QEMU/KVM VMs, you'll need
     the qemu binaries -- none of the development headers nor libs
     though).
-  * [libvmi] (StackDB provides essentially the same memory access
+  * [libvmi] (Stackdb provides essentially the same memory access
     functionality for Xen and KVM that libvmi does; but you can choose
-    to use StackDB's built-in support, or optionally libvmi if you
-    install it and configure StackDB to use it at build time);
+    to use Stackdb's built-in support, or optionally libvmi if you
+    install it and configure Stackdb to use it at build time);
   * [gsoap] ==2.8.11 (for SOAP XML service support; also necessary for
-    SOAP clients; must apply StackDB patches and build it manually!);
+    SOAP clients; must apply Stackdb patches and build it manually!);
   * python-suds and pysimplesoap (for SOAP XML python clients; must
     apply our patch to pysimplesoap);
   * a Java SDK >= 1.6, Apache Ant, and Apache Axis2 (for SOAP XML java
@@ -121,21 +121,21 @@ Notes on Building Dependencies
     Grab http://downloads.sourceforge.net/project/judy/judy/Judy-1.0.5/Judy-1.0.5.tar.gz .
     Unpack, configure, make, make install.  If you change the build
     prefix to anything other than /usr or /usr/local, you'll need to
-    tell StackDB via its ./configure script later on via
+    tell Stackdb via its ./configure script later on via
     `--with-judy=/my/prefix`.
 
   * gsoap
 
     Grab gsoap_2.8.11.zip from http://www.cs.fsu.edu/~engelen/soap.html .
     Unpack it.  Then apply the `gsoap-2.8.11-noserve.patch` and
-    `gsoap-2.8.11-xs-include-to-module.patch` in the StackDB source code
+    `gsoap-2.8.11-xs-include-to-module.patch` in the Stackdb source code
     directory (`vmi/xml/etc`).
 
     	patch -p1 < ../../vmi/xml/etc/gsoap-2.8.11-noserve.patch
     	patch -p1 < ../../vmi/xml/etc/gsoap-2.8.11-xs-include-to-module.patch
 
     Then configure, make, install.  If you change the build prefix to
-    anything other than /usr, you'll need to tell StackDB via its
+    anything other than /usr, you'll need to tell Stackdb via its
     ./configure script later on via `--with-gsoap=/my/prefix`.
 
         ./configure && make && make install
@@ -152,7 +152,7 @@ Notes on Building Dependencies
   * pysimplesoap
 
     Grab the latest pysimplesoap from http://code.google.com/p/pysimplesoap/ .
-    Unpack it, then apply the pysimplesoap-soap-env.patch in the StackDB
+    Unpack it, then apply the pysimplesoap-soap-env.patch in the Stackdb
     source code (`vmi/xml/etc/pysimplesoap-soap-env.patch`).
 
         patch -p1 < ../../vmi/xml/etc/pysimplesoap-soap-env.patch
@@ -166,16 +166,16 @@ Notes on Building Dependencies
     Grab apache-ant-1.8.4-bin.zip from http://ant.apache.org/, and grab
     axis2-1.6.2-bin.zip from http://axis.apache.org/axis2/java/core/ .
     Unpack them and place them anywhere (/usr/local or /opt are checked by
-    the StackDB configure script, or tell StackDB where they are via the
+    the Stackdb configure script, or tell Stackdb where they are via the
     `--with-ant` and `--with-axis2` ./configure options).  If there is
-    no `javac` in your $PATH, you'll also have to tell StackDB's
+    no `javac` in your $PATH, you'll also have to tell Stackdb's
     ./configure script where your Java SDK is installed via `--with-java`.
 
 
-Building and Installing StackDB
+Building and Installing Stackdb
 -------------------------------
 
-StackDB is easy to install.  Enter the source directory you cloned or
+Stackdb is easy to install.  Enter the source directory you cloned or
 downloaded, and run autoconf:
 
     cd vmi && autoconf && cd ..
@@ -184,7 +184,7 @@ Create a separate build directory:
 
     mkdir vmi.obj && cd vmi.obj
 
-Then run StackDB's `configure` script with the options you need, based
+Then run Stackdb's `configure` script with the options you need, based
 on the instructions above (or run `../vmi/configure --help` to make sure
 you've got the build options you want):
 
@@ -196,7 +196,7 @@ installed in non-standard places:)
     ../vmi/configure --prefix=/usr/local --with-glib=/opt/vmi/glib \
         --with-elfutils=/opt/vmi/elfutils
 
-Finally, build and install StackDB:
+Finally, build and install Stackdb:
 
     make && make install
 

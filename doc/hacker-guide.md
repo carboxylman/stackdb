@@ -1,9 +1,9 @@
 
-Extending StackDB
+Extending Stackdb
 =================
 
 Hopefully, you'll have arrived at this section because you want to
-extend StackDB's platform support.  If you hoped to get advice on how to
+extend Stackdb's platform support.  If you hoped to get advice on how to
 improve its design, unfortunately this won't be much help to you.
 
 Code Structure
@@ -11,7 +11,7 @@ Code Structure
 
 Here's a quick overview of the source tree:
 
-  * include/ -- common StackDB header files: data structures,
+  * include/ -- common Stackdb header files: data structures,
     architecture support, utility functions and structures
   * lib/ -- implementations of the header files in include/
   * dwdebug/ -- DWARF debuginfo and ELF support for reading binary
@@ -23,19 +23,19 @@ Here's a quick overview of the source tree:
     and the like -- but some constructs of higher-level languages might
     be harder to "fit" into the dwdebug abstractions, since they were
     designed with C language features in mind.
-  * target/ -- the core of StackDB: the target abstraction and its
+  * target/ -- the core of Stackdb: the target abstraction and its
     common code (targets, threads, addrspaces, regions, ranges,
     bsymbols, etc); drivers; personalities
-  * analysis/ -- supports StackDB analyses (at one point, we envisioned
-    StackDB-based programs and libraries as *analyses*; this is
+  * analysis/ -- supports Stackdb analyses (at one point, we envisioned
+    Stackdb-based programs and libraries as *analyses*; this is
     first-class support for the metadata that describes those programs)
   * xml/schema/ -- XML schema describing debuginfo and target data
     structures
   * xml/service/ -- WSDL and SOAP web services; exports three categories
-    of StackDB functions (dwdebug; target; and analysis) as web services
+    of Stackdb functions (dwdebug; target; and analysis) as web services
   * xml/client/ -- SOAP client support; Apache Axis 2.x-based Java
     client libs and example programs; Python sample clients.
-  * tools/ -- several basic tools, written using StackDB, that can be
+  * tools/ -- several basic tools, written using Stackdb, that can be
     applied to any target (i.e., dumpdebuginfo, backtrace, dumptarget,
     dumpthreads, spf, cfi_check, rop_checkret)
 

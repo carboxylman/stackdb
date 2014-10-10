@@ -1,37 +1,37 @@
-Using StackDB
+Using Stackdb
 ====================
 
-Once you've built and installed StackDB, you'll probably wonder how to
-get started.  This guide will help you understand StackDB features and
+Once you've built and installed Stackdb, you'll probably wonder how to
+get started.  This guide will help you understand Stackdb features and
 usage model; configure your system to take full advantage of it; give
 you a brief tour of the programs and tools it comes with; and help you
-get started writing your own StackDB programs.
+get started writing your own Stackdb programs.
 
 Quick Start
 -----------
 
-It's easy to get started with StackDB and do some debugging quickly, so
-this section is short.  If you're already familiar with StackDB, just
-install StackDB, and jump to the [Examples and
+It's easy to get started with Stackdb and do some debugging quickly, so
+this section is short.  If you're already familiar with Stackdb, just
+install Stackdb, and jump to the [Examples and
 Demos](#examples-and-demos) section.
 
 Understanding the Concept and Features
 --------------------------------------
 
-StackDB is not a normal debugger nor memory-forensics tool -- although
+Stackdb is not a normal debugger nor memory-forensics tool -- although
 it can serve both those functions very well -- so the first step is to
-familiarize yourself with the features StackDB offers.  You can download
+familiarize yourself with the features Stackdb offers.  You can download
 and read our paper at <http://www.flux.utah.edu/paper/johnson-vee14>.
 
 If your interest is in simply using a few features of the system, you'll
 be able to skim some of the more complicated details; but we do
 encourage you to read enough to gain a conceptual understanding of
-StackDB if you're not familiar with it.
+Stackdb if you're not familiar with it.
 
-How to Run StackDB Programs
+How to Run Stackdb Programs
 ---------------------------
 
-The purpose of most StackDB programs is to attach to a target program --
+The purpose of most Stackdb programs is to attach to a target program --
 an OS running in a VM; a process running in an OS running in a VM; a
 process running in userspace; or even a PHP application running in a
 process running in an OS running in a VM!
@@ -40,33 +40,33 @@ Once attached, usually you want to extract some information from the
 target, either by reading its memory, or detecting and analyzing its
 control flows at key points.
 
-Each StackDB program is a peer of the base target it attaches to.  That
+Each Stackdb program is a peer of the base target it attaches to.  That
 means, if it is attaching to a VM to debug an OS, it runs in a control
 VM and attaches to the target VM.  For instance, if you're using Xen,
-you'll run your StackDB analysis/debugging program(s) in Domain 0, Xen's
+you'll run your Stackdb analysis/debugging program(s) in Domain 0, Xen's
 privileged control domain, and attach to other Domains.  If you're
-running QEMU/KVM domains, your StackDB program(s) will run in the Linux
+running QEMU/KVM domains, your Stackdb program(s) will run in the Linux
 host, and attach to the QEMU process that is running your target VM.  If
 you simply want to attach to a Linux userspace process, just like using
-GDB to debug a normal program, both the StackDB program(s) and the
-userspace process run in userspace, as peer processes.  StackDB
+GDB to debug a normal program, both the Stackdb program(s) and the
+userspace process run in userspace, as peer processes.  Stackdb
 processes are just debuggers that you attach to the target you want to
 debug.
 
-Standard StackDB Program Arguments
+Standard Stackdb Program Arguments
 ----------------------------------
 
-Programs built with StackDB that use StackDB's argument processing can
+Programs built with Stackdb that use Stackdb's argument processing can
 supply standard, well-known arguments to quickly attach to targets and
-configure drivers.  StackDB's library is configured on a per-target
-basis, and it has no configuration language.  Either your StackDB
-programs use StackDB's argument processing and augment it with any
+configure drivers.  Stackdb's library is configured on a per-target
+basis, and it has no configuration language.  Either your Stackdb
+programs use Stackdb's argument processing and augment it with any
 options they require; or they can directly configure it each time they
-open a target by populating StackDB data structures directly.  We
-strongly encourage you to use StackDB's argument processing; it will
+open a target by populating Stackdb data structures directly.  We
+strongly encourage you to use Stackdb's argument processing; it will
 simplify your life!
 
-Here is a summary of the common StackDB program arguments:
+Here is a summary of the common Stackdb program arguments:
 
     -a, --active-probing=FLAG,FLAG,...
                              A list of active probing flags to enable (disabled
@@ -95,9 +95,9 @@ Here is a summary of the common StackDB program arguments:
                              (ptrace,xen,gdb,os-process,php).
     -w, --warn=LEVEL         Set/increase the warning level.
 
-Typically, StackDB drivers use *unique* option names -- they don't share
-or overlap by design, if possible.  Since StackDB's argument processing
-is built using the [GNU argp] library, StackDB will automatically select
+Typically, Stackdb drivers use *unique* option names -- they don't share
+or overlap by design, if possible.  Since Stackdb's argument processing
+is built using the [GNU argp] library, Stackdb will automatically select
 the driver matching the arguments you provide, if you do not specify a
 driver via the `-t` option.  There are a few options that overlap; but
 as long as you pass a unique option first (for the driver you need to
@@ -109,7 +109,7 @@ If you need to augment your driver with a personality, use the
 `--personality` option.  Currently, the only available personality is
 the `linux` personality, that can be used with drivers that provide
 access to OSes -- such as the `xen` and `gdb` (with the `qemu` helper)
-drivers.  If you develop your own personality outside the StackDB source
+drivers.  If you develop your own personality outside the Stackdb source
 repository, you can specify a shared library filename where the
 personality can be found via `--personality-lib`.
 
@@ -117,11 +117,11 @@ personality can be found via `--personality-lib`.
 
 The dwdebug
 library's behavior can be controlled on a per-debuginfo-file basis.  The
-`-F` option's value can be used to pass in an "rfilter" (a StackDB
+`-F` option's value can be used to pass in an "rfilter" (a Stackdb
 regular expression filter) that can assign specific options to matching
 files.  Typically, you'll be happier to globally set these options,
 rather than work with the powerful-yet-complex rfilters.  Currently, the
-most useful option is `PARTIALSYM`.  StackDB's dwdebug library was
+most useful option is `PARTIALSYM`.  Stackdb's dwdebug library was
 designed to support very fast symbol and address lookups at runtime.
 Thus, it reads and indexes (by default) the entire debuginfo file.  For
 a stock Ubuntu 3.8.x kernel, this can require over 1GB of RAM -- the
@@ -139,12 +139,12 @@ anyway.)
 
 ### Debuginfo Search Path ###
 
-If your StackDB program is attaching to a target in userspace, or if the
+If your Stackdb program is attaching to a target in userspace, or if the
 target program in your VM is running the same binaries as in the VM the
-StackDB program is running in, your debuginfo will likely be installed
+Stackdb program is running in, your debuginfo will likely be installed
 in normal Linux locations in the filesystem (i.e., /usr/lib/debug).
 However, if you are attaching to an OS or process running in a VM, your
-VM may have different binaries than the host filesystem that the StackDB
+VM may have different binaries than the host filesystem that the Stackdb
 program is running in.  If this is true, you'll need to use the `-R`
 option to change the debuginfo search path prefix.  You'll need to
 create a directory that is a mirror of the relevant parts of the
@@ -176,7 +176,7 @@ to process memory mappings.
 If you construct stacks of targets, the overlay drivers may
 automatically enable active probing because they require it.  However,
 you may have the option to do this, or to not do it.  Much depends on
-your StackDB program's analysis.  If it makes frequent calls to
+your Stackdb program's analysis.  If it makes frequent calls to
 target_load_all_threads(), you may be better off enabling active probing
 for `thread_entry` and `thread_exit` -- unless your OS workload is
 *constantly* spawning processes.  There is always a tradeoff between how
@@ -191,7 +191,7 @@ wasted.
 
 Hopefully this guidance helps you get a feel for when and why active
 probing can be helpful; but you may be best-served by experimenting with
-your own StackDB applications and your own workloads.  Or, if
+your own Stackdb applications and your own workloads.  Or, if
 performance overhead doesn't worry you, then this may not matter as
 much.
 
@@ -205,7 +205,7 @@ optional warnings, like
 
 Then you need to choose a set of log flags, which enable debug and
 warning messages in specific components and/or feature areas of
-StackDB.  Sometimes, the maintainers may recognize where a problem is likely
+Stackdb.  Sometimes, the maintainers may recognize where a problem is likely
 to have originated, and can recommend a set of debug flags that will
 reduce the total logfile size while still providing enough information
 to find the bug.  There are several log *areas*:
@@ -215,7 +215,7 @@ to find the bug.  There are several log *areas*:
     * TARGET (T_*): the target/ src dir;
     * PROBE (P_*): the probing (breakpoints, watchpoints) components in target/;
     * XML (X_*): the xml components in xml/;
-    * USER (U_*): covers any user programs that wish to use StackDB's
+    * USER (U_*): covers any user programs that wish to use Stackdb's
       debug/logging framework
 
 The prefixes in parentheses are prepended to individual flag names, so
@@ -257,7 +257,7 @@ with prefixes already prepended:
            breakpoints), P_ACTION (single stepping is implemented as an
            action, for instance)
     * XML: X_XML (general issues), X_RPC, X_SVC, X_PROXYREQ
-    * USER: U_ALL (basically, 0xffffffff -- StackDB does not know a
+    * USER: U_ALL (basically, 0xffffffff -- Stackdb does not know a
            priori what the flag names should be for a user application
            -- right now the user can't discriminate specific flag values
            within the USER area)
@@ -267,7 +267,7 @@ Supported Platforms
 
 ### Drivers ###
 
-StackDB's drivers allow you to debug several different kinds of
+Stackdb's drivers allow you to debug several different kinds of
 targets.  Some drivers are designed to stack atop other drivers,
 allowing you to debug a base target, and several levels of overlay
 targets.  Here's a quick overview of the drivers we support; the targets
@@ -275,13 +275,13 @@ they allow you to attach to; and limitations.
 
 ### Linux Userspace Process (Ptrace) Driver ###
 
-This driver is a `ptrace(2)` driver.  It allows a StackDB program to
+This driver is a `ptrace(2)` driver.  It allows a Stackdb program to
 attach to a peer Linux process executing on the same machine as the
-StackDB program.  It uses the Linux/UNIX `ptrace(2)` system call to attach
+Stackdb program.  It uses the Linux/UNIX `ptrace(2)` system call to attach
 to and debug its target process.  It supports multithreaded programs.
 It was built as a driver to enable testing, and to flesh out internal
 APIs; but it may be useful to you on its own.  If you attach to a
-program that is running as your user ID, your StackDB process does not
+program that is running as your user ID, your Stackdb process does not
 need root privileges; otherwise, it will need them.
 
 The Ptrace driver can either attach to existing processes; or it can
@@ -293,12 +293,12 @@ this driver accepts:
     -e, --envvars=LIST         A comma-separated envvar list.
     -p, --pid=PID              A target process to attach to.
 
-You can also run your StackDB program like this:
+You can also run your Stackdb program like this:
 
     $ ./stackdb-program -t ptrace <myopt1> <myopt2> \
         -- ./program-to-debug arg1 arg2 ... argN
 
-StackDB will interpret all the arguments after the `--` as a vector to
+Stackdb will interpret all the arguments after the `--` as a vector to
 pass to execve, essentially.  This is the most common and convenient way
 to launch and debug programs with the Ptrace driver.  If you wish to
 debug an existing process, you can do something like this (if you have
@@ -310,7 +310,7 @@ debug an existing process, you can do something like this (if you have
 ### Xen Driver ###
 
 The Xen driver allows you to attach to a Xen VM.  In this case, your
-StackDB programs run in Domain 0, and they attach to other Xen VMs as
+Stackdb programs run in Domain 0, and they attach to other Xen VMs as
 necessary using Xen libraries (libxc, primarily).  This driver provides 
 different memory access mechanisms (available at runtime, depending on
 the ./configure options you supplied when building).
@@ -324,7 +324,7 @@ spaces (and thus memory), and kernel and userspace thread contexts.
 
 At the present time, the Xen driver only supports single-CPU VMs.  This
 limitation is an artifact of our research project, not a fundamental
-limitation in StackDB's design.  Contact us if you're interested in or
+limitation in Stackdb's design.  Contact us if you're interested in or
 require such a configuration; if the need arises, we may consider
 building this support.
 
@@ -356,12 +356,12 @@ versions; if this happens to you, try to use the `-s` argument to force
 software breakpoints.
 
 The Xen driver allows you to attach to multiple Xen VMs from Domain 0
-(either within the same StackDB program, or from within different
-StackDB programs running at the same time).  We need special code to do
+(either within the same Stackdb program, or from within different
+Stackdb programs running at the same time).  We need special code to do
 this because Xen only provides the ability for one Domain 0 program to
 listen for debug exceptions on other domains.  Thus, the Xen driver
 provides a demultiplexing service that, when utilized, notifies all
-StackDB programs attached to Xen VMs when there is a Xen debug
+Stackdb programs attached to Xen VMs when there is a Xen debug
 exception.  If you only need to attach to a single VM at one time, and
 don't want to incur any of the tiny, minimal overhead of the
 demultiplexing service, you can disable it via the `-M` option.
@@ -372,13 +372,13 @@ in Xen.
 ### GDB Driver (QEMU/KVM support!) ###
 
 The GDB driver allows you to attach to any program that is coupled to a
-[GDB server stub].  Many embedded systems, or more relevant to StackDB,
+[GDB server stub].  Many embedded systems, or more relevant to Stackdb,
 virtual machine hypervisors like Xen and QEMU/KVM, provide GDB server
 stubs that a GDB client can interact with to debug the embedded system,
 or the OS running inside a VM.  Since each GDB server stub is different,
-and because StackDB might require (or be able to leverage) additional
+and because Stackdb might require (or be able to leverage) additional
 platform information beyond what can be expressed in the GDB remote
-protocol), StackDB's GDB driver allows the user to "plug in" *helper*
+protocol), Stackdb's GDB driver allows the user to "plug in" *helper*
 modules.
 
 Here are the primary options for the GDB driver:
@@ -400,7 +400,7 @@ kernel.  The other important options to specify are `--gdb-host` and
 
 #### QEMU GDB Helper ####
 
-StackDB supports part of the GDB remote debugging protocol, enough to
+Stackdb supports part of the GDB remote debugging protocol, enough to
 provide debugging of QEMU/KVM VMs.  To attach to QEMU/KVM VMs, the user
 must also specify the use of the QEMU *helper*.  Currently, you must use
 our special QEMU support to use the QEMU helper.  The QEMU helper relies
@@ -424,7 +424,7 @@ Here are the QEMU helper's options:
 
 #### QEMU/KVM Configuration ####
 
-You must run your QEMU VM specifically to take advantage of StackDB ---
+You must run your QEMU VM specifically to take advantage of Stackdb ---
 although you do *not* have to modify QEMU itself!  We have only tested
 our method with QEMU 2.0.0; it may fail with other versions.  Here's
 what you have to do.
@@ -477,8 +477,8 @@ work at the moment.  Finally, of course, you must also set LD_PRELOAD to
 preload libqemuhacks.so.0.0.0.
 
 Then, once your VM has started, a file like `/hugetlbfs/qemu_back_mem.pc.ram.*` 
-should appear; that is the file that StackDB will try to mmap to obtain
-direct access to the VM's "physical" memory.  When you run a StackDB
+should appear; that is the file that Stackdb will try to mmap to obtain
+direct access to the VM's "physical" memory.  When you run a Stackdb
 program to attach to QEMU, your command will look like
 
     $ sudo gdb --args dumptarget -t gdb --qemu \
@@ -518,7 +518,7 @@ Supported Configurations
 Working with Debuginfo
 ----------------------
 
-In order for StackDB to be a useful debugger and memory forensics tool,
+In order for Stackdb to be a useful debugger and memory forensics tool,
 it must provide source-level debugging.  Without source- and
 type-knowledge of the target program you are analyzing, it is difficult
 and time-consuming to figure out which memory to read and how to
@@ -639,7 +639,7 @@ We can also examine type information:
     type = int (char *, int)
     (gdb)
 
-Of course, GDB can do many other things as well, and so can StackDB.
+Of course, GDB can do many other things as well, and so can Stackdb.
 But the point here is that a debugger is much more powerful when you
 make debug symbols available to it.
 
@@ -653,16 +653,16 @@ Read and refer to [Ubuntu Debug Symbol Packages].
 Read and refer to [Fedora Debug Symbol Packages].
 
 
-StackDB Tools
+Stackdb Tools
 -------------
 
-StackDB provides some utility programs, as well as some "real" programs
+Stackdb provides some utility programs, as well as some "real" programs
 that perform useful analyses of a target.  We discuss these in the
 following sections.
 
 ### dumpdebuginfo ###
 
-`dumpdebuginfo` is the only `dwdebug`-specific tool StackDB provides.
+`dumpdebuginfo` is the only `dwdebug`-specific tool Stackdb provides.
 It does not provide access to targets; but instead reads, parses,
 indexes, and displays debuginfo files.  It displays types and symbols in
 the hierarchies in which they are present in the source program.
@@ -986,16 +986,16 @@ search will still return a chain of symbols (an lsymbol).
 Examples and Demos
 ------------------
 
-Before you begin writing StackDB programs yourself, you'll want to get
-something working first.  Besides, some StackDB tools may be generally
+Before you begin writing Stackdb programs yourself, you'll want to get
+something working first.  Besides, some Stackdb tools may be generally
 useful to you.  This section provides some quick examples of using
-some of StackDB's tools so you quickly use its core functionality.  When
+some of Stackdb's tools so you quickly use its core functionality.  When
 you start building your own tools, these may provide helpful insights.
 
 ### Preparing Your System ###
 
 If you want to run any of the Xen or QEMU/KVM demos, please make sure
-you've built StackDB with the required support, and have installed Xen
+you've built Stackdb with the required support, and have installed Xen
 and/or QEMU.  Furthermore, please download the (large) tarball at
 <http://www.flux.utah.edu/software/stackdb/downloads/centos5.5-x86_64.tar.gz>
 (about 275MB, currently).  Create a directory on your machine, and
@@ -1012,7 +1012,7 @@ only user with a passwd is `root`; the passwd is also `root`.
 ### KVM demos ###
 
 First, let's do something simple.  Get your system prepared to run KVM
-VMs in the manner required by StackDB, as described above.  Then start
+VMs in the manner required by Stackdb, as described above.  Then start
 up a KVM VM:
 
     $ sudo QEMU_MEMPATH_PREFIX=/hugetlbfs/qemu \
@@ -1036,7 +1036,7 @@ unpacked the tarball, not `/tftpboot/roots/centos5.5-x86_64`.)
 
 Once it's booted, login with user `root`, passwd `root`.
 
-Second, make sure you've installed StackDB.  Then, run the `dumptarget`
+Second, make sure you've installed Stackdb.  Then, run the `dumptarget`
 program in another terminal like this:
 
     $ sudo dumptarget -t gdb \
@@ -1080,9 +1080,9 @@ Try changing sys_open to another function you're interested in.
 ### Ptrace demos ###
 
 An easy to way to see the Ptrace backend in action is to simply start up
-a couple of the test programs that come with StackDB.  These programs
+a couple of the test programs that come with Stackdb.  These programs
 don't get built unless you specified `--enable-tests` to `configure`.
-However, if you return to the StackDB build directory, and type `make -C
+However, if you return to the Stackdb build directory, and type `make -C
 tests`, several test programs will build (don't worry if the build ends
 in a failure---the programs you want, `dummy` and `dummy.threads` should
 still be there).  These programs simply loop while updating some counter
@@ -1091,7 +1091,7 @@ for a few seconds.  `dummy` does this with a single thread;
 `dummy.threads` does this with two threads.
 
 First, in one terminal, fire of `dummy`.  Then, in another terminal, run
-some of the StackDB tools against it:
+some of the Stackdb tools against it:
 
     $ sudo ./backtrace -p `pgrep -n dummy`
 
@@ -1126,10 +1126,10 @@ If you run `dummy.threads` and run `backtrace` against that (i.e., `sudo
 ./backtrace -p `pgrep -n dummy.threads``), you'll see two thread
 backtraces.
 
-Writing StackDB Programs in C
+Writing Stackdb Programs in C
 -----------------------------
 
-The way to think about developing a program using StackDB is that you're
+The way to think about developing a program using Stackdb is that you're
 scripting a debugger-like (or memory forensics) interaction with a
 target program running on the same host, or on another host.  You want
 to investigate it, either by passively reading its memory, or by
@@ -1138,7 +1138,7 @@ control flows.  Sometimes you might even alter memory content or change
 control flow.
 
 You've probably done these kinds of things interactively with GDB.
-However, StackDB provides a library for doing them in C.  We'll show you
+However, Stackdb provides a library for doing them in C.  We'll show you
 a little bit of how to use that library here.
 
 Suppose we want to write a program that allows us to find unique control
@@ -1150,7 +1150,7 @@ figure this out through some static analysis---but this is more fun!
 
 Our strategy will be to set a breakpoint on the `ip_rcv` function;
 generate a backtrace as a string; and hash it into a hashtable that
-maintains a count.  However, the StackDB backtrace string-ifier is
+maintains a count.  However, the Stackdb backtrace string-ifier is
 fairly powerful, and the backtraces we get will probably be fairly
 unique, due to function call arguments.  So we'll actually generate the
 backtrace once, and stringify it twice --- once without any function
@@ -1169,8 +1169,8 @@ for hashtable functionality.
 
 Next, we'll write a simple main that looks up a symbol and places a
 probe (a breakpoint or watchpoint) on it.  We'll also write a simple
-callback function to handle the probe event; the StackDB library
-notifies your program on probe exceptions via callbacks.  StackDB
+callback function to handle the probe event; the Stackdb library
+notifies your program on probe exceptions via callbacks.  Stackdb
 handles the work of pausing and unpausing the target program for you,
 and manages its execution for you---so all you have to know is that the
 target is stopped whenever your callbacks are called.
@@ -1181,7 +1181,7 @@ target is stopped whenever your callbacks are called.
         struct target *t;
         struct bsymbol *myfunc;
 
-        /* Initialize the core StackDB globals */
+        /* Initialize the core Stackdb globals */
         target_init();
         atexit(target_fini));
 
@@ -1206,9 +1206,9 @@ Now let's add an option to disable certain threads based on name:
 
 ### C API ###
 
-Refer to the [online StackDB C API](api.html).
+Refer to the [online Stackdb C API](api.html).
 
-Writing StackDB Programs in Python
+Writing Stackdb Programs in Python
 ----------------------------------
 
 We haven't yet built this binding, but will do so.
