@@ -1,5 +1,5 @@
-PROJECT_NAME="StackDB"
-PROJECT_BRIEF="StackDB is a stackable, multi-target and -level source debugger and memory forensics library."
+PROJECT_NAME="Stackdb"
+PROJECT_BRIEF="Stackdb is a stackable, multi-target and -level source debugger and memory forensics library."
 OUTPUT_DIRECTORY=./api
 INPUT = ../
 RECURSIVE=YES
