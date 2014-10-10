@@ -428,26 +428,21 @@ int main(int argc,char **argv) {
     fflush(stderr);
     fflush(stdout);
     target_load_available_threads(t,1);
-    fflush(stdout);
     fflush(stderr);
+    fflush(stdout);
     target_dump_all_threads(t,stdout,1);
     fflush(stderr);
     fflush(stdout);
 
     tids = target_list_tids(t);
     array_list_foreach_fakeptr_t(tids,i,tid,uintptr_t) {
-	fflush(stdout);
 	fflush(stderr);
-	buf[0] = '\0';
+	fflush(stdout);
+
 	rc = target_unwind_snprintf(buf,sizeof(buf),t,tid,
 				    TARGET_UNWIND_STYLE_GDB,"\n",",");
-	fflush(stdout);
-	fflush(stderr);
 	if (rc < 0)
-	    if (strlen(buf) > 0)
-		fprintf(stdout,"\nthread %"PRIiTID": (error!): \n%s\n",tid,buf);
-	    else
-		fprintf(stdout,"\nthread %"PRIiTID": (error!)\n",tid);
+	    fprintf(stdout,"\nthread %"PRIiTID": (error!)\n",tid);
 	else if (rc == 0)
 	    fprintf(stdout,"\nthread %"PRIiTID": (nothing)\n",tid);
 	else
@@ -461,16 +456,16 @@ int main(int argc,char **argv) {
 	fflush(stderr);
 	fflush(stdout);
 	target_load_available_threads(ot,1);
-	fflush(stdout);
 	fflush(stderr);
+	fflush(stdout);
 	target_dump_all_threads(ot,stdout,0);
 	fflush(stderr);
 	fflush(stdout);
 
 	tids = target_list_tids(ot);
 	array_list_foreach_fakeptr_t(tids,i,tid,uintptr_t) {
-	    fflush(stdout);
 	    fflush(stderr);
+	    fflush(stdout);
 
 	    if (opts.tid > 0 && tid != opts.tid)
 		continue;
