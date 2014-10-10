@@ -290,7 +290,7 @@ unsigned char *xen_vm_mem_builtin_read_phys_str(struct target *target,
 	    didmmap = savedmmap = 0;
 	}
 	else {
-	    mmap = __xen_vm_mem_builtin_mmap_phys(target,paddr,mlen,PROT_WRITE,
+	    mmap = __xen_vm_mem_builtin_mmap_phys(target,paddr,mlen,PROT_READ,
 						  &pbase,NULL,&plength);
 	    if (!mmap) {
 		verror("could not mmap p 0x%"PRIxADDR" (start p 0x%"PRIxADDR")!\n",
@@ -420,41 +420,17 @@ unsigned long xen_vm_mem_builtin_write_phys(struct target *target,ADDR paddr,
     void *mmap = NULL;
     int rc;
 
-    rc = memcache_get_mmap(target->memcache,0,paddr,length,0,
-			   &pbase,&poffset,&mmap,&plength,NULL);
-    if (rc == 0)
-	goto out;
-    else if (rc < 0) {
-	vwarn("memcache_get_mmap error: p 0x%"PRIxADDR" len %lu: %s (%d); continuing\n",
-	      paddr,length,strerror(errno),rc);
-    }
-
     mmap = __xen_vm_mem_builtin_mmap_phys(target,paddr,length,PROT_WRITE,
 					  &pbase,&poffset,&plength);
     if (!mmap)
 	return 0;
 
-    rc = memcache_set_mmap(target->memcache,0,pbase,0,mmap,plength);
-    if (rc == 1) {
-	vdebug(5,LA_TARGET,LF_XV | LF_MEMCACHE,
-	       "something already cached at p 0x%"PRIxADDR" len %lu"
-	       " (for read p 0x%"PRIxADDR")!\n",
-	       pbase,plength,paddr);
-    }
-    else if (rc < 0) {
-	vwarn("memcache_set_mmap error: p 0x%"PRIxADDR" len %lu (for read p"
-	      " 0x%"PRIxADDR": %s (%d); continuing\n",
-	      pbase,plength,paddr,strerror(errno),rc);
-    }
-
- out:
     memcpy(mmap + poffset,buf,length);
+
     /*
-     * Only unmap if the mmap wasn't cache, or if we couldn't cache the
-     * mmap we just made.
+     * Always unmap writable maps.
      */
-    if (rc)
-	munmap(mmap,plength);
+    munmap(mmap,plength);
 
     return length;
 }
@@ -601,7 +577,7 @@ unsigned char *xen_vm_mem_builtin_read_v_str(struct target *target,
 	    didmmap = savedmmap = 0;
 	}
 	else {
-	    mmap = __xen_vm_mem_builtin_mmap_phys(target,paddr,mlen,PROT_WRITE,
+	    mmap = __xen_vm_mem_builtin_mmap_phys(target,paddr,mlen,PROT_READ,
 						  &pbase,NULL,&plength);
 	    if (!mmap) {
 		verror("could not mmap p 0x%"PRIxADDR" (after translating"
@@ -699,7 +675,7 @@ unsigned char *xen_vm_mem_builtin_read_tid(struct target *target,
 	      addr,length,strerror(errno),rc);
     }
 
-    mmap = __xen_vm_mem_builtin_mmap_virt(target,tid,pgd,addr,length,PROT_WRITE,
+    mmap = __xen_vm_mem_builtin_mmap_virt(target,tid,pgd,addr,length,PROT_READ,
 					  &vbase,&voffset,&vlength);
     if (!mmap)
 	return NULL;
@@ -749,42 +725,17 @@ unsigned long xen_vm_mem_builtin_write_tid(struct target *target,
     void *mmap = NULL;
     int rc;
 
-    rc = memcache_get_mmap(target->memcache,pgd,addr,length,MEMCACHE_VIRT,
-			   &vbase,&voffset,&mmap,&vlength,NULL);
-    if (rc == 0)
-	goto out;
-    else if (rc < 0) {
-	vwarn("memcache_get_mmap error: v 0x%"PRIxADDR" len %lu: %s (%d); continuing\n",
-	      addr,length,strerror(errno),rc);
-    }
-
     mmap = __xen_vm_mem_builtin_mmap_virt(target,tid,pgd,addr,length,PROT_WRITE,
 					  &vbase,&voffset,&vlength);
     if (!mmap)
 	return 0;
 
-    rc = memcache_set_mmap(target->memcache,pgd,vbase,MEMCACHE_VIRT,mmap,vlength);
-    if (rc == 1) {
-	vdebug(5,LA_TARGET,LF_XV | LF_MEMCACHE,
-	       "something already cached at v 0x%"PRIxADDR" len %lu"
-	       " (for read v 0x%"PRIxADDR")!\n",
-	       vbase,vlength,addr);
-    }
-    else if (rc < 0) {
-	vwarn("memcache_set_mmap error: p 0x%"PRIxADDR" len %lu (for read"
-	      " v 0x%"PRIxADDR": %s (%d); continuing\n",
-	      vbase,vlength,addr,strerror(errno),rc);
-    }
-
- out:
-
     memcpy(mmap + voffset,buf,length);
+
     /*
-     * Only unmap if the mmap wasn't cache, or if we couldn't cache the
-     * mmap we just made.
+     * Never cache writable-mapped pages.
      */
-    if (rc)
-	munmap(mmap,vlength);
+    munmap(mmap,vlength);
 
     return length;
 }
