@@ -1,0 +1,218 @@
+Installing StackDB
+==================
+
+Currently, you must install StackDB from source.  StackDB is available
+via git at http://git-public.flux.utah.edu/git/a3/vmi.git .  StackDB is
+only available for Linux, and for `x86/x86_64` architectures.  StackDB
+itself will likely build on non-Linux UNIX-like OSes; but first, because
+it depends on elfutils; and second, because we have only been interested
+in applying it to platforms that are best-supported under Linux (such as
+Xen and QEMU/KVM), we do not support other build environments.
+
+Dependencies
+------------
+
+To build StackDB, your system must have the following packages installed:
+
+  * [glib] >= 2.29;
+  * [elfutils] (>= 0.137 should be fine, but ideally you will want
+    something much newer, such as 0.152; also note that if you use this
+    library on a DWARF version 4-encoded file, and build against
+    elfutils <= 0.141, many things will probably break);
+  * [Judy] (used for fast data indexing);
+  * [distorm] (necessary for x86/x86_64 disassembly, CFI checking, ROP
+    detection).
+
+On any modern, recently-updated Linux distribution, these packages may
+be available in the distribution's repositories (with the exception of
+distorm).  You shouldn't need to build them from source, but we provide
+instructions below if you feel the need to do so.
+
+### Optional Packages ###
+
+StackDB's functionality can be enhanced by installing the following
+packages and enabling them when building StackDB.
+
+  * [Xen] (if you want StackDB to attach to to Xen VMs, you'll need the
+    Xen binaries, *and* the libxc development headers/libs);
+  * [Qemu] (if you want StackDB to attach to QEMU/KVM VMs, you'll need
+    the qemu binaries -- none of the development headers nor libs
+    though).
+  * [libvmi] (StackDB provides essentially the same memory access
+    functionality for Xen and KVM that libvmi does; but you can choose
+    to use StackDB's built-in support, or optionally libvmi if you
+    install it and configure StackDB to use it at build time);
+  * [gsoap] ==2.8.11 (for SOAP XML service support; also necessary for
+    SOAP clients; must apply StackDB patches and build it manually!);
+  * python-suds and pysimplesoap (for SOAP XML python clients; must
+    apply our patch to pysimplesoap);
+  * a Java SDK >= 1.6, Apache Ant, and Apache Axis2 (for SOAP XML java
+    clients)
+
+In the following two sections, we provide instructions for building
+dependencies, followed by instructions for building this package.
+
+Notes on Building Dependencies
+------------------------------
+  * glib
+
+    Grab http://ftp.gnome.org/pub/gnome/sources/glib/2.30/glib-2.30.2.tar.bz2;
+    unpack; and configure like this:
+
+        ./configure --prefix=/opt/vmi/glib
+
+    We suggest you put glib in /opt to prevent other system binaries
+    from being linked with it.  This could happen if you install it to
+    /usr/local, since your LD configuration might include
+    /usr/local/lib.  This would be bad, so use /opt, unless you know
+    what you're doing.
+
+    Then make and make install like normal:
+
+        make && make install
+
+  * elfutils
+
+    Grab https://fedorahosted.org/releases/e/l/elfutils/0.152/elfutils-0.152.tar.bz2;
+    unpack; and configure like this (but see note below first!):
+
+        ./configure --prefix=/opt/vmi/elfutils --with-zlib --with-bzlib \
+            --enable-debugpred
+
+    (you can also add the `--program-prefix=vmi-eu-` argument so that you
+    don't have confusion between `readelf` and other binaries from the
+    system elfutils... but this should not happen if you install to
+    /opt/vmi/elfutils, since /opt/vmi/elfutils/usr/bin is probably not going
+    to be in your PATH!).
+
+    *Note*: if you are building on an ancient Linux (i.e., Fedora 8), you may
+    need some additional patches when building elfutils.  If you are
+    building on Emulab, you can find these at
+
+    - https://fedorahosted.org/releases/e/l/elfutils/0.152/elfutils-portability.patch
+    - https://fedorahosted.org/releases/e/l/elfutils/0.152/elfutils-robustify.patch
+
+    Just apply them in this order and install normally:
+
+        patch -p1 < elfutils-portability.patch
+        patch -p1 < elfutils-robustify.patch
+        ./configure && make && make install
+
+  * distorm
+
+    Download `distorm` from
+    http://code.google.com/p/distorm/downloads .  Unpack it and build
+    like this:
+
+        cd distorm/make/linux && make && make install
+
+    (edit distorm/make/linux/Makefile if you want to install it
+    somewhere other than /usr/local)
+
+    `distorm` does not install its headers correctly; so manually
+    install them:
+
+        cd ../.. && cp -pv distorm/include/* /usr/local/include
+
+    (or wherever you changed the Makefile to install to, if not /usr/local)
+
+  * Judy
+
+    Grab http://downloads.sourceforge.net/project/judy/judy/Judy-1.0.5/Judy-1.0.5.tar.gz .
+    Unpack, configure, make, make install.  If you change the build
+    prefix to anything other than /usr or /usr/local, you'll need to
+    tell StackDB via its ./configure script later on via
+    `--with-judy=/my/prefix`.
+
+  * gsoap
+
+    Grab gsoap_2.8.11.zip from http://www.cs.fsu.edu/~engelen/soap.html .
+    Unpack it.  Then apply the `gsoap-2.8.11-noserve.patch` and
+    `gsoap-2.8.11-xs-include-to-module.patch` in the StackDB source code
+    directory (`vmi/xml/etc`).
+
+    	patch -p1 < ../../vmi/xml/etc/gsoap-2.8.11-noserve.patch
+    	patch -p1 < ../../vmi/xml/etc/gsoap-2.8.11-xs-include-to-module.patch
+
+    Then configure, make, install.  If you change the build prefix to
+    anything other than /usr, you'll need to tell StackDB via its
+    ./configure script later on via `--with-gsoap=/my/prefix`.
+
+        ./configure && make && make install
+
+  * python-suds
+
+    Grab python-suds-0.4.tar.gz from https://fedorahosted.org/suds/ , or
+    install it via your distro's packaging system.  If installing from
+    source, install *using Python 2.x, not 3.x*, via the standard dance
+    of
+
+        cd python-suds-0.4 && python2 setup.py build && python2 setup.py install
+
+  * pysimplesoap
+
+    Grab the latest pysimplesoap from http://code.google.com/p/pysimplesoap/ .
+    Unpack it, then apply the pysimplesoap-soap-env.patch in the StackDB
+    source code (`vmi/xml/etc/pysimplesoap-soap-env.patch`).
+
+        patch -p1 < ../../vmi/xml/etc/pysimplesoap-soap-env.patch
+
+    Then install *using Python 2.x, not 3.x*, via the standard dance of
+
+        cd pysimplesoap && python2 setup.py build && python2 setup.py install
+
+  * Apache Ant and Axis2:
+
+    Grab apache-ant-1.8.4-bin.zip from http://ant.apache.org/, and grab
+    axis2-1.6.2-bin.zip from http://axis.apache.org/axis2/java/core/ .
+    Unpack them and place them anywhere (/usr/local or /opt are checked by
+    the StackDB configure script, or tell StackDB where they are via the
+    `--with-ant` and `--with-axis2` ./configure options).  If there is
+    no `javac` in your $PATH, you'll also have to tell StackDB's
+    ./configure script where your Java SDK is installed via `--with-java`.
+
+
+Building and Installing StackDB
+-------------------------------
+
+StackDB is easy to install.  Enter the source directory you cloned or
+downloaded, and run autoconf:
+
+    cd vmi && autoconf && cd ..
+
+Create a separate build directory:
+
+    mkdir vmi.obj && cd vmi.obj
+
+Then run StackDB's `configure` script with the options you need, based
+on the instructions above (or run `../vmi/configure --help` to make sure
+you've got the build options you want):
+
+    ../vmi/configure --prefix=/usr/local
+
+(or maybe something like this, if your glib, distorm, and elfutils are
+installed in non-standard places:)
+
+    ../vmi/configure --prefix=/usr/local --with-glib=/opt/vmi/glib \
+        --with-elfutils=/opt/vmi/elfutils
+
+Finally, build and install StackDB:
+
+    make && make install
+
+After installing, please refer to the [Quick Start] or [User Guide]
+documentation.  (These documents may also be found in the source
+directory in `vmi/doc{quick-start.md,user-guide.md}`.
+
+
+
+[glib]: https://git.gnome.org/browse/glib/
+[elfutils]: https://fedorahosted.org/elfutils/
+[Judy]: http://judy.sourceforge.net/
+[distorm]: http://code.google.com/p/distorm/
+[libvmi]: https://github.com/bdpayne/libvmi/
+[gsoap]: http://www.cs.fsu.edu/~engelen/soap.html
+[Xen]: http://www.xenproject.org/
+[qemu]: http://www.qemu.org/
+[Quick Start]: getting-started.html
+[User Guide]: user-guide.html

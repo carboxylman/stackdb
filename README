@@ -1,166 +1,113 @@
--*- mode: Text -*-
+Stackdb: A C Library for "Stackable" Debugging and Virtual Machine Introspection
+================================================================================
 
-To build this software, you must have installed
+Stackdb is a C library that allows a user to write programs to debug,
+inspect, modify, and analyze the behavior of other running programs ---
+from virtual machines (Xen, KVM/QEMU) to Linux userspace programs (via
+`ptrace(2)`).  This means Stackdb can be used to debug programs running
+on your desktop machine; or it can be used to debug virtual machines and
+the programs running inside them!
 
-  * glib (>= 2.29.10, I believe);
-  * elfutils (>= 0.137 should be fine, but ideally you will want
-    something much newer, such as 0.152; also note that if you
-    use this library on a DWARF version 4-encoded file, and build
-    against elfutils <= 0.141, many things will probably break);
-  * Judy
+Stackdb is useful both as a featureful debugger, and as a tool for
+Virtual Machine Introspection (i.e., memory forensics, execution
+monitoring).  It supports breakpoints, watchpoints, stack unwinding,
+multi-threaded program debugging, debugging symbol information (via ELF
+and DWARF), and C and C++ programs.  It supports multi-target analysis
+--- meaning your Stackdb program can attach to or spawn multiple target
+programs (of different types, if desired), and cooperatively analyze or
+monitor their behavior.
 
-Optionally, you could also install
-
-  * distorm (although you lose lots of functionality, including the CFI
-    checker utility, and the Return-Oriented-Programming exploit checker);
-  * xenaccess (which requires Xen libs like xenctrl, xs)
-
-to include support for x86 and x86_64 disassembly, and Xen target
-backends, respectively;
-
-and/or 
-
-  * gsoap-2.8.11 (for SOAP XML service generation; also necessary for
-    clients; must apply our patches);
-  * python-suds and pysimplesoap (for SOAP XML python clients; must
-    apply our patch to pysimplesoap);
-  * a 1.6-era Java SDK, Apache Ant, and Apache Axis2 (for SOAP XML java
-    clients)
-
-In the following two sections, we provide instructions for building
-dependencies, followed by instructions for building this package.
-
-
-BUILDING dependencies.
+However, Stackdb's defining feature is its ability to create *stacks* of
+debugging targets.  This means that Stackdb drivers (which allow you,
+the user, to attach to a running program and debug it) can be
+**stacked**, allowing you to attach to and debug a program running in
+another program!  For instance, using Stackdb, you can attach to a Xen
+virtual machine and the Linux kernel running inside it (the *base*
+target); and subsequently attach to a userspace process running inside
+that VM (an *overlay* target).  Stackdb's user API functions can be
+applied to all targets.  Thus, you can insert a breakpoint on the
+`sys_open` system call function in the Linux kernel in your base target,
+and another on the `make_child` function in a `bash` process running in
+userspace (your *overlay* target).
 
 
-  glib:
+Supported Platforms
+-------------------
 
-Grab /proj/a3/vmi-deps/glib-2.30.2.tar.bz2
-(http://ftp.gnome.org/pub/gnome/sources/glib/2.30/glib-2.30.2.tar.bz2);
-unpack; and configure like this:
+Stackdb builds and runs on Linux.  Its base drivers allow you to attach
+to the following targets: Xen VMs, KVM/QEMU VMs, Linux userspace
+processes.  It provides one *personality* (Stackdb's abstraction for
+enhancing its model of the running target), a generic Linux personality
+supporting kernels from 2.6.18 to 3.8.x (and possibly higher).  You'll
+want to attach the "Linux" personality to any Xen or KVM VM that is
+running a Linux kernel).  Its overlay drivers allow you to attach to OS
+Processes (i.e., you can attach to any userspace process running in a
+base target whose driver and/or personality supports Stackdb's Process
+abstraction --- this is one kind of *stack* of targets you can create.
+Another overlay driver, the PHP driver, allows you to stack a PHP target
+atop a process target and place probes on PHP function symbols.  This
+means the following stacks are possible:
 
-  $ ./configure --prefix=/opt/vmi/glib
+  * Xen VM + Linux Personality -> OS Process -> PHP
+  * KVM/QEMU VM + Linux Personality -> OS Process -> PHP
+  * ptrace -> PHP
 
-We suggest you put glib in /opt to prevent other system binaries from
-being linked with it.  This could happen if you install it to
-/usr/local, since your LD configuration might include /usr/local/lib.
-This would be bad, so use /opt.
+and of course, you can use partial stacks of targets, or no stack at
+all, if you simply want to inspect a Xen VM.
 
-Then make, install like normal.
-
-
-  elfutils:
-
-Grab /proj/a3/vmi-deps/elfutils-0.152.tar.bz2
-(https://fedorahosted.org/releases/e/l/elfutils/0.152/elfutils-0.152.tar.bz2);
-unpack; and configure like this (but see note below first!):
-
-  $ ./configure --prefix=/opt/vmi/elfutils --with-zlib --with-bzlib \
-        --enable-debugpred
-
-(you can also add the `--program-prefix=vmi-eu-' argument so that you
-don't have confusion between `readelf' and other binaries from the
-system elfutils... but this should not happen if you install to
-/opt/vmi/elfutils, since /opt/vmi/elfutils/usr/bin is probably not going
-to be in your PATH!).
-
-NOTE: if you are building on an ancient Linux (i.e., Fedora 8), you may
-need some additional patches when building elfutils.  If you are
-building on Emulab, you can find these at
-
-  /proj/a3/vmi-deps/elfutils-portability.patch 
-    (https://fedorahosted.org/releases/e/l/elfutils/0.152/elfutils-portability.patch)
-  /proj/a3/vmi-deps/elfutils-robustify.patch
-    (https://fedorahosted.org/releases/e/l/elfutils/0.152/elfutils-robustify.patch)
-
-Just apply them in this order, then configure, make, and install
+Finally, Stackdb supports `x86` and `x86_64` architectures.  Your
+Stackdb program and target program must be the same architecture; at
+present we do not support `x86_64` analysis of an `x86` VM, for
+instance.  Stackdb is a research project, first and foremost; sadly, we
+have not been able to find time to support all the desirable features of
+full architecture abstraction.
 
 
-  distorm:
+Obtaining the Software
+----------------------
 
-You can either copy the /proj/a3/vmi-deps/distorm dir to your node, and
-do
-
-  $ cd distorm/make/linux ; make clean ; make install
-
-(distorm does not install its headers correctly)
-
-  $ cd ../..; cp -p distorm/include/* /usr/local/include
-
-Alternately, you can download distorm from
-http://code.google.com/p/distorm/downloads/detail?name=distorm3-1.0.zip .
-
-You may need to edit its build config or Makefiles to change the prefix
-to /usr/local (or wherever you like).
+You can obtain Stackdb at <http://www.flux.utah.edu/software/stackdb>.
+You can browse a copy of the source repository at
+<https://gitlab.flux.utah.edu/admin/projects/a3/vmi>.
 
 
-  Judy:
+Additional Documentation
+------------------------
 
-Grab either /proj/a3/vmi-deps/ or
-http://downloads.sourceforge.net/project/judy/judy/Judy-1.0.5/Judy-1.0.5.tar.gz .
-configure, make, install (if you change the build prefix to anything
-other than /usr or /usr/local, tell vmi's configure about it via
---with-judy=/my/prefix .
+You can access the online documentation at
+<http://www.flux.utah.edu/software/stackdb/doc>.
 
+You can also read our detailed paper describing Stackdb's design and
+internal APIs at <http://www.flux.utah.edu/paper/johnson-vee14>.  This
+paper is a great introduction to the Stackdb concept and terminology.
+It is still highly relevant and worth reading to understand how the
+software works  --- although the APIs described have since expanded.
+However, it functions as our "conceptual level" description of Stackdb.
 
-  gsoap:
-
-Grab either /proj/a3/vmi-deps/gsoap_2.8.11.zip or get it from
-http://www.cs.fsu.edu/~engelen/soap.html .  Apply the
-gsoap-2.8.11-noserve.patch and gsoap-2.8.11-xs-include-to-module.patch
-in the VMI src in vmi/xml/etc .  Then configure, make, install (if you
-change the build prefix to anything other than /usr, tell vmi's
-configure about it via --with-gsoap=/my/prefix .
-
-
-  python-suds:
-
-Grab either /proj/a3/vmi-deps/python-suds-0.4.tar.gz or get it from
-https://fedorahosted.org/suds/ , or install it via your distro's package
-management tool.  If installing from source, install *using python 2.x*
-via the standard dance of (cd python-suds-0.4 ; python2 setup.py build ;
-python2 setup.py install).
+You can build a local copy of the Stackdb documentation by entering the
+`doc/` subdirectory and typing `make`.  The build requires (at least)
+`doxygen`, `pandoc`, and `pdflatex`.
 
 
-  pysimplesoap:
+Authors
+-------
 
-Grab either /proj/a3/vmi-deps/pysimplesoap-HG.tar.gz, or clone
-the latest pysimplesoap from http://code.google.com/p/pysimplesoap/ .
-Unpack it, then apply pysimplesoap-soap-env.patch in vmi/xml/etc in the
-VMI src dir.  Then install *using python2* via the standard dance of 
-(cd pysimplesoap ; python2 setup.py build ; python2 setup.py install).
-
-
-  Apache Ant and Axis2:
-
-Grab them from
-/proj/a3/vmi-deps/{apache-ant-1.8.4-bin.zip,axis2-1.6.2-bin.zip}, or
-from http://ant.apache.org/ and http://axis.apache.org/axis2/java/core/ .
-Unpack them and place them anywhere (/usr/local or /opt are checked by
-the VMI configure script, or tell vmi where they are via --with-ant and
---with-axis2).  If there is no Java in your $PATH, you'll also have to
-tell VMI's configure --with-java .
+Stackdb was written at the [University of Utah], in the [Flux Research
+Group], by [David Johnson] (<johnsond@cs.utah.edu>).  It originally grew
+out of an `x86`, Xen-based VMI library developed by [Chung Hwan Kim]
+(<chungkim@cs.purdue.edu>) (still in the source repository in the
+`vmprobes/` subdirectory), but has been entirely rewritten and
+significantly expanded into a multi-platform, multi-target, stackable
+debugger library.  [Mike Hibler] (<hibler@cs.utah.edu>), [Anton Burtsev]
+(<aburtsev@cs.utah.edu>), and [Eric Eide] (<eeide@cs.utah.edu>) have
+also contributed to aspects of Stackdb.
 
 
 
-BUILDING vmi.
-
-  $ cd vmi ; autoconf ; cd ..
-  $ mkdir vmi.obj ; cd vmi.obj
-  $ ../vmi/configure --prefix=/usr/local --with-glib=/opt/vmi/glib \
-        --with-distorm=/usr/local --with-elfutils=/opt/vmi/elfutils
-  $ make
-
-and hopefully things should work.  
-
-Once it builds, you should be able to run
-
-  $ sudo LD_LIBRARY_PATH=/opt/vmi/elfutils/lib:/opt/vmi/glib/lib:/usr/local/lib:/usr/lib \
-        target/dumptarget -m <vm_name> sys_open
-
-and watch things happen.
-
-There is also the `dwdebug/dumpdebuginfo' program that you can run on a 
-single ELF file containing .debug_info section(s); it will dump most of
-the symbol information it reads if you pass it the '-D' and '-M' args.
+[University of Utah]: http://www.utah.edu
+[Flux Research Group]: http://www.flux.utah.edu
+[David Johnson]: http://www.flux.utah.edu/profile/johnsond
+[Chung Hwan Kim]: https://www.cs.purdue.edu/homes/chungkim
+[Mike Hibler]: http://www.flux.utah.edu/profile/mike
+[Anton Burtsev]: http://www.flux.utah.edu/profile/aburtsev
+[Eric Eide]: http://www.flux.utah.edu/profile/eeide

@@ -1,0 +1,9 @@
+PROJECT_NAME="StackDB"
+PROJECT_BRIEF="StackDB is a stackable, multi-target and -level source debugger and memory forensics library."
+OUTPUT_DIRECTORY=./api
+INPUT = ../
+RECURSIVE=YES
+OPTIMIZE_OUTPUT_FOR_C=YES
+EXCLUDE_PATTERNS=*/tests/* */xenaccess/* */trace/* */vmfs/* */vmprobes/* */vmps/* */vmtap/* */vmtap-old/* */xentt/* */docs/* */examples/* */autoconf/* */asm/* */autom4te.cache/*
+EXTRACT_ALL=YES
+SOURCE_BROWSER=YES
