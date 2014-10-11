@@ -923,11 +923,26 @@ loctype_t location_resolve(struct location *loc,struct location_ctxt *lctxt,
 	/*
 	 * To determine the value of the frame base pseudo register, we
 	 * must find @symbol's containing function.
+	 *
+	 * NB: but, if the immediate parent function is inlineinstance,
+	 * keep checking up the inlineinstance hierarchy for a valid
+	 * fbloc!
 	 */
 	parent = symbol;
 	while ((parent = symbol_find_parent(parent))) {
-	    if (SYMBOL_IS_FUNC(parent))
-		break;
+	    if (SYMBOL_IS_FUNC(parent)) {
+		SYMBOL_RX_FUNC(parent,pf);
+		if (pf && pf->fbloc)
+		    /* Ok, we have one. */
+		    break;
+		else if ((!pf || !pf->fbloc) && parent->isinlineinstance)
+		    /* Let it look for fbloc in *its* parent! */
+		    ;
+		else
+		    /* Otherwise, this function just doesn't have an fbloc! */
+		    /* Hm, that would seem to indicate a bug, if true... */
+		    break;
+	    }
 	}
 	if (!parent || !SYMBOL_IS_FUNC(parent)) {
 	    vwarnopt(8,LA_DEBUG,LF_DLOC,
