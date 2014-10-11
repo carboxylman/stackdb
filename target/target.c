@@ -5227,6 +5227,7 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
     struct target_location_ctxt_frame *tlctxtf;
     struct target_location_ctxt_frame *new;
     int rc;
+    ADDR current_ip = 0;
     ADDR retaddr;
     struct bsymbol *bsymbol = NULL;
     struct bsymbol *alt_bsymbol = NULL;
@@ -5256,6 +5257,9 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
     rsp = tlctxt->thread->target->spregno;
     errno = 0;
     rc = location_ctxt_read_reg(tlctxt->lctxt,rsp,&sp);
+    errno = 0;
+    rc = location_ctxt_read_reg(tlctxt->lctxt,tlctxt->thread->target->ipregno,
+				&current_ip);
 
     if (vdebug_is_on(8,LA_TARGET,LF_TUNW)) {
 	vdebug(8,LA_TARGET,LF_TUNW,"    current stack:\n");
@@ -5306,22 +5310,25 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
     }
 
     retaddr = 0;
+    rc = 1;
     if (tlctxtf->bsymbol || tlctxtf->alt_bsymbol) {
 	rc = location_ctxt_read_retaddr(tlctxt->lctxt,&retaddr);
 	if (rc) {
-	    vwarnopt(5,LA_TARGET,LF_TUNW,
-		     "could not read retaddr in current_frame %d!\n",
-		     tlctxt->lctxt->current_frame);
-	    return NULL;
+	    vdebug(5,LA_TARGET,LF_TUNW,
+		   "could not read retaddr in current_frame %d from symbol;"
+		   " will try to infer it!!\n",tlctxt->lctxt->current_frame);
 	}
     }
-    else {
-	vwarn("no symbol in current frame; will try to infer it!\n");
+
+    if (rc) {
+	vdebug(5,LA_TARGET,LF_TUNW,
+	       "no symbol in current frame; will try to infer retaddr"
+	       " and next symbol!\n");
 
 	/*
-	 * Just read the frame pointer + 8 to get prev frame pointer;
-	 * and frame pointer + 16 to reg retaddr.  Check it against what
-	 * we have, and feel good hopefully.
+	 * Just read *%bp to get the previous BP; and read *(%bp + 8)
+	 * to get the retaddr; then assume the sp in the previous frame
+	 * is *(%bp + 16).  This assumes no -fomit-frame-pointer.
 	 */
 	if (target_cregno(tlctxt->thread->target,CREG_BP,&rbp)) {
 	    verror("target %s has no frame pointer register!\n",
@@ -5336,9 +5343,12 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
 	}
 
 	/* Get the old bp and retaddr. */
-	target_read_addr(tlctxt->thread->target,bp + 16,sizeof(ADDR),
+	target_read_addr(tlctxt->thread->target,bp,
+			 tlctxt->thread->target->arch->wordsize,
 			 (unsigned char *)&old_bp);
-	target_read_addr(tlctxt->thread->target,bp + 24,sizeof(ADDR),
+	target_read_addr(tlctxt->thread->target,
+			 bp + tlctxt->thread->target->arch->wordsize,
+			 tlctxt->thread->target->arch->wordsize,
 			 (unsigned char *)&retaddr);
 	/* Adjust the stack pointer. */
 	old_sp = bp + 16;
@@ -5353,6 +5363,11 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
     vdebug(8,LA_TARGET,LF_TUNW,
 	   "retaddr of current frame %d is 0x%"PRIxADDR"\n",
 	   tlctxt->lctxt->current_frame,retaddr);
+
+    if (current_ip == 0 && retaddr == 0) {
+	verror("aborting stack trace; two 0x0 retaddrs in a row!\n");
+	return NULL;
+    }
 
     /*
      * Look up the new symbol.
