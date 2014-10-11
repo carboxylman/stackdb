@@ -2238,6 +2238,15 @@ static void __debugfile_resolve_decllist(struct debugfile *debugfile,
     }
 }
 
+void debugfile_resolve_one_declaration(struct debugfile *debugfile,char *name) {
+    struct array_list *decllist = NULL;
+
+    decllist = (struct array_list *)g_hash_table_lookup(debugfile->decllists,
+							(gpointer)name);
+    if (decllist)
+	__debugfile_resolve_decllist(debugfile,name,decllist,NULL);
+}
+
 void debugfile_resolve_declarations(struct debugfile *debugfile) {
     GHashTableIter iter;
     char *name = NULL;
@@ -2260,18 +2269,18 @@ int debugfile_add_global(struct debugfile *debugfile,struct symbol *symbol) {
     vdebug(8,LA_DEBUG,LF_SYMBOL,"added global '%s' type %s (%p)\n",
 	   symbol_get_name(symbol),SYMBOL_TYPE(symbol->type),symbol);
 
-#if 0
+//#if 0
     if (!symbol->isdeclaration) {
 	/*
 	 * Also check if there were declarations pending on this global;
 	 * link those symbols up if so!
 	 */
-	decllist = (struct array_list *)			\
+	struct array_list *decllist = (struct array_list *) \
 	    g_hash_table_lookup(debugfile->decllists,symbol->name);
 	if (decllist) 
 	    __debugfile_resolve_decllist(debugfile,symbol->name,decllist,NULL);
     }
-#endif
+//#endif
 
     return 0;
 }
@@ -2306,18 +2315,18 @@ int debugfile_add_type(struct debugfile *debugfile,struct symbol *symbol) {
     vdebug(8,LA_DEBUG,LF_SYMBOL,"added global type '%s' type %s (%p)\n",
 	   symbol_get_name(symbol),SYMBOL_TYPE(symbol->type),symbol);
 
-#if 0
+//#if 0
     if (!symbol->isdeclaration) {
 	/*
 	 * Also check if there were declarations pending on this global;
 	 * link those symbols up if so!
 	 */
-	decllist = (struct array_list *)			\
+	struct array_list *decllist = (struct array_list *) \
 	    g_hash_table_lookup(debugfile->decllists,symbol->name);
 	if (decllist) 
 	    __debugfile_resolve_decllist(debugfile,symbol->name,decllist,NULL);
     }
-#endif
+//#endif
 
     return 0;
 }
@@ -2348,18 +2357,18 @@ int debugfile_replace_type(struct debugfile *debugfile,struct symbol *symbol) {
 	   existing ? "replaced" : "added",symbol_get_name(symbol),
 	   SYMBOL_TYPE(symbol->type),symbol);
 
-#if 0
+//#if 0
     if (!symbol->isdeclaration) {
 	/*
 	 * Also check if there were declarations pending on this global;
 	 * link those symbols up if so!
 	 */
-	decllist = (struct array_list *)			\
+	struct array_list *decllist = (struct array_list *) \
 	    g_hash_table_lookup(debugfile->decllists,symbol->name);
 	if (decllist) 
 	    __debugfile_resolve_decllist(debugfile,symbol->name,decllist,NULL);
     }
-#endif
+//#endif
 
     return 0;
 }

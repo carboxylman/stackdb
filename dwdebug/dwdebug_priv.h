@@ -220,6 +220,7 @@ void debugfile_save_declaration(struct debugfile *debugfile,
 void debugfile_handle_declaration(struct debugfile *debugfile,
 				  struct symbol *symbol);
 void debugfile_resolve_declarations(struct debugfile *debugfile);
+void debugfile_resolve_one_declaration(struct debugfile *debugfile,char *name);
 int debugfile_declaration_copy_definition(struct debugfile *debugfile,
 					  struct symbol *declaration,
 					  struct symbol *definition);
@@ -1021,6 +1022,9 @@ struct symbol_root_dwarf {
     GHashTable *reftab;
     GHashTable *refuselist;
     GHashTable *spec_reftab;
+    clmatchone_t top_level_die_offsets;
+
+    Dwarf_Off first_top_level_die_offset;
 };
 
 struct symbol_root_elf {

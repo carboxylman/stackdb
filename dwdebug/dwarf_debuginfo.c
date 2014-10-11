@@ -57,6 +57,7 @@ struct attrcb_args {
     int level;
     Dwarf_Off cu_offset;
     Dwarf_Off die_offset;
+    Dwarf_Off sibling;
 
     struct symbol *symbol;
     struct symbol *parentsymbol;
@@ -1193,10 +1194,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    DAW("bad context");
 	    break;
 	}
-	else if (num_set && symbol_get_datatype(symbol) 
-		 && symbol_get_bytesize(symbol_get_datatype(symbol)) > 0) {
+	else if (num_set && symbol->datatype 
+		 && symbol_get_bytesize(symbol->datatype) > 0) {
 	    symbol_set_constval(symbol,(void *)&num,
-				symbol_get_bytesize(symbol_get_datatype(symbol)),
+				symbol_get_bytesize(symbol->datatype),
 				1);
 	}
 	else if (num_set && SYMBOL_IS_VAR(symbol)) {
@@ -1254,7 +1255,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    DAW("bad form");
 	break;
     case DW_AT_sibling:
-	/* we process all DIEs, so no need to skip any child content. */
+	if (ref_set)
+	    cbargs->sibling = ref;
+	else
+	    DAW("bad form; expected ref");
 	break;
     case DW_AT_data_member_location:
 	if (!symbol || !SYMBOL_IS_VAR(symbol)) {
@@ -1841,6 +1845,8 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
     int quick = dopts->flags & DEBUGFILE_LOAD_FLAG_PARTIALSYM;
     load_type_t loadtype = 
 	(!quick || expand_dies) ? LOADTYPE_FULL : LOADTYPE_PARTIAL;
+    Dwarf_Off until_die_offset = 0;
+    Dwarf_Die top_level_first_die;
     /*
      * XXX: what if we are using a CU symbol created in get_aranges or
      * get_pubnames, and we don't end up hashing the symbol in
@@ -1851,6 +1857,8 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
      */
     int root_added = 0;
     int root_preexisting = 0;
+
+    Dwarf_Word cu_stmt_list_offset = 0;
 
     struct array_list *die_offsets = NULL;
     int i;
@@ -2013,6 +2021,14 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	if (offset == ~0ul) {
 	    verror("cannot get DIE offset: %s",dwarf_errmsg(-1));
 	    goto errout;
+	}
+
+	/* Add to the top_level_dies_offset range list. */
+	if (dopts->flags & DEBUGFILE_LOAD_FLAG_PARTIALSYM && level == 1) {
+	    /* And don't worry if it's already in the list. */
+	    clmatchone_add(&srd->top_level_die_offsets,offset,
+			   (void *)(uintptr_t)offset);
+	    vdebug(6,LA_DEBUG,LF_DWARF,"added top level DIE 0x%x\n",offset);
 	}
 
 	/* Initialize some defaults for this iteration. */
@@ -2308,6 +2324,7 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	args.specification_ref = 0;
 	args.ranges = NULL;
 
+	args.sibling = 0;
 	args.die_offset = offset;
 	(void)dwarf_getattrs(&dies[level],attr_callback,&args,0);
 
@@ -2621,6 +2638,18 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		    goto out;
 		}
 	    }
+
+	    /* Find the offset of the first top-level (level 1) DIE */
+	    if (dwarf_child(&dies[level],&top_level_first_die) == 0)
+		srd->first_top_level_die_offset =
+		    dwarf_dieoffset(&top_level_first_die);
+	    else
+		srd->first_top_level_die_offset = 0;
+
+	    /* Try to find prologue info from line table for this CU. */
+	    if (args.have_stmt_list_offset) {
+		cu_stmt_list_offset = args.stmt_list_offset;
+	    }
 	}
 
 	/*
@@ -2636,9 +2665,56 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		++i;
 
 		/*
+		 * Now, if the requested DIE is not one of the
+		 * top_level_die_offsets, we have to load the previous
+		 * top_level_die_offset instead of the requested DIE.
+		 * But if there are *no* top_level_die_offsets, we have
+		 * to just keep loading the entire CU if it's not
+		 * already loaded.  In this case, we need to clear the
+		 * flags that we had setup for the partial load, or
+		 * whatever, and load all the DIEs.  I think this can
+		 * only happen if PUBNAMES and there are no
+		 * AT_siblings.
+		 *
+		 * Do we fully load the top-level DIE?  Shoot, even if
+		 * init_die_offsets, we might still only be partially
+		 * loading them.  The flags are not setup to help us
+		 * here.  Basically, we have to temporarily change them
+		 * to say "load full until you see until_die_offset is
+		 * loaded (either partially or fully), then revert to
+		 * partial until you finish the DIE".  Crap.
+		 */
+		until_die_offset = offset;
+
+		ADDR tstart = 0;
+		if (srd->top_level_die_offsets
+		    && clmatchone_find(&srd->top_level_die_offsets,offset,
+				       &tstart) != NULL) {
+		    offset = (Dwarf_Off)tstart;
+
+		    vdebug(6,LA_DEBUG,LF_DWARF,
+			   "skipping to top level DIE 0x%x to load DIE 0x%x\n",
+			   offset,until_die_offset);
+		}
+		else {
+		    /*
+		     * All we can do is load the CU until we find the
+		     * desired offset.
+		     */
+		    offset = srd->first_top_level_die_offset;
+
+		    vdebug(6,LA_DEBUG,LF_DWARF,
+			   "skipping to first CU top level DIE 0x%x to load DIE 0x%x\n",
+			   offset,until_die_offset);
+		}
+
+		/*
 		 * So many things key off level == 0 that we set it to 1
 		 * deliberately.  Abstractly, we don't know what depth
 		 * we're heading for anyway!
+		 *
+		 * Ok, now we know we're going to level 1, always, for
+		 * partial symbol loads.
 		 */
 		level = 1;
 		if (dwarf_offdie(dbg,offset,&dies[level]) == NULL) {
@@ -2647,7 +2723,8 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 			   offset,dwarf_errmsg(-1));
 		    goto errout;
 		}
-		vdebug(5,LA_DEBUG,LF_DWARF,"skipping to first DIE 0x%x\n",offset);
+		vdebug(5,LA_DEBUG,LF_DWARF,
+		       "skipping to first DIE 0x%x\n",offset);
 		scopes[level] = scopes[level-1];
 		continue;
 	    }
@@ -2657,6 +2734,14 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	    }
 	}
 
+	/*
+	 * Later on, when we decide whether to descend into this
+	 * symbol's children or not, we may re-mark this as partial, if
+	 * we are looking for a DIE that is not inside this DIE.  But we
+	 * don't check that until later -- because it's related to
+	 * whether we descend or not -- and we want the check in one
+	 * place.  This is the default -- expand to LOADTYPE_FULL.
+	 */
 	if (expand_dies && ts && SYMBOL_IS_PARTIAL(ts))
 	    ts->loadtag = LOADTYPE_FULL;
 
@@ -2901,6 +2986,13 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		else if (imported_modules[level]) {
 		    symbol_insert_symbol(imported_modules[level],symbols[level]);
 		}
+		else if (ts) {
+		    /*
+		     * The symbol already existed, and we're not
+		     * changing it, so it's already on the parent.
+		     */
+		    ;
+		}
 		else if (symbols[level-1]) 
 		    symbol_insert_symbol(symbols[level-1],symbols[level]);
 		else if (scopes[level])
@@ -2953,19 +3045,56 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 
 	inline int setup_skip_to_next_die(void) {
 	    int alen = array_list_len(die_offsets);
+	    struct symbol *sss;
 
 	    /* Maybe skip to the next offset if we haven't already
 	     * processed this DIE.
 	     */
-	    if (i >= alen) {
-		vdebug(5,LA_DEBUG,LF_DWARF,"end of partial load DIE list!\n");
-		return 0;
+	    while (1) {
+		if (i >= alen) {
+		    vdebug(5,LA_DEBUG,LF_DWARF,"end of partial load DIE list!\n");
+		    return 0;
+		}
+		offset = (SMOFFSET)(uintptr_t)array_list_item(die_offsets,i);
+		++i;
+
+		sss = (struct symbol *) \
+		    g_hash_table_lookup(srd->reftab,(gpointer)(uintptr_t)offset);
+		if (!sss || sss->loadtag != LOADTYPE_FULL)
+		    break;
+		else
+		    continue;
 	    }
-	    offset = (SMOFFSET)(uintptr_t)array_list_item(die_offsets,i);
-	    ++i;
+
+	    /*
+	     * Need to do the same as above; skip to the next top-level
+	     * DIE and load/expand that.
+	     */
+	    until_die_offset = offset;
+
+	    ADDR tstart = 0;
+	    if (srd->top_level_die_offsets
+		&& clmatchone_find(&srd->top_level_die_offsets,offset,
+				   &tstart) != NULL) {
+		offset = (Dwarf_Off)tstart;
+
+		vdebug(6,LA_DEBUG,LF_DWARF,
+		       "skipping to top level DIE 0x%x to load DIE 0x%x\n",
+		       offset,until_die_offset);
+	    }
+	    else {
+		offset = srd->first_top_level_die_offset;
+
+		vdebug(6,LA_DEBUG,LF_DWARF,
+		       "skipping to first CU top level DIE 0x%x to load DIE 0x%x\n",
+		       offset,until_die_offset);
+	    }
 
 	    /* So many things key off level == 0 that we set
 	     * it to 1 deliberately.
+	     *
+	     * Ok, now we know we're going to level 1, always, for
+	     * partial symbol loads.
 	     */
 	    level = 1;
 	    scopes[level] = root_scope;
@@ -3004,6 +3133,13 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		&& symbols[level]->isdeclaration)
 		debugfile_save_declaration(debugfile,symbols[level]);
 
+	do_sibling:
+	    /* If we were teleported here, set res just in case somebody
+	     * expects it to be valid in this block, if the block ever
+	     * gets code that needs it!
+	     */
+	    res = 1;
+
 	    /*
 	     * Complete the symbol.
 	     */
@@ -3035,49 +3171,17 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		}
 	    }
 
-	do_sibling:
-	    /* If we were teleported here, set res just in case somebody
-	     * expects it to be valid in this block, if the block ever
-	     * gets code that needs it!
-	     */
-	    res = 1;
-
-	    /* No new child, but possibly a new sibling, so nuke this
-	     * level's symbol.
-	     */
-	    symbols[level] = NULL;
-
-	    if (die_offsets && level == 1) {
-		/*
-		 * Complete the symbol if it has been fully loaded.
+	    if (die_offsets && level == 1 && offset > until_die_offset) {
+		/* No new child, but possibly a new sibling, so nuke this
+		 * level's symbol.  If it was a declaration, let the
+		 * library maybe replace it with a definition symbol, or
+		 * maybe just copy the info.
 		 */
-		if (symbols[level] 
-		    && symbols[level]->loadtag == LOADTYPE_FULL) {
-		    struct symbol *specsym;
-
-		    specsym = (struct symbol *) \
-			g_hash_table_lookup(srd->spec_reftab,symbols[level]);
-		    if (specsym) {
-			dwarf_specify_definition_members(srd,specsym,
-							 symbols[level]);
-			g_hash_table_remove(srd->spec_reftab,symbols[level]);
-
-			/*
-			 * Also, if we're going to replace the declaration
-			 * (specification) symbol with its definition, do it.
-			 */
-			if (!(dopts->flags & DEBUGFILE_LOAD_FLAG_KEEPDECLS)) {
-			    struct scope *tscope;
-			    tscope = symbol_containing_scope(specsym);
-			    if (tscope && tscope->symbol)
-				symbol_remove_symbol(tscope->symbol,specsym);
-			    else if (tscope)
-				scope_remove_symbol(tscope,specsym);
-			}
-			dwarf_symbol_refuselist_release_all(srd,specsym);
-			dwarf_reftab_insert(srd,symbols[level],specsym->ref);
-		    }
-		}
+		if (die_offsets && symbols[level] && symbols[level]->name 
+		    && symbols[level]->isdeclaration)
+		    debugfile_resolve_one_declaration(debugfile,
+						      symbols[level]->name);
+		symbols[level] = NULL;
 
 		res2 = setup_skip_to_next_die();
 		/* error; bail */
@@ -3128,7 +3232,19 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		     * siblings at level 1, since that's the level we start
 		     * each DIE load in a partial CU load at.
 		     */
-		    if (die_offsets && oldlevel == 1) {
+		    if (die_offsets && oldlevel == 1 && offset > until_die_offset) {
+			/* Now that a DIE's children have all been parsed, and
+			 * we're leveling up, NULL out this symbol.  If
+			 * it was a declaration, let the library maybe
+			 * replace it with a definition symbol, or maybe
+			 * just copy the info.
+			 */
+			if (die_offsets && symbols[level] && symbols[level]->name 
+			    && symbols[level]->isdeclaration)
+			    debugfile_resolve_one_declaration(debugfile,
+							      symbols[level]->name);
+			symbols[level] = NULL;
+
 			res2 = setup_skip_to_next_die();
 			/* error; bail */
 			if (res2 == -1) goto errout;
@@ -3141,9 +3257,16 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		    else if (oldlevel == 0)
 			break;
 
-		    /* Now that a DIE's children have all been parsed, and
-		     * we're leveling up, NULL out this symbol.
+		    /* Now that a DIE's children have all been parsed,
+		     * and we're leveling up, NULL out this symbol.  If
+		     * it was a declaration, let the library maybe
+		     * replace it with a definition symbol, or maybe
+		     * just copy the info.
 		     */
+		    if (die_offsets && symbols[level] && symbols[level]->name 
+			&& symbols[level]->isdeclaration)
+			debugfile_resolve_one_declaration(debugfile,
+							  symbols[level]->name);
 		    symbols[level] = NULL;
 		    /*if (symbols[level-1] 
 		      && symbols[level-1]->type == SYMBOL_TYPE_FUNCTION 
@@ -3164,7 +3287,7 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		    verror("cannot get next DIE: %s\n",dwarf_errmsg(-1));
 		    goto errout;
 		}
-		else if (res == 0 && die_offsets && level == 1) {
+		else if (res == 0 && die_offsets && level == 1 && offset > until_die_offset) {
 		    /* If there IS a sibling, but we don't want to
 		     * process it, because we finished the DIE we wanted
 		     * to do, skip to the next DIE.
@@ -3187,9 +3310,15 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	    /* 
 	     * New child DIE.  If we're loading partial symbols, only
 	     * process it given some conditions.
+	     *
+	     * NB: if this was an enumerated type, we *have* to process
+	     * the enumerators now -- because otherwise we'll never load
+	     * them unless the user/library later loads the type they
+	     * were contained in!
 	     */
 
-	    if ((!quick || expand_dies) || level < 1) {
+	    if ((!quick || expand_dies || tag == DW_TAG_enumeration_type) || level < 1 
+		|| (until_die_offset && args.sibling && until_die_offset < args.sibling)) {
 		++level;
 		symbols[level] = NULL;
 		if (!newscope)
@@ -3199,6 +3328,16 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	    }
 	    else {
 		/* Skip to the next sibling. */
+		if (until_die_offset && args.sibling && until_die_offset >= args.sibling) {
+		    /*
+		     * But first, if there were children we didn't
+		     * process because the current DIE's range (to its
+		     * sibling) does not contain the until_die_offset we
+		     * are looking for, we can mark this as only
+		     * partially loaded!
+		     */
+		    symbols[level]->loadtag = LOADTYPE_PARTIAL;
+		}
 		goto do_sibling;
 	    }
 	}
@@ -3350,13 +3489,8 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
     }
 
     /* Try to find prologue info from line table for this CU. */
-    if (args.have_stmt_list_offset) {
-	dwarf_get_lines(srd,args.stmt_list_offset);
-    }
-    else {
-	vwarnopt(4,LA_DEBUG,LF_DWARF,
-		 "not doing get_lines for offset 0x%"PRIx64"\n",
-		 args.stmt_list_offset);
+    if (cu_stmt_list_offset) {
+	dwarf_get_lines(srd,cu_stmt_list_offset);
     }
 
     /* Save off whatever offset we got to! */
@@ -3446,14 +3580,19 @@ int dwarf_symbol_expand(struct debugfile *debugfile,
     array_list_free(sal);
 
     /*
-     * XXX: NB: we have to do this at the very end, since it is not
+     * (Ok, the following text is no longer true; we handle resolving
+     * declarations dynamically if we're expanding symbols now.)
+     *
+     * NB: we have to do this at the very end, since it is not
      * per-CU.  We can't always guarantee it happened when we unearthed
      * new globals or type definitions, because the datatypes of those
      * symbols may not have been resolved yet.  So, we have to retry
      * this each time we load more content for the debugfile.
      */
+#if 0
     if (!retval)
 	debugfile_resolve_declarations(srd->debugfile);
+#endif
 
     return retval;
 }
@@ -3476,14 +3615,19 @@ int dwarf_symbol_root_expand(struct debugfile *debugfile,struct symbol *root) {
     rc = dwarf_load_cu(srd,&cu_offset,NULL,1);
 
     /*
-     * XXX: NB: we have to do this at the very end, since it is not
+     * (Ok, the following text is no longer true; we handle resolving
+     * declarations dynamically if we're expanding symbols now.)
+     *
+     * NB: we have to do this at the very end, since it is not
      * per-CU.  We can't always guarantee it happened when we unearthed
      * new globals or type definitions, because the datatypes of those
      * symbols may not have been resolved yet.  So, we have to retry
      * this each time we load more content for the debugfile.
      */
+#if 0
     if (!rc)
 	debugfile_resolve_declarations(srd->debugfile);
+#endif
 
     return rc;
 }
@@ -3650,6 +3794,32 @@ static int debuginfo_load(struct debugfile *debugfile,
 	 * them by the srd->reftab (itself).
 	 */
 	srd->reftab = g_hash_table_new(g_direct_hash,g_direct_equal);
+	/*
+	 * Make a range-searchable list of the top-level die offsets in
+	 * this CU.  We have to do this because if we load DIEs out of
+	 * order, one DIE may reference another DIE that is in a
+	 * different parent hierarchy -- and we might not have loaded
+	 * that parent hierarchy!  We could throw in all kinds of
+	 * optimizations to try to figure out exactly how many DIEs in
+	 * that hierarchy we have to load, but since dwarf_load_cu isn't
+	 * well-ordered towards loading individual DIEs and reconciling
+	 * their parent hierarchy *after* loading, what we will do is,
+	 * when loading a particular referenced DIE, we will fully load
+	 * the top-level die containing it.  Again, this is a balance
+	 * between simplicity of implementation and runtime speed for
+	 * the PARTIALSYM case.
+	 *
+	 * We create this list like this.  If PARTIALSYM, we build it up
+	 * as we come across new top-level DIEs during our in-order
+	 * traversal.  If not PARTIALSYM, and (CUHEADERS || PUBNAMES),
+	 * we pre-scan the top-level DIEs IFF they have sibling
+	 * attributes (but if there are no sibling attributes, we will
+	 * just have to expand the whole CU to the one DIE we need!).
+	 *
+	 * Then, when we want to load a partial symbol at DIE offset X,
+	 * we just find the previous top-level DIE to load!
+	 */
+	srd->top_level_die_offsets = clrangesimple_create();
 	srd->refuselist = g_hash_table_new(g_direct_hash,g_direct_equal);
 	srd->spec_reftab = g_hash_table_new(g_direct_hash,g_direct_equal);
 
@@ -3682,6 +3852,9 @@ static int debuginfo_load(struct debugfile *debugfile,
  out:
 
     /*
+     * This is now dynamically handled for symbol expansion, but we're
+     * not doing that here, so do it one final time.
+     *
      * XXX: NB: we have to do this at the very end, since it is not
      * per-CU.  We can't always guarantee it happened when we unearthed
      * new globals or type definitions, because the datatypes of those
@@ -3818,29 +3991,14 @@ void finalize_die_symbol(struct debugfile *debugfile,int level,
 	 * knowing we are in that subprogram DIE -- so our symtab
 	 * hierarchy will be screwed up!
 	 *
-	 * XXX: I still think that this might be insufficient, and
-	 * might end up putting inlined subroutines onto the wrong
-	 * scopes.  BUT, for now it seems reasonable because even if
-	 * there are nested subroutines, as long as we fully process the
-	 * outermost one (i.e., add it to die_offsets first) first,
-	 * we'll process the children ones first (well, at least as long
-	 * as they are loading without PARTIALSYM).  If they load with
-	 * PARTIALSYM, then we won't process nested subroutines and
-	 * we're screwed?  Worried.  But there's also little
-	 * alternative, other than to back up to the CU start and skim
-	 * over stacks of DIE children until we hit this origin_ref, and
-	 * then process the top-most "parent" DIE of the origin_ref
-	 * child DIE.  That is more expensive and more complicated :).
-	 *
-	 * TODO: but I suppose we'll have to do it...
+	 * Ok, now we *can* do this, because our symbol expander will
+	 * load the containing top-level symbol even if the symbol is a
+	 * param, var, or label that is not at level 1!
 	 */
-	if (SYMBOL_IS_FUNC(symbol)) {
-	    SYMBOL_RX_INLINE(symbol,sii);
-
-	    if (symbol->isinlineinstance && sii && sii->origin_ref) {
-		array_list_append(die_offsets,
-				  (void *)(uintptr_t)sii->origin_ref);
-	    }
+	SYMBOL_RX_INLINE(symbol,sii);
+	if (symbol->isinlineinstance && sii && sii->origin_ref) {
+	    array_list_append(die_offsets,
+			      (void *)(uintptr_t)sii->origin_ref);
 	}
     }
 
