@@ -101,6 +101,7 @@ unsigned long target_generic_fd_write(int fd,
 int target_associate_debugfile(struct target *target,
 			       struct memregion *region,
 			       struct debugfile *debugfile);
+struct debugfile *target_lookup_debugfile(struct target *target,ADDR addr);
 
 int target_attach_space(struct target *target,struct addrspace *space);
 int target_detach_space(struct target *target,struct addrspace *space);

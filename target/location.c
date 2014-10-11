@@ -58,6 +58,55 @@ struct symbol *__target_location_ops_getsymbol(struct location_ctxt *lctxt) {
 	return NULL;
 }
 
+struct debugfile *__target_location_ops_getdebugfile(struct location_ctxt *lctxt) {
+    struct target_location_ctxt *tlctxt =
+	(struct target_location_ctxt *)lctxt->priv;
+    struct target *target = tlctxt->thread->target;
+    struct target_location_ctxt_frame *tlctxtf =
+	target_location_ctxt_current_frame(tlctxt);
+    struct symbol *symbol;
+    struct symbol *root;
+    struct debugfile *debugfile;
+    ADDR ipval;
+
+    /* Find our debugfile. */
+    if (tlctxtf->bsymbol) {
+	symbol = bsymbol_get_symbol(tlctxtf->bsymbol);
+	if (symbol) {
+	    root = symbol_find_root(symbol);
+	    SYMBOL_RX_ROOT(root,srd);
+	    debugfile = srd->debugfile;
+	    if (debugfile)
+		return debugfile;
+	}
+    }
+    else if (tlctxtf->alt_bsymbol) {
+	symbol = bsymbol_get_symbol(tlctxtf->alt_bsymbol);
+	if (symbol) {
+	    root = symbol_find_root(symbol);
+	    SYMBOL_RX_ROOT(root,srd);
+	    debugfile = srd->debugfile;
+	    if (debugfile)
+		return debugfile;
+	}
+    }
+    else {
+	ipval = (ADDR)(uintptr_t) \
+	    g_hash_table_lookup(tlctxtf->registers,
+				(gpointer)(uintptr_t)target->ipregno);
+	if (ipval != 0) {
+	    debugfile = target_lookup_debugfile(target,ipval);
+	    if (debugfile)
+		return debugfile;
+	}
+    }
+
+    vwarnopt(11,LA_DEBUG,LF_DLOC,
+	     "could not find debugfile for frame %d!\n",tlctxtf->frame);
+    errno = EINVAL;
+    return NULL;
+}
+
 int __target_location_ops_getaddrsize(struct location_ctxt *lctxt) {
     struct target_location_ctxt *tlctxt;
 
@@ -260,6 +309,7 @@ int __target_location_ops_unrelocate(struct location_ctxt *lctxt,
 
 struct location_ops target_location_ops = {
     .setcurrentframe = __target_location_ops_setcurrentframe,
+    .getdebugfile = __target_location_ops_getdebugfile,
     .getsymbol = __target_location_ops_getsymbol,
     .readreg = __target_location_ops_readreg,
     .writereg = __target_location_ops_writereg,

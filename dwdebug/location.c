@@ -576,36 +576,17 @@ loctype_t symbol_resolve_location(struct symbol *symbol,
 int location_ctxt_read_retaddr(struct location_ctxt *lctxt,ADDR *o_retaddr) {
     struct debugfile *debugfile;
     ADDR retaddr = 0;
-    struct symbol *symbol;
-    struct symbol *root;
 
-    if (!lctxt || !lctxt->ops || !lctxt->ops->getsymbol) {
-	verror("no location_ops->getsymbol!\n");
+    if (!lctxt || !lctxt->ops || !lctxt->ops->getdebugfile) {
+	verror("no location_ops->getdebugfile!\n");
 	errno = EINVAL;
 	return -1;
     }
 
     /* Find our debugfile. */
-    symbol = lctxt->ops->getsymbol(lctxt);
-    if (!symbol) {
-	verror("could not getsymbol for frame %d!\n",lctxt->current_frame);
-	errno = EINVAL;
-	return -1;
-    }
-    root = symbol_find_root(symbol);
-    if (!root) {
-	vwarnopt(11,LA_DEBUG,LF_DLOC,
-		 "could not find root symbol for symbol '%s'!\n",
-		 symbol_get_name(symbol));
-	errno = EINVAL;
-	return -1;
-    }
-    SYMBOL_RX_ROOT(root,srd);
-    debugfile = srd->debugfile;
+    debugfile = lctxt->ops->getdebugfile(lctxt);
     if (!debugfile) {
-	vwarnopt(11,LA_DEBUG,LF_DLOC,
-		 "could not find debugfile for root symbol '%s'!\n",
-		 symbol_get_name(root));
+	vwarnopt(11,LA_DEBUG,LF_DLOC,"could not find debugfile!\n");
 	errno = EINVAL;
 	return -1;
     }

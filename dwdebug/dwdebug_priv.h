@@ -671,6 +671,10 @@ struct location_ops {
      */
     int (*setcurrentframe)(struct location_ctxt *lctxt,int frame);
     /*
+     * Gets the debugfile associated with lctxt->current_frame, by IP.
+     */
+    struct debugfile *(*getdebugfile)(struct location_ctxt *lctxt);
+    /*
      * Gets the symbol associated with lctxt->current_frame.
      */
     struct symbol *(*getsymbol)(struct location_ctxt *lctxt);

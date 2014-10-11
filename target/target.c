@@ -1430,6 +1430,39 @@ int target_associate_debugfile(struct target *target,
     return 0;
 }
 
+struct debugfile *target_lookup_debugfile(struct target *target,ADDR addr) {
+    GList *t1,*t2;
+    struct addrspace *space;
+    struct memregion *region;
+    GHashTableIter iter;
+    gpointer key;
+    struct debugfile *debugfile;
+    struct memrange *range;
+
+    if (!target->spaces)
+	return NULL;
+
+    vdebug(9,LA_TARGET,LF_SYMBOL,
+	   "trying to find debugfile for address 0x%"PRIxADDR"\n",addr);
+
+    v_g_list_foreach(target->spaces,t1,space) {
+	v_g_list_foreach(space->regions,t2,region) {
+	    if ((range = memregion_find_range_real(region,addr)))
+		goto found;
+	}
+    }
+
+    return NULL;
+
+ found:
+    g_hash_table_iter_init(&iter,region->debugfiles);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer)&key,(gpointer)&debugfile))
+	return debugfile;
+
+    return NULL;
+}
+
 struct scope *target_lookup_addr(struct target *target,uint64_t addr) {
     GList *t1,*t2;
     struct addrspace *space;
