@@ -67,10 +67,12 @@ int main(int argc,char **argv) {
     ADDR addr;
     ADDR base = 0;
     int infer = 0;
+    int quiet = 0;
+    int nofree = 0;
 
     dwdebug_init();
 
-    while ((ch = getopt(argc, argv, "d::w::gDMl:F:TGSErI:i:R")) != -1) {
+    while ((ch = getopt(argc, argv, "d::w::gDMl:F:TGSErI:i:RNq")) != -1) {
 	switch(ch) {
 	case 'd':
 	    if (optarg) {
@@ -185,6 +187,12 @@ int main(int argc,char **argv) {
 	case 'R':
 	    doranges = 0;
 	    break;
+	case 'N':
+	    nofree = 1;
+	    break;
+	case 'q':
+	    quiet = 1;
+	    break;
 	default:
 	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
 	    exit(-1);
@@ -224,7 +232,7 @@ int main(int argc,char **argv) {
 	.detail = detail,
     };
 
-    if (argc < 2)
+    if (argc < 2 && !quiet)
 	debugfile_dump(debugfile,&ud,dotypes,doglobals,dosymtabs,doelfsymtab,
 		       doranges);
     else {
@@ -327,11 +335,13 @@ int main(int argc,char **argv) {
 	}
     }
 
-    dwdebug_fini();
+    if (!nofree) {
+	dwdebug_fini();
 
 #ifdef REF_DEBUG
-    REF_DEBUG_REPORT_FINISH();
+	REF_DEBUG_REPORT_FINISH();
 #endif
+    }
 
     if (opts_list) {
 	array_list_foreach(opts_list,i,opts) {
