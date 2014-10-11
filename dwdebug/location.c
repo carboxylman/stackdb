@@ -1097,9 +1097,10 @@ int symbol_resolve_bounds(struct symbol *symbol,struct location_ctxt *lctxt,
 	    end = start + symbol_get_bytesize(symbol);
     }
     else if (SYMBOL_IS_FUNC(symbol)) {
+	int trc = -1;
 	scope = symbol_read_owned_scope(symbol);
 	if (scope) 
-	    scope_get_overall_range(scope,&start,&end,is_noncontiguous);
+	    trc = scope_get_overall_range(scope,&start,&end,is_noncontiguous);
 	SYMBOL_RX_FUNC(symbol,sf);
 	if (sf) {
 	    if (sf->prologue_guessed || sf->prologue_known) {
@@ -1116,10 +1117,16 @@ int symbol_resolve_bounds(struct symbol *symbol,struct location_ctxt *lctxt,
 	    }
 	}
 
-	if (!start || (symbol->has_addr && start != symbol->addr)) 
+	if (!start && symbol->has_addr) {
+	    trc = 0;
 	    start = symbol->addr;
-	if (!end)
+	}
+	if (!end && start)
 	    end = start + symbol_get_bytesize(symbol);
+
+	if (trc && !as && !ae) {
+	    return -1;
+	}
     }
     else if (SYMBOL_IS_BLOCK(symbol)) {
 	scope = symbol_read_owned_scope(symbol);
