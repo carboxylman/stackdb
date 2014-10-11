@@ -1204,6 +1204,7 @@ static int dwarf_cfa_fde_run_regrule(struct debugfile *debugfile,
     int rc;
     struct symbol *symbol;
     struct location_ops *lops;
+    char *sname;
 
     if (!lctxt || !lctxt->ops) {
 	verror("could not get location ops for current frame %d!\n",
@@ -1220,6 +1221,8 @@ static int dwarf_cfa_fde_run_regrule(struct debugfile *debugfile,
 	return -1;
     }
     symbol = lops->getsymbol(lctxt);
+    if (symbol)
+	sname = symbol_get_name(symbol);
 
     switch (rr->rrt) {
     case RRT_UNDEF:
@@ -1332,11 +1335,11 @@ static int dwarf_cfa_fde_run_regrule(struct debugfile *debugfile,
 	    if ((int)ltrc < 0) 
 		verror("error evaluating DWARF expr for frame %d (symbol %s):"
 		       " %d!\n",
-		       lctxt->current_frame,symbol_get_name(symbol),ltrc);
+		       lctxt->current_frame,sname,ltrc);
 	    else 
 		verror("error evaluating DWARF expr for frame %d (symbol %s):"
 		       " unexpected expr result %d!\n",
-		       lctxt->current_frame,symbol_get_name(symbol),ltrc);
+		       lctxt->current_frame,sname,ltrc);
 	    return -1;
 	}
 	addr = LOCATION_ADDR(&loc);
@@ -1360,11 +1363,11 @@ static int dwarf_cfa_fde_run_regrule(struct debugfile *debugfile,
 	    if ((int)ltrc < 0) 
 		verror("error evaluating DWARF expr for frame %d (symbol %s):"
 		       " %d!\n",
-		       lctxt->current_frame,symbol_get_name(symbol),ltrc);
+		       lctxt->current_frame,sname,ltrc);
 	    else 
 		verror("error evaluating DWARF expr for frame %d (symbol %s):"
 		       " unexpected expr result %d!\n",
-		       lctxt->current_frame,symbol_get_name(symbol),ltrc);
+		       lctxt->current_frame,sname,ltrc);
 	    return -1;
 	}
 	else if (ltrc == LOCTYPE_ADDR) 
@@ -1402,6 +1405,8 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
     REG spreg = -1;
     int was_sp = 0;
     struct scope *scope;
+    char *sname = NULL;
+    ADDR saddr = 0;
 
     if (!lctxt || !lctxt->ops) {
 	verror("no location ops for current frame %d!\n",lctxt->current_frame);
@@ -1421,24 +1426,32 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
 	return -1;
     }
 
-    symbol = lops->getsymbol(lctxt);
-    if (!symbol) {
-	verror("failed to getsymbol for current frame %d!\n",
-	       lctxt->current_frame);
-	errno = EINVAL;
-	return -1;
+    if (lops->getsymbol)
+	symbol = lops->getsymbol(lctxt);
+    else
+	symbol = NULL;
+    if (symbol) {
+	saddr = symbol->addr;
+	sname = symbol_get_name(symbol);
     }
 
-    if (symbol->isinlineinstance 
+    /*
+     * NB: don't just search our parent if this is an inline instance;
+     * there *might* be an FDE for it.  We have the check below
+     * (!fde && symbol) to catch this case.
+     */
+#if 0
+    if (symbol && symbol->isinlineinstance 
 	&& symbol->scope->symbol && SYMBOL_IS_FUNC(symbol->scope->symbol)) {
 	vdebug(5,LA_DEBUG,LF_DCFA,
 	       "using symbol %s instead of inline instance of %s for CFA\n",
-	       symbol_get_name(symbol->scope->symbol),symbol_get_name(symbol));
+	       symbol_get_name(symbol->scope->symbol),sname);
 	symbol = symbol->scope->symbol;
     }
-    else if (symbol->isinlineinstance) {
-	vwarn("inlined %s not in parent func; BUG?!\n",symbol_get_name(symbol));
+    else if (symbol && symbol->isinlineinstance) {
+	vwarn("inlined %s not in parent func; BUG?!\n",sname);
     }
+#endif
 
     if (!lops || !lops->getregno || lops->getregno(lctxt,CREG_SP,&spreg)) {
 	vwarn("could not check CREG_SP for equivalence with DWARF CFA reg;"
@@ -1479,11 +1492,11 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
     if (rc < 0) {
 	verror("error looking up DWARF CFA FDE for IP 0x%"PRIxADDR","
 	       " symbol '%s' at addr 0x%"PRIxADDR"!\n",
-	       ip,symbol_get_name(symbol),symbol->addr);
+	       ip,sname,saddr);
 	return -1;
     }
 
-    if (!fde) {
+    if (!fde && symbol) {
 	/*
 	 * Try to handle the case where the symbol is an inlined
 	 * instance.  In this case, the FDE info might be at the address
@@ -1504,15 +1517,14 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
 			   " containing symbol '%s' addr 0x%"PRIxADDR";"
 			   " probably inlined\n",
 			   scope->range->start,symbol_get_name(scope->symbol),
-			   symbol_get_name(symbol),symbol->addr);
+			   sname,saddr);
 		}
 		else {
 		    vdebug(5,LA_DEBUG,LF_DCFA,
 			   "found DWARF CFA FDE at scope addr 0x%"PRIxADDR
 			   " containing symbol '%s' addr 0x%"PRIxADDR";"
 			   " probably inlined\n",
-			   scope->range->start,symbol_get_name(symbol),
-			   symbol->addr);
+			   scope->range->start,sname,saddr);
 		}
 		break;
 	    }
@@ -1524,7 +1536,7 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
     if (!fde) {
 	verror("no DWARF CFA FDE for IP 0x%"PRIxADDR","
 	       " symbol '%s' at addr 0x%"PRIxADDR"!\n",
-	       ip,symbol_get_name(symbol),symbol->addr);
+	       ip,sname,saddr);
 	errno = ESRCH;
 	return -1;
     }
@@ -1537,7 +1549,8 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
     if (dwarf_cfa_fde_decode(debugfile,fde)) {
 	verror("error while decoding DWARF CFA FDE for symbol '%s'"
 	       " at addr 0x%"PRIxADDR"!\n",
-	       symbol_get_name(symbol),symbol->addr);
+	       sname,saddr);
+	errno = EFAULT;
 	return -1;
     }
 
@@ -1547,9 +1560,11 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
      */
     rr = dwarf_cfa_fde_lookup_regrule(fde,reg,ip);
     if (!rr) {
-	verror("could not find DWARF CFA regrule for reg %d at"
-	       " obj addr 0x%"PRIxADDR"\n",
-	       reg,ip);
+	vwarnopt(8,LA_DEBUG,LF_DCFA,
+		 "could not find DWARF CFA regrule for reg %d at"
+		 " obj addr 0x%"PRIxADDR"\n",
+		 reg,ip);
+	errno = EADDRNOTAVAIL;
 	return -1;
     }
 
@@ -1560,6 +1575,7 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
     if (rc) {
 	verror("could not load register %d in FDE 0x%lx CIE 0x%lx!\n",
 	       reg,(unsigned long)fde->offset,(unsigned long)cie->offset);
+	errno = EFAULT;
 	return -1;
     }
 
@@ -1603,6 +1619,8 @@ int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
     int rc;
     struct location_ops *lops;
     struct scope *scope;
+    char *sname;
+    ADDR saddr;
 
     if (!lctxt || !lctxt->ops) {
 	verror("no location_ops for current frame %d!\n",lctxt->current_frame);
@@ -1621,18 +1639,17 @@ int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
 	return -1;
     }
 
-    if (!lops->getsymbol) {
-	verror("no location_ops->getsymbol for current frame %d\n",
-	       lctxt->current_frame);
-	errno = EINVAL;
-	return -1;
-    }
-    symbol = lops->getsymbol(lctxt);
+    if (lops->getsymbol)
+	symbol = lops->getsymbol(lctxt);
+    else
+	symbol = NULL;
     if (!symbol) {
-	verror("failed to getsymbol for current frame %d!\n",
-	       lctxt->current_frame);
-	errno = EINVAL;
-	return -1;
+	vwarnopt(9,LA_DEBUG,LF_DCFA,"failed to getsymbol for current frame %d!\n",
+		 lctxt->current_frame);
+    }
+    else {
+	sname = symbol_get_name(symbol);
+	saddr = symbol->addr;
     }
 
     /*
@@ -1679,9 +1696,12 @@ int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
     fde = NULL;
     rc = clrangesimple_find(&ddi->cfa_fde,(Word_t)ip,NULL,NULL,(void **)&fde);
     if (rc < 0) {
-	verror("error looking up DWARF CFA FDE for IP 0x%"PRIxADDR","
-	       " symbol '%s' at addr 0x%"PRIxADDR"!\n",
-	       ip,symbol_get_name(symbol),symbol->addr);
+	if (symbol)
+	    verror("error looking up DWARF CFA FDE for IP 0x%"PRIxADDR","
+		   " symbol '%s' at addr 0x%"PRIxADDR"!\n",
+		   ip,sname,saddr);
+	else
+	    verror("error looking up DWARF CFA FDE for IP 0x%"PRIxADDR"!\n",ip);
 	return -1;
     }
 
@@ -1706,15 +1726,14 @@ int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
 			   " containing symbol '%s' addr 0x%"PRIxADDR";"
 			   " probably inlined\n",
 			   scope->range->start,symbol_get_name(scope->symbol),
-			   symbol_get_name(symbol),symbol->addr);
+			   sname,saddr);
 		}
 		else {
 		    vdebug(5,LA_DEBUG,LF_DCFA,
 			   "found DWARF CFA FDE at scope addr 0x%"PRIxADDR
 			   " containing symbol '%s' addr 0x%"PRIxADDR";"
 			   " probably inlined\n",
-			   scope->range->start,symbol_get_name(symbol),
-			   symbol->addr);
+			   scope->range->start,sname,saddr);
 		}
 		break;
 	    }
@@ -1726,7 +1745,7 @@ int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
     if (!fde) {
 	verror("no DWARF CFA FDE for IP 0x%"PRIxADDR","
 	       " symbol '%s' at addr 0x%"PRIxADDR"!\n",
-	       ip,symbol_get_name(symbol),symbol->addr);
+	       ip,sname,saddr);
 	errno = ESRCH;
 	return -1;
     }
@@ -1739,7 +1758,7 @@ int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
     if (dwarf_cfa_fde_decode(debugfile,fde)) {
 	verror("error while decoding DWARF CFA FDE for symbol '%s'"
 	       " at addr 0x%"PRIxADDR"!\n",
-	       symbol_get_name(symbol),symbol->addr);
+	       sname,saddr);
 	return -1;
     }
 
