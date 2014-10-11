@@ -970,9 +970,9 @@ int target_thread_snprintf(struct target *target,tid_t tid,
     if (detail < -1) 
 	return snprintf(buf,bufsiz,"tid%s%"PRIiTID,kvsep,tthread->tid);
     else if (detail < 0) 
-	return snprintf(buf,bufsiz,"tid%s%"PRIiTID "%s" "name%s%s"
+	return snprintf(buf,bufsiz,"tid%s%"PRIiTID "%s" "name%s%s" "%s"
 			"curctxt%s%d" "%s",
-			kvsep,tid,sep,kvsep,tthread->name,
+			kvsep,tid,sep,kvsep,tthread->name,sep,
 			kvsep,tthread->tidctxt,sep);
     else if (!target->ops->thread_snprintf)
 	return snprintf(buf,bufsiz,
