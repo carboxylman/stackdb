@@ -809,6 +809,7 @@ int dwarf_load_cfa(struct debugfile *debugfile,
     char *aug;
     unsigned int auglen;
     uint64_t personality;
+    int rc;
 
     ddi = (struct dwarf_debugfile_info *)debugfile->priv;
 
@@ -1131,9 +1132,24 @@ int dwarf_load_cfa(struct debugfile *debugfile,
 	                                fde->len,fde->regrules);
 	    */
 
-	    clrangesimple_add(&ddi->cfa_fde,(Word_t)fde->initial_location,
-			      (Word_t)(fde->initial_location + fde->address_range),
-			      fde);
+	    rc = clrangesimple_add(&ddi->cfa_fde,(Word_t)fde->initial_location,
+				   (Word_t)(fde->initial_location + fde->address_range),
+				   fde);
+	    if (rc == -1) {
+		verror("error (?) addding FDE for 0x%"PRIxADDR",0x%"PRIxADDR";"
+		       " removing!\n",(ADDR)fde->initial_location,
+		       (ADDR)(fde->initial_location + fde->address_range));
+		dwarf_cfa_fde_free(fde);
+		fde = NULL;
+	    }
+	    else if (rc == 1) {
+		vwarnopt(8,LA_DEBUG,LF_DCFA,
+			 "addr exists while adding FDE for 0x%"PRIxADDR","
+			 "0x%"PRIxADDR"; removing!\n",(ADDR)fde->initial_location,
+			 (ADDR)(fde->initial_location + fde->address_range));
+		dwarf_cfa_fde_free(fde);
+		fde = NULL;
+	    }
 	}
 
 	readp = unit_end;
