@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -730,8 +730,9 @@ int location_ctxt_read_reg(struct location_ctxt *lctxt,REG reg,REGVAL *o_regval)
     }
 
     if (debugfile->ops->frame_read_saved_reg(debugfile,lctxt,reg,&rv)) {
-	verror("could not read reg %"PRIiREG" in frame %d!\n",
-	       reg,lctxt->current_frame);
+	vwarnopt(8,LA_DEBUG,LF_DLOC,
+		 "could not read reg %"PRIiREG" in frame %d!\n",
+		 reg,lctxt->current_frame);
 	if (!errno)
 	    errno = EFAULT;
 	goto prev_frame_load_err;
@@ -1012,6 +1013,7 @@ loctype_t location_resolve(struct location *loc,struct location_ctxt *lctxt,
 	    vwarnopt(8,LA_DEBUG,LF_DLOC,
 		     "could not match obj_ip 0x%"PRIxADDR" in loclist!\n",
 		     obj_ip);
+	    errno = EADDRNOTAVAIL;
 	    return -LOCTYPE_LOCLIST;
 	}
 
@@ -1448,13 +1450,9 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 		   symbol_get_name(symbol),retval);
 	}
 	else {
-	    if (errno == ENOTSUP) 
-		vwarnopt(8,LA_DEBUG,LF_DLOC,
-			 "could not resolve location for symbol %s: %s!\n",
-			 symbol_get_name(symbol),strerror(errno));
-	    else
-		verror("could not resolve location for symbol %s (ret %d): %s (%d)!\n",
-		       symbol_get_name(symbol),rc,strerror(errno),errno);
+	    vwarnopt(8,LA_DEBUG,LF_DLOC,
+		     "could not resolve location for symbol %s: %s (%d)!\n",
+		     symbol_get_name(symbol),strerror(errno),errno);
 	    goto errout;
 	}
 
@@ -1559,8 +1557,6 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
     }
 
  errout:
-    if (rc > LOCTYPE_UNKNOWN)
-	return LOCTYPE_UNKNOWN;
     return rc;
 }
 

@@ -232,6 +232,7 @@ struct location;
 struct location_ops;
 struct location_ctxt;
 typedef enum {
+    LOCTYPE_ADDR_ERR      = -1,
     LOCTYPE_UNKNOWN       = 0,
     LOCTYPE_ADDR          = 1,
     LOCTYPE_REG           = 2,

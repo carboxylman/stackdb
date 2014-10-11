@@ -1866,8 +1866,8 @@ loctype_t target_lsymbol_resolve_location(struct target *target,
 	}
     }
     else if (rc <= LOCTYPE_UNKNOWN) {
-	verror("failed to resolve location type %s (%d)!\n",
-	       LOCTYPE(-rc),rc);
+	vwarnopt(8,LA_TARGET,LF_SYMBOL,
+		 "failed to resolve location type %s (%d)!\n",LOCTYPE(-rc),rc);
 	goto errout;
     }
 
@@ -1986,7 +1986,7 @@ loctype_t target_lsymbol_resolve_location(struct target *target,
 
  errout:
     location_internal_free(&tloc);
-    return -rc;
+    return rc;
 }
 
 int target_bsymbol_resolve_base(struct target *target,
@@ -2007,8 +2007,9 @@ int target_bsymbol_resolve_base(struct target *target,
     rc = target_lsymbol_resolve_location(target,tlctxt,bsymbol->lsymbol,0,
 					 LOAD_FLAG_NONE,&tloc,NULL,o_range);
     if (rc != LOCTYPE_ADDR) {
-	verror("could not resolve base for symbol %s: %s (%d)\n",
-	       lsymbol_get_name(bsymbol->lsymbol),strerror(errno),rc);
+	vwarnopt(8,LA_TARGET,LF_SYMBOL,
+		 "could not resolve base for symbol %s: %s (%d)\n",
+		 lsymbol_get_name(bsymbol->lsymbol),strerror(errno),rc);
 	location_internal_free(&tloc);
 	retval = -1;
 	goto errout;
@@ -2327,7 +2328,7 @@ struct value *target_load_value_member(struct target *target,
     ADDR oldaddr,addr;
     struct target_thread *tthread;
     tid_t tid;
-    int rc;
+    loctype_t rc;
     REG reg;
     REGVAL regval;
     int newlen;
@@ -2609,7 +2610,7 @@ struct value *target_load_value_member(struct target *target,
 
 	value_set_const(value);
     }
-    else if (rc <= 0) {
+    else if (rc <= LOCTYPE_UNKNOWN) {
 	verror("symbol %s: failed to compute location (%d %s)\n",
 	       lsymbol_get_name(ls),rc,LOCTYPE(-rc));
 	goto errout;
@@ -2704,11 +2705,11 @@ struct value *target_load_symbol(struct target *target,
     addr = 0;
     datatype = NULL;
     memset(&tloc,0,sizeof(tloc));
-    rc = (int)target_lsymbol_resolve_location(target,tlctxt,lsymbol,0,
-					      flags,&tloc,&datatype,&range);
+    rc = target_lsymbol_resolve_location(target,tlctxt,lsymbol,0,
+					 flags,&tloc,&datatype,&range);
     if (rc <= LOCTYPE_UNKNOWN) {
-	verror("symbol %s: failed to compute location\n",
-	       lsymbol_get_name(lsymbol));
+	vwarnopt(7,LA_TARGET,LF_SYMBOL,"symbol %s: failed to compute location\n",
+		 lsymbol_get_name(lsymbol));
 	goto errout;
     }
     else if (rc == LOCTYPE_ADDR) {
@@ -2772,8 +2773,9 @@ struct value *target_load_symbol(struct target *target,
 	reg = LOCATION_REG(&tloc);
 
         if (target_location_ctxt_read_reg(tlctxt,reg,&regval)) {
-	    verror("symbol %s: could not read reg %d value in tid %"PRIiTID"\n",
-		   lsymbol_get_name(lsymbol),reg,tid);
+	    vwarnopt(7,LA_TARGET,LF_SYMBOL,
+		     "symbol %s: could not read reg %d value in tid %"PRIiTID"\n",
+		     lsymbol_get_name(lsymbol),reg,tid);
             goto errout;
 	}
 
@@ -5749,7 +5751,7 @@ REGVAL target_regcache_readreg(struct target *target,tid_t tid,REG reg) {
     regcache = tthread->regcaches[tthread->tidctxt];
 
     if (regcache_read_reg(regcache,reg,&regval)) {
-	vwarnopt(9,LA_TARGET,LF_TARGET,
+	vdebug(9,LA_TARGET,LF_TARGET,
 		 "target %d thread %d reg %d: could not read!\n",
 		 target->id,tid,reg);
 	return 0;

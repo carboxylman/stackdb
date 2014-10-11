@@ -532,7 +532,7 @@ GSList *scope_match_syms(struct scope *scope,
  ** Locations.
  **/
 
-#define LOCTYPE_BITS      4
+#define LOCTYPE_BITS      5
 static inline const char *LOCTYPE(int n) {
     switch (n) {
     case LOCTYPE_UNKNOWN:       return "unknown";
