@@ -1661,15 +1661,95 @@ static target_status_t gdb_monitor(struct target *target) {
 
 static target_status_t gdb_poll(struct target *target,struct timeval *tv,
 				target_poll_outcome_t *outcome,int *pstatus) {
+    struct gdb_state *xstate = (struct gdb_state *)target->state;
+    int ret, fd;
+    struct timeval itv;
+    fd_set inset;
+    int again;
+    target_status_t retval;
 
+    fd = xstate->fd;
+
+    if (!tv) {
+	itv.tv_sec = 0;
+	itv.tv_usec = 0;
+	tv = &itv;
+    }
+    FD_ZERO(&inset);
+    FD_SET(fd,&inset);
+
+    ret = select(fd+1,&inset,NULL,NULL,tv);
+    if (ret == 0) {
+	if (outcome)
+	    *outcome = POLL_NOTHING;
+	return TSTATUS_RUNNING;
+    }
+
+    if (!FD_ISSET(fd, &inset)) {
+	if (outcome)
+	    *outcome = POLL_NOTHING;
+	return TSTATUS_RUNNING;
+    }
+
+    again = 0;
+    retval = gdb_handle_exception(target,0,&again,NULL);
+    if (pstatus)
+	*pstatus = again;
+
+    return retval;
 }
 
-static int gdb_attach_evloop(struct target *target,struct evloop *evloop) {
+int gdb_evloop_handler(int readfd,int fdtype,void *state) {
+    struct target *target = (struct target *)state;
+    int again;
+    int retval;
 
+    again = 0;
+    retval = gdb_handle_exception(target,0,&again,NULL);
+    if (retval == TSTATUS_ERROR && again == 0)
+	return EVLOOP_HRET_ERROR;
+    /*
+     * XXX: this is the "abort to user handler" case -- but in this
+     * case, we have no user, basically.  Fix this.
+     */
+    //else if (retval == TSTATUS_PAUSED && again == 0)
+    //    return EVLOOP_HRET_SUCCESS;
+
+    __gdb_resume(target,0);
+
+    return EVLOOP_HRET_SUCCESS;
+}
+
+int gdb_attach_evloop(struct target *target,struct evloop *evloop) {
+    struct gdb_state *xstate = (struct gdb_state *)target->state;
+
+    if (!target->evloop) {
+	verror("no evloop attached!\n");
+	return -1;
+    }
+
+    xstate->evloop_fd = xstate->fd;
+
+    evloop_set_fd(target->evloop,xstate->evloop_fd,EVLOOP_FDTYPE_R,
+		  gdb_evloop_handler,target);
+
+    vdebug(5,LA_TARGET,LF_XV,
+	   "added evloop readfd %d event channel\n",xstate->evloop_fd);
+
+    return 0;
 }
 
 static int gdb_detach_evloop(struct target *target) {
+    struct gdb_state *gstate = (struct gdb_state *)target->state;
 
+    if (gstate->evloop_fd < 0)
+	return 0;
+
+    evloop_unset_fd(target->evloop,gstate->evloop_fd,EVLOOP_FDTYPE_A);
+
+    gstate->evloop_fd = -1;
+
+    return 0;
 }
 
 tid_t gdb_gettid(struct target *target) {
