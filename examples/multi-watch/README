@@ -1,0 +1,21 @@
+In this example, we first run a client-server pair to play pingpong,
+then we monitor their pingpng valuable. 
+
+The c_pingpong reprensents client pingpong.
+The s_pingpong reprensents server pingpong. 
+
+Each of the client and server does the same thing: 
+	receive a value, 
+	add one to the value, 	
+	send the added value back. 
+
+Compile it:
+	make -f Makefile.example
+Run it:
+	1. In the first terminal: 
+      $ ./server 
+      then you will get a port number.
+    2. In the second terminal: 
+	  $ ./client 127.0.0.1 <port number>
+    3. In the third terminal: 
+	  $ sudo ./multi-watch `pgrep -n server`:s_pingpong `pgrep -n client`:c_pingpong

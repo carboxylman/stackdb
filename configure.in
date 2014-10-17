@@ -772,7 +772,8 @@ outfiles="$outfiles Makeconf Makefile include/Makefile lib/Makefile \
           examples/context-tracker/examples/dumpcontext/Makefile \
           examples/context-tracker/examples/null-deref-analysis/Makefile \
           examples/null-deref-analysis/Makefile \
-          examples/local-dos-analysis/Makefile"
+          examples/local-dos-analysis/Makefile \
+          examples/multi-watch/Makefile.example"
 
 if test "${ENABLE_TESTS}" = "1"; then
     outfiles+=" tests/dwdebug/Makefile"
