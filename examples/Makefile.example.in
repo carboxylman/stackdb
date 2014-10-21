@@ -24,7 +24,7 @@ export PKG_CONFIG_PATH
 CFLAGS = `pkg-config --cflags target`
 LIBS = `pkg-config --libs target dwdebug vmilib`
 
-PROGRAMS = ptrace ptrace-multi-process
+PROGRAMS = ptrace ptrace-multi-process xen xen-os-process
 
 .SUFFIXES: .lo .c
 
@@ -39,5 +39,11 @@ ptrace: ptrace.lo
 	libtool --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(LIBS)
 ptrace-multi-process: ptrace-multi-process.lo
+	libtool --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(LIBS)
+xen: xen.lo
+	libtool --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(LIBS)
+xen-os-process: xen-os-process.lo
 	libtool --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(LIBS)

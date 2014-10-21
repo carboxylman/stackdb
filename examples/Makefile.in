@@ -27,7 +27,8 @@ SUBDIRS =
 
 include $(OBJDIR)/Makeconf
 
-INST_SHARE = Makefile.example ptrace.c ptrace-multi-process.c
+INST_SHARE = Makefile.example ptrace.c ptrace-multi-process.c \
+	xen.c xen-os-process.c 
 
 all:	all-subdirs
 
