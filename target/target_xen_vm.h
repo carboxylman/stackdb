@@ -146,6 +146,9 @@ struct xen_vm_state {
 #endif
 
     int evloop_fd;
+
+    int xen_vm_vmp_client_fd;
+    char *xen_vm_vmp_client_path;
 };
 
 struct target *xen_vm_instantiate(struct target_spec *spec,

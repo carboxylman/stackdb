@@ -269,9 +269,6 @@ int xce_handle_fd = -1;
 #endif
 static XC_EVTCHN_PORT_T dbg_port = -1;
 
-static int xen_vm_vmp_client_fd = -1;
-static char *xen_vm_vmp_client_path = NULL;
-
 #define EF_TF (0x00000100)
 #define EF_IF (0x00000200)
 #define EF_RF (0x00010000)
@@ -1849,6 +1846,9 @@ static int xen_vm_init(struct target *target) {
     xstate->dominfo.max_vcpu_id = 0;
     xstate->dominfo.shared_info_frame = 0;
 
+    xstate->xen_vm_vmp_client_fd = -1;
+    xstate->xen_vm_vmp_client_path = NULL;
+
     /* Create the default thread. */
     tstate = (struct xen_vm_thread_state *)calloc(1,sizeof(*tstate));
 
@@ -2154,15 +2154,23 @@ int xen_vm_vmp_launch() {
 }
 
 int xen_vm_virq_or_vmp_attach_or_launch(struct target *target) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct xen_vm_spec *xspec = (struct xen_vm_spec *)target->spec->backend_spec;
     int i;
     int rc = -1;
 
-    if (xspec->no_use_multiplexer)
-	return xen_vm_virq_attach(xce_handle,&dbg_port);
+    if (xspec->no_use_multiplexer) {
+	if (dbg_port > -1) {
+	    verror("cannot connect for multiple domains without multiplexer!\n");
+	    errno = EINVAL;
+	    return -1;
+	}
+	else
+	    return xen_vm_virq_attach(xce_handle,&dbg_port);
+    }
 
     /* Try to connect.  If we can't, then launch, wait, and try again. */
-    if (xen_vm_vmp_attach(NULL,&xen_vm_vmp_client_fd,&xen_vm_vmp_client_path)) {
+    if (xen_vm_vmp_attach(NULL,&xstate->xen_vm_vmp_client_fd,&xstate->xen_vm_vmp_client_path)) {
 	if (xen_vm_vmp_launch()) {
 	    verror("could not launch Xen VIRQ_DEBUGGER multiplexer!\n");
 	    return -1;
@@ -2172,8 +2180,8 @@ int xen_vm_virq_or_vmp_attach_or_launch(struct target *target) {
 	}
 
 	for (i = 0; i < 5; ++i) {
-	    rc = xen_vm_vmp_attach(NULL,&xen_vm_vmp_client_fd,
-				   &xen_vm_vmp_client_path);
+	    rc = xen_vm_vmp_attach(NULL,&xstate->xen_vm_vmp_client_fd,
+				   &xstate->xen_vm_vmp_client_path);
 	    if (rc == 0)
 		break;
 	    else
@@ -2191,27 +2199,32 @@ int xen_vm_virq_or_vmp_attach_or_launch(struct target *target) {
     return 0;
 }
 
-int xen_vm_virq_or_vmp_detach() {
+int xen_vm_virq_or_vmp_detach(struct target *target) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+
     if (dbg_port != -1) {
 	xce_handle_fd = -1;
 	return xen_vm_virq_detach(xce_handle,&dbg_port);
     }
     else
-	return xen_vm_vmp_detach(&xen_vm_vmp_client_fd,
-				 &xen_vm_vmp_client_path);
+	return xen_vm_vmp_detach(&xstate->xen_vm_vmp_client_fd,
+				 &xstate->xen_vm_vmp_client_path);
 }
 
-int xen_vm_virq_or_vmp_get_fd() {
+int xen_vm_virq_or_vmp_get_fd(struct target *target) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+
     if (dbg_port != -1) {
 	if (xce_handle_fd == -1)
 	    xce_handle_fd = xc_evtchn_fd(xce_handle);
 	return xce_handle_fd;
     }
     else
-	return xen_vm_vmp_client_fd;
+	return xstate->xen_vm_vmp_client_fd;
 }
 
-int xen_vm_virq_or_vmp_read(int *vmid) {
+ int xen_vm_virq_or_vmp_read(struct target *target,int *vmid) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     XC_EVTCHN_PORT_T port = -1;
     struct target_xen_vm_vmp_client_response resp = { 0 };
     int retval;
@@ -2243,7 +2256,7 @@ int xen_vm_virq_or_vmp_read(int *vmid) {
 	}
     }
     else {
-	rc = read(xen_vm_vmp_client_fd,&resp,sizeof(resp));
+	rc = read(xstate->xen_vm_vmp_client_fd,&resp,sizeof(resp));
 	if (rc < 0) {
 	    if (errno == EINTR) {
 		*vmid = -1;
@@ -2442,7 +2455,7 @@ static int xen_vm_detach(struct target *target,int stay_paused) {
 	/* Close all the xc stuff; we're the last one. */
 	vdebug(4,LA_TARGET,LF_XV,"last domain; closing xc/xce interfaces.\n");
 
-	if (xen_vm_virq_or_vmp_detach(xce_handle,&dbg_port))
+	if (xen_vm_virq_or_vmp_detach(target))
 	    verror("failed to unbind debug virq port\n");
 
 	if (xen_vm_xc_detach(&xc_handle,&xce_handle))
@@ -4366,10 +4379,10 @@ int xen_vm_evloop_handler(int readfd,int fdtype,void *state) {
     struct target *target = (struct target *)state;
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     int again;
-    int retval;
+    target_status_t retval;
     int vmid = -1;
 
-    if (xen_vm_virq_or_vmp_read(&vmid)) {
+    if (xen_vm_virq_or_vmp_read(target,&vmid)) {
 	return EVLOOP_HRET_BADERROR;
     }
 
@@ -4390,7 +4403,8 @@ int xen_vm_evloop_handler(int readfd,int fdtype,void *state) {
     //else if (retval == TSTATUS_PAUSED && again == 0)
     //    return EVLOOP_HRET_SUCCESS;
 
-    __xen_vm_resume(target,0);
+    if (retval != TSTATUS_RUNNING)
+	__xen_vm_resume(target,0);
 
     return EVLOOP_HRET_SUCCESS;
 }
@@ -4404,7 +4418,7 @@ int xen_vm_attach_evloop(struct target *target,struct evloop *evloop) {
     }
 
     /* get a select()able file descriptor of the event channel */
-    xstate->evloop_fd = xen_vm_virq_or_vmp_get_fd();
+    xstate->evloop_fd = xen_vm_virq_or_vmp_get_fd(target);
     if (xstate->evloop_fd == -1) {
         verror("event channel not initialized\n");
         return -1;
@@ -4442,7 +4456,7 @@ static target_status_t xen_vm_monitor(struct target *target) {
     int vmid = -1;
 
     /* get a select()able file descriptor of the event channel */
-    fd = xen_vm_virq_or_vmp_get_fd();
+    fd = xen_vm_virq_or_vmp_get_fd(target);
     if (fd == -1) {
         verror("event channel not initialized\n");
         return TSTATUS_ERROR;
@@ -4462,7 +4476,7 @@ static target_status_t xen_vm_monitor(struct target *target) {
         if (!FD_ISSET(fd, &inset)) 
             continue; // nothing in eventchn
 
-	if (xen_vm_virq_or_vmp_read(&vmid)) {
+	if (xen_vm_virq_or_vmp_read(target,&vmid)) {
 	    verror("failed to unmask event channel\n");
 	    break;
 	}
@@ -4509,7 +4523,7 @@ static target_status_t xen_vm_poll(struct target *target,struct timeval *tv,
     int vmid = -1;
 
     /* get a select()able file descriptor of the event channel */
-    fd = xen_vm_virq_or_vmp_get_fd();
+    fd = xen_vm_virq_or_vmp_get_fd(target);
     if (fd == -1) {
         verror("event channel not initialized\n");
         return TSTATUS_ERROR;
@@ -4537,7 +4551,7 @@ static target_status_t xen_vm_poll(struct target *target,struct timeval *tv,
 	return TSTATUS_RUNNING;
     }
 
-    if (xen_vm_virq_or_vmp_read(&vmid)) {
+    if (xen_vm_virq_or_vmp_read(target,&vmid)) {
 	verror("failed to unmask event channel\n");
 	if (outcome)
 	    *outcome = POLL_ERROR;
