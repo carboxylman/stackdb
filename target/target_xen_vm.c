@@ -4066,9 +4066,30 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 			   xtstate->context.debugreg[6],
 			   xtstate->context.user_regs.eflags);
 
+		    /*
+		     * We don't really know what kind of exception it
+		     * is.  We can only assume it might be a breakpoint,
+		     * and set additional singlestep indicator flags if
+		     * possible.  Some Xens don't get dr6 set
+		     * appropriately, it seems, so we have to catch the
+		     * inferred single step.  But just cause we
+		     * commanded a single step doesn't mean it happened
+		     * appropriately, etc... the overlay has to handle
+		     * it.
+		     */
 		    target_exception_flags_t bp_ef = EXCEPTION_BREAKPOINT;
-		    if (xtstate->context.debugreg[6] & 0x4000)
-			bp_ef = EXCEPTION_BREAKPOINT_STEP;
+		    if (xtstate->context.debugreg[6] & 0x4000) {
+			bp_ef |= EXCEPTION_SINGLESTEP;
+			vdebug(5,LA_TARGET,LF_XV,
+			       "single step debug event in overlay\n");
+		    }
+		    else if (bogus_sstep_thread
+			     && target->sstep_thread_overlay == overlay
+			     && xtstate->context.user_regs.eflags & EF_TF) {
+			vdebug(5,LA_TARGET,LF_XV,
+			       "inferred single step debug event in overlay\n");
+			bp_ef |= EXCEPTION_SINGLESTEP_CMD;
+		    }
 
 		    /* Clear the status bits right now. */
 		    xtstate->context.debugreg[6] = 0;

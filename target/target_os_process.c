@@ -740,8 +740,27 @@ os_process_handle_overlay_exception(struct target *overlay,
 			                  g_list_nth_data(overlay->spaces,0));
     }
 
+    if (flags & EXCEPTION_BREAKPOINT) {
+	vdebug(3,LA_TARGET,LF_OSP,"new (breakpoint?) debug event\n");
+
+	dpp = (struct probepoint *)				\
+	    g_hash_table_lookup(overlay->soft_probepoints,
+				(gpointer)(ipval - overlay->arch->breakpoint_instrs_len));
+	if (dpp) {
+	    /* Run the breakpoint handler. */
+	    overlay->ops->handle_break(overlay,tthread,dpp,
+				       (flags & EXCEPTION_SINGLESTEP)
+				       | (flags & EXCEPTION_SINGLESTEP_CMD));
+
+	    OBJSDIRTY(tthread);
+	    vdebug(5,LA_TARGET,LF_OSP,"cleared status debug reg 6\n");
+
+	    goto out_bp_again;
+	}
+    }
+
     /* It will be loaded and valid; so just read regs and handle. */
-    if (flags & EXCEPTION_SINGLESTEP) {
+    if (flags & EXCEPTION_SINGLESTEP || flags & EXCEPTION_SINGLESTEP_CMD) {
 	vdebug(3,LA_TARGET,LF_OSP,"new single step debug event\n");
 
 	if (!tthread->tpc) {
@@ -788,23 +807,8 @@ os_process_handle_overlay_exception(struct target *overlay,
 	*/
 	goto out_ss_again;
     }
-    else {
-	vdebug(3,LA_TARGET,LF_OSP,"new (breakpoint?) debug event\n");
 
-	dpp = (struct probepoint *)				\
-	    g_hash_table_lookup(overlay->soft_probepoints,
-				(gpointer)(ipval - overlay->arch->breakpoint_instrs_len));
-	if (dpp) {
-	    /* Run the breakpoint handler. */
-	    overlay->ops->handle_break(overlay,tthread,dpp,
-				       flags & EXCEPTION_BREAKPOINT_STEP);
-
-	    OBJSDIRTY(tthread);
-	    vdebug(5,LA_TARGET,LF_OSP,"cleared status debug reg 6\n");
-
-	    goto out_bp_again;
-	}
-    }
+    verror("unhandled overlay exception; will return ERROR!\n");
 
  out_err:
     if (again)

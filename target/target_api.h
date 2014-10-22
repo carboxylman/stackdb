@@ -383,8 +383,8 @@ typedef enum {
     EXCEPTION_NONE             = 1 << 0,
     EXCEPTION_SINGLESTEP       = 1 << 1,
     EXCEPTION_SINGLESTEP_BOGUS = 1 << 2,
-    EXCEPTION_BREAKPOINT       = 1 << 3,
-    EXCEPTION_BREAKPOINT_STEP  = 1 << 4,
+    EXCEPTION_SINGLESTEP_CMD   = 1 << 3,
+    EXCEPTION_BREAKPOINT       = 1 << 4,
 } target_exception_flags_t;
 
 typedef enum {
