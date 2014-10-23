@@ -725,6 +725,19 @@ int os_linux_postloadinit(struct target *target) {
 		return -1;
 	    }
 	}
+	else if ((tmpbs = target_lookup_sym(target,"per_cpu_kernel_stack",NULL,
+					    NULL,SYMBOL_TYPE_FLAG_VAR))) {
+	    errno = 0;
+	    lstate->kernel_stack_percpu_offset = 
+		target_addressof_symbol(target,tlctxt,tmpbs,
+					LOAD_FLAG_NONE,NULL);
+	    bsymbol_release(tmpbs);
+	    if (errno) {
+		verror("could not load per_cpu_kernel_stack percpu offset;"
+		       " cannot continue!\n");
+		return -1;
+	    }
+	}
 	else if ((tmpbs = target_lookup_sym(target,"struct x8664_pda",NULL,NULL,
 					    SYMBOL_TYPE_FLAG_TYPE))) {
 	    errno = 0;
