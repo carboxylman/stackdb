@@ -138,8 +138,10 @@ int xen_vm_mem_builtin_addr_v2p(struct target *target,tid_t tid,ADDR pgd,
     tvaddr = vaddr & ~(__PAGE_SIZE - 1);
 
     rc = memcache_get_v2p(target->memcache,pgd,tvaddr,paddr,NULL);
-    if (rc == 0)
+    if (rc == 0) {
+	*paddr |= (vaddr & (__PAGE_SIZE - 1));
 	return 0;
+    }
     else if (rc < 0) {
 	vwarn("error while looking up vaddr 0x%"PRIxADDR" (for vaddr"
 	      " 0x%"PRIxADDR") in memcache: %s (%d); trying full lookup!\n",
