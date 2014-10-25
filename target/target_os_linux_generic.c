@@ -1115,6 +1115,7 @@ int os_linux_postopened(struct target *target) {
     char buf[128];
     struct target_location_ctxt *tlctxt = target_global_tlctxt(target);
     struct value *v;
+    struct os_linux_thread_state *ltstate;
 
     /*
      * Find swapper_pg_dir.
@@ -1162,10 +1163,15 @@ int os_linux_postopened(struct target *target) {
 
     /*
      * Propagate the pgd to the current thread!  We loaded the current
-     * thread in target_open(), but we haven't filled in pgd yet!
+     * thread in target_open(), but we haven't filled in pgd yet,
+     * *potentially*, if the thread was a kernel thread!  If it was a
+     * user thread, it got filled in already.
      */
     if (target->current_thread && target->current_thread->personality_state) {
-	((struct os_linux_thread_state *)target->current_thread->personality_state)->pgd = lstate->pgd_addr;
+	ltstate = (struct os_linux_thread_state *) \
+	    target->current_thread->personality_state;
+	if (ltstate->pgd == 0)
+	    ltstate->pgd = lstate->pgd_addr;
     }
 
     /*
