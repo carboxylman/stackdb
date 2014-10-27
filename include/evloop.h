@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -41,6 +41,10 @@
 
 struct evloop;
 struct evloop_fdinfo;
+
+typedef enum {
+    EVLOOP_RETONINT = 1 << 0,
+} evloop_flags_t;
 
 /*
  * Event loop handlers return 0 on success; 1 if they want the caller to
@@ -99,7 +103,7 @@ int evloop_set_fd(struct evloop *evloop,int fd,int fdtype,
 		  evloop_handler_t handler,void *state);
 int evloop_unset_fd(struct evloop *evloop,int fd,int fdtype);
 
-int evloop_run(struct evloop *evloop,struct timeval *timeout,
+int evloop_run(struct evloop *evloop,evloop_flags_t flags,struct timeval *timeout,
 	       struct evloop_fdinfo **error_fdinfo);
 /*
  * This is a glorified select.  It returns 0 if there are no more FDs to
@@ -115,10 +119,18 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
  * set to ENOENT if select claimed some fd was set but we couldn't find
  * one); errno set to EBADSLT if the FD was set but there is no handler
  * (this should only happen if user mucks with fdinfo data struct
- * badly); ENOTSUP if the handler returns an unsupported error code;
+ * badly); ENOTSUP if the handler returns an unsupported error code.
+ *
+ * If flags & EVLOOP_RETONINT, if select() is interrupted, it returns -1
+ * and leaves errno set to EINTR.  If !(flags & EVLOOP_RETONINT), the
+ * loop continues even if select() was interrupted.  If you need to
+ * handle signals synchronously with respect to whatever you're looping
+ * over, setting flags | EVLOOP_RETONINT will help.
  */
-int evloop_handleone(struct evloop *evloop,struct timeval *timeout,
-		     struct evloop_fdinfo **handled_fdinfo,int *handled_hrc);
+int evloop_handleone(struct evloop *evloop,evloop_flags_t flags,
+		     struct timeval *timeout,
+		     struct evloop_fdinfo **handled_fdinfo,
+		     int *handled_fdtype,int *handled_hrc);
 
 void evloop_free(struct evloop *evloop);
 

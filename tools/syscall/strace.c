@@ -33,16 +33,16 @@
 #include "target.h"
 #include "target_os.h"
 
-static int cleaning = 0;
 struct target *t = NULL;
 GHashTable *probes = NULL;
 
-void cleanup_probes() {
+void cleanup_probes(void) {
     GHashTableIter iter;
     gpointer key;
     struct probe *probe;
 
     if (probes) {
+	target_pause(t);
 	g_hash_table_iter_init(&iter,probes);
 	while (g_hash_table_iter_next(&iter,
 				      (gpointer)&key,
@@ -55,29 +55,8 @@ void cleanup_probes() {
     }
 }
 
-void cleanup() {
-    if (cleaning)
-	return;
-    cleaning = 1;
-
+void sigh_cleanup_probes(int signo,siginfo_t *siginfo,void *x) {
     cleanup_probes();
-
-    if (t) {
-	target_close(t);
-	target_finalize(t);
-	t = NULL;
-    }
-
-    cleaning = 0;
-}
-
-void sigh(int signo) {
-    if (t) {
-	target_pause(t);
-	cleanup();
-    }
-    target_fini();
-    exit(0);
 }
 
 result_t syscall_pre_handler(struct probe *probe,tid_t tid,void *handler_data,
@@ -219,28 +198,18 @@ int main(int argc,char **argv) {
     struct target_os_syscall *syscall;
     struct probe *p;
 
-    tspec = target_argp_driver_parse(&strace_argp,&opts,argc,argv,
-				     TARGET_TYPE_XEN | TARGET_TYPE_GDB,1);
+    target_init();
+    atexit(target_fini);
+
+    target_install_default_sighandlers(sigh_cleanup_probes);
+
+    tspec = target_argp_driver_parse_one(&strace_argp,&opts,argc,argv,
+					 TARGET_TYPE_XEN | TARGET_TYPE_GDB,1);
 
     if (!tspec) {
 	verror("could not parse target arguments!\n");
 	exit(-1);
     }
-
-    signal(SIGHUP,sigh);
-    signal(SIGINT,sigh);
-    signal(SIGQUIT,sigh);
-    signal(SIGABRT,sigh);
-    signal(SIGKILL,sigh);
-    signal(SIGSEGV,sigh);
-    signal(SIGPIPE,sigh);
-    signal(SIGALRM,sigh);
-    signal(SIGTERM,sigh);
-    signal(SIGUSR1,sigh);
-    signal(SIGUSR2,sigh);
-
-    target_init();
-    atexit(target_fini);
 
     t = target_instantiate(tspec,NULL);
     if (!t) {
@@ -313,7 +282,7 @@ int main(int argc,char **argv) {
 
 	if (tstat == TSTATUS_RUNNING)
 	    continue;
-	else if (tstat == TSTATUS_PAUSED) {
+	else if (tstat == TSTATUS_PAUSED || tstat == TSTATUS_INTERRUPTED) {
 	    tid = target_gettid(t);
 
 	    printf("%s thread %"PRIiTID" interrupted at 0x%"PRIxREGVAL"\n",
@@ -323,7 +292,8 @@ int main(int argc,char **argv) {
 		fprintf(stderr,"could not resume target %s thread %"PRIiTID"\n",
 			targetstr,tid);
 
-		cleanup();
+		cleanup_probes();
+		target_default_cleanup();
 		exit(-16);
 	    }
 	}
@@ -336,7 +306,7 @@ int main(int argc,char **argv) {
 		fprintf(stderr,"could not resume target %s thread %"PRIiTID"\n",
 			targetstr,tid);
 
-		cleanup();
+		target_default_cleanup();
 		exit(-16);
 	    }
 	}
@@ -344,7 +314,8 @@ int main(int argc,char **argv) {
 	out:
 	    fflush(stderr);
 	    fflush(stdout);
-	    cleanup();
+	    cleanup_probes();
+	    target_default_cleanup();
 
 	    if (tstat == TSTATUS_DONE)  {
 		printf("%s finished.\n",targetstr);
@@ -369,7 +340,8 @@ int main(int argc,char **argv) {
 
     fflush(stderr);
     fflush(stdout);
-    cleanup();
+    cleanup_probes();
+    target_default_cleanup();
 
     printf("%s finished.\n",targetstr);
     exit(0);

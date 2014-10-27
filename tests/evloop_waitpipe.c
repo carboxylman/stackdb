@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -22,6 +22,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <inttypes.h>
+#include <errno.h>
+#include <string.h>
 
 #include "log.h"
 #include "waitpipe.h"
@@ -71,6 +73,8 @@ int main(int argc,char **argv) {
     int n = 4;
     int pid;
     int fd;
+    int rc;
+    int code = 0;
 
     vmi_set_log_level(16);
     vmi_set_log_area_flags(LA_LIB,LF_EVLOOP | LF_WAITPIPE);
@@ -95,14 +99,25 @@ int main(int argc,char **argv) {
 
     /* Now wait for them all via an event loop. */
     while (evloop_maxsize(evloop) > -1) {
-	evloop_run(evloop,NULL,&error_fdinfo);
+	rc = evloop_run(evloop,0,NULL,&error_fdinfo);
+	if (rc < 0) {
+	    if (errno == EINTR)
+		printf("evloop_run interrupted, continuing\n");
+	    else {
+		fprintf(stderr,"ERROR: evloop_run failed: %s (%d)\n",
+			strerror(errno),rc);
+		code = -1;
+		break;
+	    }
+	}
     }
 
+ out:
     evloop_free(evloop);
 
     waitpipe_fini();
 
     printf("Test finished.\n");
 
-    exit(0);
+    exit(code);
 }

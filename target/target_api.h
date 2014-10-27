@@ -169,6 +169,10 @@ typedef enum {
     TARGET_TYPE_GDB    = 1 << 4,
 } target_type_t;
 #define TARGET_TYPE_BITS 5
+#define TARGET_TYPE_MASK_BASE \
+    (TARGET_TYPE_PTRACE | TARGET_TYPE_XEN | TARGET_TYPE_GDB)
+#define TARGET_TYPE_MASK_OVERLAY \
+    (TARGET_TYPE_PHP | TARGET_TYPE_OS_PROCESS)
 
 /*
  * Order of these is important!
@@ -463,7 +467,7 @@ typedef enum {
  */
 
 /**
- * Returns a target specification object by parsing command line
+ * Returns a *single* target specification object by parsing command line
  * arguments provided in the standard \em argc, \em argv pair.  The
  * caller should be a StackDB program who wants to build a target_spec
  * object containing the details about a target (and perhaps its overlay
@@ -497,11 +501,65 @@ typedef enum {
  *   returned target object owns it; and it cannot be passed to
  *   another call to target_instantiate().
  */
-struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
-					     void *driver_state,
-					     int argc,char **argv,
-					     target_type_t target_types,
-					     int filter_quoted);
+struct target_spec *target_argp_driver_parse_one(struct argp *driver_parser,
+						 void *driver_state,
+						 int argc,char **argv,
+						 target_type_t target_types,
+						 int filter_quoted);
+/**
+ * Parses possibly multiple target specification objects by parsing
+ * command line arguments provided in the standard \em argc, \em argv
+ * pair.  The caller should be a StackDB program who wants to build a
+ * target_spec object containing the details about one or more targets
+ * (and perhaps one or more stacks of overlay targets built atop them)
+ * to instantiate.  This program may also require its own arguments,
+ * which it can retrieve and parse after any StackDB-relevant arguments
+ * have been extracted (see the User Guide section on standard StackDB
+ * arguments).
+ *
+ * \param driver_parser A fully-specified GNU argp parser struct (see
+ *   http://www.gnu.org/software/libc/manual/html_node/Argp.html).  May
+ *   be NULL, if your program doesn't require any arguments.
+ * \param driver_state A pointer to an object that will be passed to
+ *   your \em driver_parser when \em driver_parser->parser is invoked.
+ *   May always be NULL; it's up to you.
+ *
+ * \param argc A count of the arguments in \em argv; usually is main()'s
+ *   first argument.
+ * \param argv An argument vector; usually is main()'s second argument.
+ *
+ * \param target_types A mask of allowed target types (drivers) that
+ *   your program can be applied to.
+ *
+ * \param filter_quoted If set non-zero, the StackDB argp wrapper will
+ *   catch any arguments after the "--" characters on the command
+ *   line, and save them to be processed.  The Ptrace driver will
+ *   process any arguments after "--" and use them to launch a program
+ *   that StackDB will attach to).
+ *
+ * \param[out] primary_target_spec The primary target_spec.  This should
+ * be a pointer to a target_spec * that is set to NULL; this function
+ * will allocate a target_spec * according to the argv parameter.
+ *
+ * \param[out] base_target_specs A GList * of base target_specs.  This
+ * should be a pointer to a GList * that is set to NULL.  This function
+ * will allocate a GList * of target_spec * structs based on any
+ *  --base '...' argv members.  The primary target_spec object is *not*
+ * in this list!
+ *
+ * \param[out] overlay_target_specs A GList * of overlay target_specs.
+ * This should be a pointer to a GList * that is set to NULL.  This
+ * function will allocate a GList * of target_spec * structs based on
+ * any --overlay '...' argv members.
+ *
+ * \return 0 on success; non-zero on failure.
+ */
+int target_argp_driver_parse(struct argp *driver_parser,void *driver_state,
+			     int argc,char **argv,
+			     target_type_t target_types,int filter_quoted,
+			     struct target_spec **primary_target_spec,
+			     GList **base_target_specs,
+			     GList **overlay_target_specs);
 struct target_spec *target_argp_target_spec(struct argp_state *state);
 void *target_argp_driver_state(struct argp_state *state);
 void target_driver_argp_init_children(struct argp_state *state);
@@ -535,7 +593,7 @@ void target_free_spec(struct target_spec *spec);
  * interruptible, so you need not use a polling strategy --- you can
  * interrupt it from your own signal handlers.
  *
- * \param spec   A target spec, describing the kind of target object to
+ * \param spec   A target_spec, describing the kind of target object to
  *   instantiate.
  * \param evloop An evloop that will "run" this target object via
  *   evloop_run() or evloop_handleone(); see evloop_create().
@@ -545,6 +603,95 @@ void target_free_spec(struct target_spec *spec);
  */
 struct target *target_instantiate(struct target_spec *spec,
 				  struct evloop *evloop);
+/**
+ * Instantiates and opens target objects according to the target_spec
+ * objects in the primary_target_spec, base_target_specs, and
+ * overlay_target_specs params.  The returned target objects are already
+ * opened, since if there are overlay target specs, we would need to
+ * open the corresponding base target in order to instantiate the
+ * overlay --- and to be consistent, we just open all the targets.  Once
+ * instantiated, the targets are recorded in global data structures, so
+ * calls like target_lookup_target_id() will succeed.  The targets
+ * remain in the library's global structures until target_finalize() is
+ * called, at which point it is removed.  If you pass an event loop \em
+ * evloop, the target object will be attached to the given \em evloop.
+ * You'll almost certainly want to use an evloop with this function, and
+ * then invoke target_monitor_evloop() to monitor your targets.
+ *
+ * This function will handle both base and overlay target specs, and
+ * does not require that the lists are ordered by dependency.
+ *
+ * If you pass a valid error_specs pointer, if a target_spec in the list
+ * cannot be instantiated and opened, that target_spec will be appended
+ * to the error_specs list, but this function will still return a list
+ * of successfully opened target objects.  If you don't pass a valid
+ * error_specs pointer, if any target_spec fails to be instantiated and
+ * opened, this function will abort, close and finalize any just-opened
+ * targets, and return NULL.
+ *
+ * \param primary_target_specs   A struct target_spec, describing the
+ *   "primary" target object to instantiate.
+ * \param base_target_specs   A GList of struct target_spec, describing
+ *   the base target objects to instantiate.
+ * \param overlay_target_specs   A GList of struct target_spec,
+ *   describing the overlay target objects to instantiate.
+ * \param evloop An evloop that will "run" these target objects via
+ *   evloop_run() or evloop_handleone(); see evloop_create() and
+ *   target_monitor_evloop().
+ * \param error_specs A pointer to a GList that, if set, will be filled
+ *   with target_spec objects that were not successfully instantiated
+ *   and opened.
+ * \return A GList of opened, paused target objects, or NULL on error or
+ *   if all specs failed to result in an opened target (i.e., they were
+ *   all placed in the error_specs list).
+ */
+GList *target_instantiate_and_open(struct target_spec *primary_target_spec,
+				   GList *base_target_specs,
+				   GList *overlay_target_specs,
+				   struct evloop *evloop,
+				   GList **error_specs);
+/**
+ * Instantiates and opens target objects according to the target_spec
+ * objects in the target_specs param.  The returned target objects are
+ * already opened, since if there are overlay target specs, we would
+ * need to open the corresponding base target in order to instantiate
+ * the overlay --- and to be consistent, we just open all the targets.
+ * Once instantiated, the targets are recorded in global data
+ * structures, so calls like target_lookup_target_id() will succeed.
+ * The targets remain in the library's global structures until
+ * target_finalize() is called, at which point it is removed.  If you
+ * pass an event loop \em evloop, the target object will be attached to
+ * the given \em evloop.  You'll almost certainly want to use an evloop
+ * with this function, and then invoke target_monitor_evloop() to
+ * monitor your targets.
+ *
+ * This function will handle both base and overlay target specs, and
+ * does not require that the lists are ordered by dependency.
+ *
+ * If you pass a valid error_specs pointer, if a target_spec in the list
+ * cannot be instantiated and opened, that target_spec will be appended
+ * to the error_specs list, but this function will still return a list
+ * of successfully opened target objects.  If you don't pass a valid
+ * error_specs pointer, if any target_spec fails to be instantiated and
+ * opened, this function will abort, close and finalize any just-opened
+ * targets, and return NULL.
+ *
+ * \param target_specs   A GList of struct target_spec, describing the
+ *   kind of target objects to instantiate.
+ * \param evloop An evloop that will "run" these target objects via
+ *   evloop_run() or evloop_handleone(); see evloop_create() and
+ *   target_monitor_evloop().
+ * \param error_specs A pointer to a GList that, if set, will be filled
+ *   with target_spec objects that were not successfully instantiated
+ *   and opened.
+ * \return A GList of opened, paused target objects, or NULL on error or
+ *   if all specs failed to result in an opened target (i.e., they were
+ *   all placed in the error_specs list).
+ */
+GList *target_instantiate_and_open_list(GList *target_specs,
+					struct evloop *evloop,
+					GList **error_specs);
+
 /*
  * Look up an existing target by its id.
  */
@@ -572,6 +719,8 @@ int target_id(struct target *target);
  * attach().)
  */
 int target_open(struct target *target);
+
+int target_open_all(struct target *target);
 
 /*
  * Prints a string representation of the given target to @buf.  Behaves
@@ -604,6 +753,13 @@ int target_detach_evloop(struct target *target);
 int target_is_evloop_attached(struct target *target,struct evloop *evloop);
 
 /*
+ * Returns > 0 if @base is a base ancestor of @overlay.  The exact
+ * number is how many levels separate the two: 1 if overlay->base ==
+ * base; 2 if overlay->base->base == base; and so on.
+ */
+int target_has_base(struct target *overlay,struct target *base);
+
+/*
  * Enables/disables active probing techniques based on bits set in
  * @flags.
  *
@@ -624,20 +780,60 @@ int target_set_active_probing(struct target *target,active_probe_flags_t flags);
  * wait on one or more targets from a single
  */
 
-/*
- * Monitors (blocking) a target for debug/exception events, tries to handle any
- * probes attached to the target, and only returns if it can't handle
- * some condition that arises, or if an error occurs while handling an
- * expected debug exception (probably a bug).
+/**
+ * Monitors a target for debug/exception events and, when such events
+ * occur, handles any probes attached to the target.  This is a
+ * synchronous, blocking monitor style: it only returns if it can't
+ * handle some condition that arises; if an error occurs while handling
+ * an expected debug exception; or if the user scheduled an interrupt
+ * via target_monitor_schedule_interrupt() (so to schedule an interrupt
+ * when using target_monitor(), call target_monitor_schedule_interrupt()
+ * followed by alarm(0) or kill(getpid(),SIGALRM), if you've ignored or
+ * setup a handler for SIGALRM!).
+ *
+ * \param target The target object to monitor.
+ * \return The current status of the target.
  */
 target_status_t target_monitor(struct target *target);
+/**
+ * Monitors an evloop (with target objects attached to it!) for
+ * debug/exception events and, when such events occur, handles any
+ * probes attached to the target.  This is a synchronous, blocking
+ * monitor style: it only returns if it can't handle some condition that
+ * arises; if an error occurs while handling an expected debug
+ * exception; or if the user scheduled an interrupt via
+ * target_monitor_schedule_global_interrupt() or on a particular target
+ * via target_monitor_schedule_interrupt() (so to schedule an interrupt
+ * when using target_monitor_evloop(), call
+ * target_monitor_schedule_interrupt() followed by alarm(0) or
+ * kill(getpid(),SIGALRM), if you've ignored or setup a handler for
+ * SIGALRM!).
+ *
+ * \param evloop The evloop object to monitor (via evloop_handleone()).
+ * \param timeout A timeout object that will be passed to select().
+ * \param[out] target A pointer to a target object that will be filled
+ *   in with the target just handled.
+ * \param[out] status A pointer to a target_status_t that will be filled
+ *   in with the status of the target just handled.
+ * \return Returns < 0 if there was an error handling the evloop; 0 if
+ *   evloop_handleone() successfully handled some interaction with one
+ *   of the target objects, and the user is required to handle it (and
+ *   in that case, the *target and *status out params are set to the
+ *   target that was handled --- this only happens if the target's status
+ *   is not TSTATUS_RUNING nor TSTATUS_PAUSED --- meaning it's an
+ *   exceptional case the user must handle); 0 if there were no more
+ *   targets attached to the evloop (so, differentiate that case via
+ *   evloop_maxsize(evloop) < 0).
+ */
+int target_monitor_evloop(struct evloop *evloop,struct timeval *timeout,
+			  struct target **target,target_status_t *status);
 
 /*
  * These two functions are only useful when using target_monitor().  If
  * your program needs to handle a signal, what you should do in the
  * handler is
  *
- * if (target_is_monitor_handling(t)) {
+ * if (target_monitor_handling_exception(t)) {
  *   needtodosomething = 1;
  *   target_monitor_schedule_interrupt(t);
  * }
@@ -648,9 +844,138 @@ target_status_t target_monitor(struct target *target);
  *
  * Then, if you set needtodosomething, when target_monitor() returns,
  * you can dosomething as safely as possible.
+ *
+ * These functions are not thread-safe; they should only be called from
+ * within a signal handler!
  */
-int target_is_monitor_handling(struct target *target);
+
+/**
+ * This function is useful only when using target_monitor() and
+ * employing your own custom signal handling.  It may be useful to call
+ * it from your signal handler to see if the target you are monitoring
+ * is handling an exception.  If it is handling an exception, it is
+ * unsafe to call any target_*() operations on it --- for instance, you
+ * cannot attempt to remove a probe.  In this case, the best thing to do
+ * is call target_monitor_schedule_interrupt(target), and wait for
+ * target_monitor() to return with a status of TSTATUS_INTERRUPTED.  So,
+ * part of your signal handler might look like this:
+ *
+ *   if (target_monitor_handling_exception(t)) {
+ *     needtodosomething = 1;
+ *     target_monitor_schedule_interrupt(t);
+ *   }
+ *   else {
+ *     target_pause(t);
+ *     cleanup();
+ *   }
+ *
+ * \return Returns 1 if the target object specified is in the middle of
+ * handling an exception; 0 if not.
+ */
+int target_monitor_handling_exception(struct target *target);
+/**
+ * Schedules an an interrupt to happen after target_monitor() finishes
+ * handling the current exception, if any.  See
+ * target_monitor_handling_exception().
+ */
 int target_monitor_schedule_interrupt(struct target *target);
+
+/**
+ * Sets the global target_monitor_interrupt flag.
+ */
+void target_monitor_schedule_global_interrupt(void);
+/**
+ * Clears the global target_monitor interrupt flag.
+ */
+void target_monitor_clear_global_interrupt(void);
+
+/**
+ * \return Returns 1 (and sets last_siginfo to the siginfo of the last
+ * signal) if the last iteration of the monitor was interrupted; 0
+ * otherwise.
+ */
+int target_monitor_was_interrupted(siginfo_t *last_siginfo);
+
+/**
+ * Install some default signal handlers for the target library.  It is
+ * very important to handle signals that would be fatal, because you
+ * must remove any probes placed on any targets --- otherwise those
+ * programs will very likely crash when they hit the probes --- because
+ * nothing is attached to them any longer.
+ *
+ * This function installs the target_default_sighandler() on the
+ * following signals: SIGHUP, SIGINT, SIGQUIT, SIGILL, SIGABRT, SIGFPE,
+ * SIGSEGV, SIGPIPE, SIGTERM, SIGBUS, SIGXCPU, and SIGXFSZ.  It sets up
+ * SIGUSR1, SIGUSR2, and SIGALRM to be ignored.  If you want to change
+ * those signal sets, see target_install_custom_sighandlers().
+ *
+ * \param sighandler A signal handler function in your program (see man
+ *   sigaction) that will be called by the target library's default
+ *   signal handler.  This function is called immediately after the
+ *   handler saves off the siginfo into a global variable for later
+ *   retrieval by your program, to give you notice that the target
+ *   library is about to handle a signal for you.  Usually, the only
+ *   thing that your handler should do is clean up any state that the
+ *   default handler is unaware of (i.e., remove any probes you placed
+ *   on targets).  Note that when your handler is called, the default
+ *   handler has not yet paused all targets --- so if you are going to
+ *   modify any targets, you must pause them first.
+ * \return Returns nonzero on failure; 0 on success.
+ */
+int target_install_default_sighandlers
+    (void (*sighandler)(int signo,siginfo_t *siginfo,void *x));
+/**
+ * Install the library's default signal handler, but customize which
+ * signals it is set for!
+ *
+ * \param ignored A pointer to a sigset_t (see man 3 sigset) of signals
+ *   to be ignored.
+ * \param interrupt A pointer to a sigset_t of signals to cause
+ *   target_monitor or target_monitor_evloop to be interrupted so that
+ *   you can handle a signal synchronously with respect to target
+ *   exception handling (i.e., safely!).
+ * \param exit A pointer to a sigset_t of signals that will cause your
+ *   program to be exit.  Remember, if one of your targets is being
+ *   handled when the handler is invoked, the library cannot free that
+ *   target --- and you must call target_default_cleanup() again
+ *   yourself to finish the cleanup!
+ * \param sighandler A signal handler function in your program (see man
+ *   sigaction) that will be called by the target library's default
+ *   signal handler.  This function is called immediately after the
+ *   handler saves off the siginfo into a global variable for later
+ *   retrieval by your program, to give you notice that the target
+ *   library is about to handle a signal for you.  Usually, the only
+ *   thing that your handler should do is clean up any state that the
+ *   default handler is unaware of (i.e., remove any probes you placed
+ *   on targets).  Note that when your handler is called, the default
+ *   handler has not yet paused all targets --- so if you are going to
+ *   modify any targets, you must pause them first.
+ * \return Returns nonzero on failure; 0 on success.
+ */
+int target_install_custom_sighandlers
+    (sigset_t *ignored,sigset_t *interrupt,sigset_t *exit,
+     void (*sighandler)(int signo,siginfo_t *siginfo,void *x));
+/**
+ * A function that pauses, closes, and finalizes all targets the target
+ * library knows of.  If any of the target objects was handling an
+ * exception, it schedules an interrupt for that target --- and the user
+ * (the caller of target_monitor() or target_monitor_evloop() must call
+ * target_default_cleanup() if the returned target status is
+ * TSTATUS_INTERRUPTED.  The user must also identify if the signal was a
+ * fatal signal, or a simple interruption; this is up to the user.
+ */
+void target_default_cleanup(void);
+/**
+ * The default signal handler for the target library.  Saves off the
+ * signal information into a global variable (accessible via
+ * target_monitor_was_interrupted()); calls the user sighandler if
+ * specified; pauses all target objects if the signal was supposed to
+ * result in an interrupt of the target_monitor_evloop() function (and
+ * pauses them safely by employing target_monitor_schedule_interrupt()
+ * on any target that is currently handling an exception); OR calls the
+ * target_default_cleanup() function if the signal is fatal.
+ */
+void target_default_sighandler(int signo,siginfo_t *siginfo,void *x);
 
 /*
  * Polls a target for debug/exception events, and *will* try to handle
@@ -1839,10 +2164,16 @@ struct target_spec {
     target_type_t target_type;
 
     int target_id;
+    int base_target_id;
+    int base_thread_id;
+    char *base_thread_name;
+
     target_mode_t target_mode;
     thread_bpmode_t bpmode;
     probepoint_style_t style;
-    uint8_t start_paused:1,
+    uint8_t spec_was_base:1,
+	    spec_was_overlay:1,
+	    start_paused:1,
 	    kill_on_close:1,
             stay_paused:1;
 
@@ -1926,6 +2257,8 @@ struct target_argp_parser_state {
     int quoted_argc;
     int quoted_start;
     char **quoted_argv;
+    GList **base_target_specs;
+    GList **overlay_target_specs;
 };
 
 typedef target_status_t (*target_exception_handler_t)(struct target *target,
@@ -2566,6 +2899,11 @@ struct target_ops {
     target_status_t (*poll)(struct target *target,struct timeval *tv,
 			    target_poll_outcome_t *outcome,int *pstatus);
 
+    /*
+     * NB, driver developers: target_monitor_evloop() assumes that you
+     * will set the void *state param to evloop_set_fd to the target
+     * argument!!!  Make sure to follow that convention.
+     */
     int (*attach_evloop)(struct target *target,struct evloop *evloop);
     int (*detach_evloop)(struct target *target);
 

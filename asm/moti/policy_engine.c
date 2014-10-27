@@ -577,7 +577,7 @@ int main( int argc, char** argv) {
     opts.recovery_rules_file = "recovery_constructs.cls";
     opts.wait_time = 120;
     
-    tspec = target_argp_driver_parse(&pe_argp,&opts,argc,argv,TARGET_TYPE_XEN,1);
+    tspec = target_argp_driver_parse_one(&pe_argp,&opts,argc,argv,TARGET_TYPE_XEN,1);
     if (!tspec) {
 	fprintf(stderr,"ERROR: Could not parse target arguments!\n");
 	exit(-1);

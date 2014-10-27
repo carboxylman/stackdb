@@ -29,6 +29,7 @@
 
 #include <signal.h>
 
+#include "glib_wrapper.h"
 #include "log.h"
 #include "alist.h"
 #include "list.h"
@@ -38,6 +39,8 @@
 #include "probe_api.h"
 #include "probe.h"
 
+GList *targets;
+
 struct dt_argp_state {
     int loopint;
     int detail;
@@ -45,48 +48,47 @@ struct dt_argp_state {
 
 struct dt_argp_state opts;
 
-static int cleaning = 0;
+void sigu(siginfo_t *siginfo) {
+    struct target *target;
+    target_status_t tstat;
+    GList *t1;
 
-struct target *t = NULL;
-target_status_t tstat;
-
-void cleanup() {
-    if (cleaning)
+    if (siginfo->si_signo != SIGALRM)
 	return;
 
-    cleaning = 1;
-    if (t) {
-	target_close(t);
-	target_finalize(t);
-	t = NULL;
+    v_g_list_foreach(targets,t1,target) {
+	tstat = target_status(target);
+	if (tstat != TSTATUS_PAUSED)
+	    target_pause(target);
     }
-    cleaning = 0;
-}
 
-void sigh(int signo) {
-    if (t) {
-	target_pause(t);
-	cleanup();
+    v_g_list_foreach(targets,t1,target) {
+	if (target_monitor_handling_exception(target)) {
+	    fprintf(stdout,"Cannot examine target %s; handling an exception!\n",
+		    target->name);
+	    continue;
+	}
+	else {
+	    fprintf(stdout,"Current threads in target %s:\n",target->name);
+	    target_load_available_threads(target,1);
+	    target_dump_all_threads(target,stdout,opts.detail);
+	}
     }
-    target_fini();
-    exit(0);
-}
 
-void siga(int signo) {
-    if (tstat == TSTATUS_RUNNING) {
-	target_pause(t);
-	fprintf(stdout,"Current threads:\n");
-	target_load_available_threads(t,1);
-	target_dump_all_threads(t,stdout,opts.detail);
-	target_resume(t);
+    v_g_list_foreach(targets,t1,target) {
+	tstat = target_status(target);
+	if (tstat == TSTATUS_PAUSED)
+	    target_resume(target);
     }
+
     alarm(opts.loopint);
 }
 
+#define DT_ARGP_INTERVAL 0x444443
 #define DT_ARGP_DETAIL 0x444444
 
 struct argp_option dt_argp_opts[] = {
-    { "loop-interval",'i',"INTERVAL",0,"Loop infinitely using the given interval.",0 },
+    { "loop-interval",DT_ARGP_INTERVAL,"INTERVAL",0,"Loop infinitely using the given interval.",0 },
     { "dump-detail",DT_ARGP_DETAIL,"DETAIL",0,"Thread detail level (default 0).",0 },
     { 0,0,0,0,0,0 },
 };
@@ -111,7 +113,7 @@ error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state) {
     case ARGP_KEY_FINI:
 	return 0;
 
-    case 'i':
+    case DT_ARGP_INTERVAL:
 	opts->loopint = atoi(arg);
 	break;
     case DT_ARGP_DETAIL:
@@ -130,117 +132,174 @@ struct argp dt_argp = {
 };
 
 int main(int argc,char **argv) {
-    struct target_spec *tspec;
-    char *targetstr;
-
-    memset(&opts,0,sizeof(opts));
-
-    tspec = target_argp_driver_parse(&dt_argp,&opts,argc,argv,
-				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN
-				         | TARGET_TYPE_GDB,1);
-
-    if (!tspec) {
-	verror("could not parse target arguments!\n");
-	exit(-1);
-    }
-
-    signal(SIGHUP,sigh);
-    signal(SIGINT,sigh);
-    signal(SIGQUIT,sigh);
-    signal(SIGABRT,sigh);
-    signal(SIGKILL,sigh);
-    signal(SIGSEGV,sigh);
-    signal(SIGPIPE,sigh);
-    signal(SIGALRM,sigh);
-    signal(SIGTERM,sigh);
-    signal(SIGUSR1,sigh);
-    signal(SIGUSR2,sigh);
-
-    signal(SIGALRM,siga);
+    struct target_spec *primary_target_spec = NULL;
+    GList *base_target_specs = NULL;
+    GList *overlay_target_specs = NULL;
+    struct target *target;
+    int rc;
+    struct evloop *evloop;
+    GList *t1;
+    sigset_t ignored,interrupt,exitset;
 
     target_init();
     atexit(target_fini);
 
-    t = target_instantiate(tspec,NULL);
-    if (!t) {
-	verror("could not instantiate target!\n");
+    /*
+     * We need to handle SIGALRM specially so we can loop.
+     */
+    sigemptyset(&ignored);
+    sigemptyset(&exitset);
+    sigemptyset(&interrupt);
+
+    sigaddset(&exitset,SIGHUP);
+    sigaddset(&exitset,SIGINT);
+    sigaddset(&exitset,SIGQUIT);
+    sigaddset(&exitset,SIGILL);
+    sigaddset(&exitset,SIGABRT);
+    sigaddset(&exitset,SIGFPE);
+    sigaddset(&exitset,SIGSEGV);
+    sigaddset(&exitset,SIGPIPE);
+    sigaddset(&exitset,SIGTERM);
+    sigaddset(&exitset,SIGBUS);
+    sigaddset(&exitset,SIGXCPU);
+    sigaddset(&exitset,SIGXFSZ);
+
+    sigaddset(&ignored,SIGUSR1);
+    sigaddset(&ignored,SIGUSR2);
+
+    sigaddset(&interrupt,SIGALRM);
+
+    target_install_custom_sighandlers(&ignored,&interrupt,&exitset,NULL);
+
+    memset(&opts,0,sizeof(opts));
+    rc = target_argp_driver_parse(&dt_argp,&opts,argc,argv,
+				  TARGET_TYPE_PTRACE | TARGET_TYPE_XEN
+				      | TARGET_TYPE_GDB,1,
+				  &primary_target_spec,&base_target_specs,
+				  &overlay_target_specs);
+
+    if (rc) {
+	verror("could not parse target arguments!\n");
 	exit(-1);
     }
 
-    if (target_open(t)) {
-	fprintf(stderr,"could not open target!\n");
-	exit(-4);
+    evloop = evloop_create(NULL);
+
+    targets = target_instantiate_and_open(primary_target_spec,
+					  base_target_specs,overlay_target_specs,
+					  evloop,NULL);
+    if (!targets) {
+	verror("could not instantiate and open targets!\n");
+	exit(-1);
+    }
+
+    v_g_list_foreach(targets,t1,target) {
+	fprintf(stdout,"Threads in target %s:\n",target->name);
+	fflush(stderr);
+	fflush(stdout);
+	target_load_available_threads(target,1);
+	target_dump_all_threads(target,stdout,opts.detail);
+	fflush(stderr);
+	fflush(stdout);
     }
 
     /*
-     * Make a permanent copy so we can print useful messages after
-     * target_free.
+     * The targets are paused after the open; we have to resume them now
+     * that we've dumped its threads.
      */
-    targetstr = target_name(t);
-    if (!targetstr) 
-	targetstr = strdup("<UNNAMED_TARGET>");
-    else
-	targetstr = strdup(targetstr);
-
-    fprintf(stdout,"Initial threads:\n");
-    fflush(stderr);
-    fflush(stdout);
-    target_load_available_threads(t,1);
-    target_dump_all_threads(t,stdout,opts.detail);
-    fflush(stderr);
-    fflush(stdout);
+    v_g_list_foreach(targets,t1,target) {
+	target_resume(target);
+    }
 
     if (!opts.loopint) {
-	tstat = TSTATUS_DONE;
-	target_resume(t);
+	rc = 0;
 	goto exit;
     }
-    tstat = TSTATUS_RUNNING;
-    alarm(opts.loopint);
 
-    /* The target is paused after the attach; we have to resume it now. */
-    target_resume(t);
+    alarm(opts.loopint);
 
     fprintf(stdout,"Starting thread watch loop!\n");
     fflush(stdout);
 
     while (1) {
-	tstat = target_monitor(t);
-	if (tstat == TSTATUS_PAUSED) {
-	    tid_t tid = target_gettid(t);
-	    fflush(stderr);
-	    fflush(stdout);
-	    printf("%s thread %"PRIiTID" interrupted at 0x%"PRIxREGVAL"\n",
-		   targetstr,tid,target_read_creg(t,tid,CREG_IP));
-	    goto resume;
+	tid_t tid = 0;
+	struct target *t;
+	target_status_t tstat;
+	char *tname;
+	siginfo_t siginfo;
 
-	resume:
-	    tstat = TSTATUS_RUNNING;
-	    if (target_resume(t)) {
-		fprintf(stderr,"could not resume target %s\n",targetstr);
-		cleanup();
-		exit(-16);
-	    }
+	rc = target_monitor_evloop(evloop,NULL,&t,&tstat);
+
+	/* Did we get interrupted safely? */
+	if (target_monitor_was_interrupted(&siginfo))
+	    sigu(&siginfo);
+	/* Did we experience an error in select() or in evloop? */
+	else if (rc < 0) {
+	    fprintf(stderr,"error in target_monitor_evloop (%d): %s; aborting!\n",
+		    rc,strerror(errno));
+	    target_default_cleanup();
+	    exit(-3);
 	}
-	else {
-	    goto exit;
+	/* Did we experience a significant event on a target? */
+	else if (rc == 0 && evloop_maxsize(evloop) < 0) {
+	    break;
+	}
+	else if (rc == 0) {
+	    tid = target_gettid(t);
+	    tname = target_name(t);
+
+	    if (tstat == TSTATUS_ERROR) {
+		fprintf(stderr,
+			"Error handling target '%s'; closing and finalizing!\n",
+			tname);
+
+		target_close(t);
+		target_finalize(t);
+		targets = g_list_remove(targets,t);
+	    }
+	    else if (tstat == TSTATUS_DONE) {
+		fprintf(stderr,
+			"Target '%s' finished; finalizing!\n",
+			tname);
+
+		target_close(t);
+		target_finalize(t);
+		targets = g_list_remove(targets,t);
+	    }
+	    else if (tstat == TSTATUS_EXITING) {
+		fprintf(stderr,"Target '%s' exiting...\n",tname);
+	    }
+	    else if (tstat == TSTATUS_INTERRUPTED) {
+		fprintf(stderr,"Target '%s' interrupted, resuming...\n",tname);
+		if (target_resume(t)) {
+		    fprintf(stderr,"Could not resume target %s tid %"PRIiTID"\n",
+			tname,tid);
+
+		    target_close(t);
+		    target_finalize(t);
+		    targets = g_list_remove(targets,t);
+		}
+	    }
+	    else {
+		fprintf(stderr,
+			"Target '%s' tid %d received unexpected status '%s'"
+			" at 0x%"PRIxADDR"; attempting to continue!\n",
+			tname,tid,TSTATUS(tstat),target_read_reg(t,tid,CREG_IP));
+		if (target_resume(t)) {
+		    fprintf(stderr,"Could not resume target %s tid %"PRIiTID"\n",
+			tname,tid);
+
+		    target_close(t);
+		    target_finalize(t);
+		    targets = g_list_remove(targets,t);
+		}
+	    }
 	}
     }
 
  exit:
     fflush(stderr);
     fflush(stdout);
-    cleanup();
-    if (tstat == TSTATUS_DONE)  {
-	printf("%s finished.\n",targetstr);
-	exit(0);
-    }
-    else if (tstat == TSTATUS_ERROR) {
-	printf("%s monitoring failed!\n",targetstr);
-	exit(-9);
-    }
-    else {
-	printf("%s monitoring failed with %d!\n",targetstr,tstat);
-	exit(-10);
-    }
+    target_default_cleanup();
+    exit(rc);
 }

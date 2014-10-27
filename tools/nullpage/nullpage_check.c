@@ -40,25 +40,16 @@ struct target *target = NULL;
 struct probe *np_probe = NULL;
 struct np_config npc;
 
-target_status_t cleanup() {
-    target_status_t retval = TSTATUS_DONE;
-
+void cleanup_probes() {
     if (np_probe) {
+	target_pause(target);
 	probe_free(np_probe,1);
 	np_probe = NULL;
     }
-    if (target) {
-	retval = target_close(target);
-	target_finalize(target);
-	target = NULL;
-    }
-
-    return retval;
 }
 
-void sigh(int signo) {
-    cleanup();
-    exit(0);
+void sigh_cleanup_probes(int signo,siginfo_t *siginfo,void *x) {
+    cleanup_probes();
 }
 
 void print_thread_context(FILE *stream,struct target *target,tid_t tid,
@@ -217,12 +208,14 @@ int main(int argc,char **argv) {
     target_init();
     atexit(target_fini);
 
+    target_install_default_sighandlers(sigh_cleanup_probes);
+
     memset(&npc,0,sizeof(npc));
     npc.ttctx = 1;
     npc.ttdetail = 0;
 
-    tspec = target_argp_driver_parse(&np_argp,&npc,argc,argv,
-				     TARGET_TYPE_XEN | TARGET_TYPE_GDB,1);
+    tspec = target_argp_driver_parse_one(&np_argp,&npc,argc,argv,
+					 TARGET_TYPE_XEN | TARGET_TYPE_GDB,1);
 
     if (!tspec) {
 	verror("could not parse target arguments!\n");
@@ -241,23 +234,12 @@ int main(int argc,char **argv) {
 	exit(-4);
     }
 
-    signal(SIGHUP,sigh);
-    signal(SIGINT,sigh);
-    signal(SIGQUIT,sigh);
-    signal(SIGABRT,sigh);
-    signal(SIGKILL,sigh);
-    signal(SIGSEGV,sigh);
-    signal(SIGPIPE,sigh);
-    signal(SIGALRM,sigh);
-    signal(SIGTERM,sigh);
-    signal(SIGUSR1,sigh);
-    signal(SIGUSR2,sigh);
-
     /* Install probes... */
     np_probe = probe_np(target,&npc,np_handler,NULL,NULL);
     if (!np_probe) {
 	verror("could not instantiate the null page usage meta-probe; aborting!\n");
-	cleanup();
+	cleanup_probes();
+	target_default_cleanup();
 	exit(-4);
     }
 
@@ -272,7 +254,7 @@ int main(int argc,char **argv) {
 
     while (1) {
 	tstat = target_monitor(target);
-	if (tstat == TSTATUS_PAUSED) {
+	if (tstat == TSTATUS_PAUSED || tstat == TSTATUS_INTERRUPTED) {
 	    fflush(stderr);
 	    fflush(stdout);
 	    vwarn("target %s interrupted at 0x%"PRIxREGVAL"; trying resume!\n",
@@ -280,7 +262,8 @@ int main(int argc,char **argv) {
 
 	    if (target_resume(target)) {
 		verror("could not resume target\n");
-		tstat = cleanup();
+		cleanup_probes();
+		target_default_cleanup();
 		exit(-16);
 	    }
 	}
@@ -302,7 +285,8 @@ int main(int argc,char **argv) {
 
 	    if (target_resume(target)) {
 		verror("could not resume target!\n");
-		tstat = cleanup();
+		cleanup_probes();
+		target_default_cleanup();
 		exit(-16);
 	    }
 	}
@@ -321,7 +305,8 @@ int main(int argc,char **argv) {
 
 	    fprintf(stdout,"target %s exited, cleaning up.\n",targetstr);
 
-	    tstat = cleanup();
+	    cleanup_probes();
+	    target_default_cleanup();
 	    goto out;
 	}
 	else {
@@ -352,7 +337,8 @@ int main(int argc,char **argv) {
  err:
     fflush(stderr);
     fflush(stdout);
-    tstat = cleanup();
+    cleanup_probes();
+    target_default_cleanup();
 
  out:
     fflush(stderr);

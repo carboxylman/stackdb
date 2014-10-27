@@ -58,6 +58,9 @@ void cleanup_probes() {
     struct probe *probe;
 
     if (probes) {
+	if (target)
+	    target_pause(target);
+
 	g_hash_table_iter_init(&iter,probes);
 	while (g_hash_table_iter_next(&iter,
 				      (gpointer)&key,
@@ -65,33 +68,14 @@ void cleanup_probes() {
 	    probe_unregister(probe,1);
 	    probe_free(probe,1);
 	}
-    }
 
-    if (probes) 
 	g_hash_table_destroy(probes);
-
-    probes = NULL;
+	probes = NULL;
+    }
 }
 
-void cleanup() {
-    if (target)
-	target_pause(target);
+void sigh_cleanup_probes(int signo,siginfo_t *siginfo,void *x) {
     cleanup_probes();
-    if (otarget) {
-	target_close(otarget);
-	target_finalize(otarget);
-	otarget = NULL;
-    }
-    if (target) {
-	target_close(target);
-	target_finalize(target);
-	target = NULL;
-    }
-}
-
-void sigh(int signo) {
-    cleanup();
-    exit(0);
 }
 
 result_t rop_handler(struct probe *probe,tid_t tid,void *data,
@@ -301,7 +285,7 @@ error_t rc_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	}
 	array_list_append(argv_list,NULL);
 
-	opts->overlay_spec = target_argp_driver_parse(NULL,NULL,
+	opts->overlay_spec = target_argp_driver_parse_one(NULL,NULL,
 						      array_list_len(argv_list) - 1,
 						      (char **)argv_list->list,
 						      TARGET_TYPE_OS_PROCESS,0);
@@ -340,14 +324,16 @@ int main(int argc,char **argv) {
     tid_t otid;
     char *tmp = NULL;
 
-    dwdebug_init();
-    atexit(dwdebug_fini);
+    target_init();
+    atexit(target_fini);
+
+    target_install_default_sighandlers(sigh_cleanup_probes);
 
     memset(&opts,0,sizeof(opts));
 
-    tspec = target_argp_driver_parse(&rc_argp,&opts,argc,argv,
-				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN
-				         | TARGET_TYPE_GDB,1);
+    tspec = target_argp_driver_parse_one(&rc_argp,&opts,argc,argv,
+					 TARGET_TYPE_PTRACE | TARGET_TYPE_XEN
+				             | TARGET_TYPE_GDB,1);
 
     if (!tspec) {
 	verror("could not parse target arguments!\n");
@@ -391,20 +377,23 @@ int main(int argc,char **argv) {
 	if (otid < 0) {
 	    verror("could not find overlay thread '%s', exiting!\n",
 		   opts.overlay_name_or_id);
-	    cleanup();
+	    cleanup_probes();
+	    target_default_cleanup();
 	    exit(-111);
 	}
 	otarget = target_instantiate_overlay(target,otid,opts.overlay_spec);
 	if (!otarget) {
 	    verror("could not instantiate overlay target '%s'!\n",
 		   opts.overlay_name_or_id);
-	    cleanup();
+	    cleanup_probes();
+	    target_default_cleanup();
 	    exit(-112);
 	}
 
 	if (target_open(otarget)) {
 	    fprintf(stderr,"could not open overlay target!\n");
-	    cleanup();
+	    cleanup_probes();
+	    target_default_cleanup();
 	    exit(-114);
 	}
 
@@ -412,18 +401,6 @@ int main(int argc,char **argv) {
 
 	rtarget = otarget;
     }
-
-    signal(SIGHUP,sigh);
-    signal(SIGINT,sigh);
-    signal(SIGQUIT,sigh);
-    signal(SIGABRT,sigh);
-    signal(SIGKILL,sigh);
-    signal(SIGSEGV,sigh);
-    signal(SIGPIPE,sigh);
-    signal(SIGALRM,sigh);
-    signal(SIGTERM,sigh);
-    signal(SIGUSR1,sigh);
-    signal(SIGUSR2,sigh);
 
     /* Install probes... */
     rop_violation_list = array_list_create(128);
@@ -450,7 +427,7 @@ int main(int argc,char **argv) {
 
     while (1) {
 	tstat = target_monitor(target);
-	if (tstat == TSTATUS_PAUSED) {
+	if (tstat == TSTATUS_PAUSED || tstat == TSTATUS_INTERRUPTED) {
 	    fflush(stderr);
 	    fflush(stdout);
 	    printf("target interrupted at 0x%"PRIxREGVAL"; trying to resume!\n",
@@ -458,7 +435,8 @@ int main(int argc,char **argv) {
 
 	    if (target_resume(target)) {
 		fprintf(stderr,"could not resume target\n");
-		cleanup();
+		cleanup_probes();
+		target_default_cleanup();
 		exit(-16);
 	    }
 	}
@@ -472,7 +450,7 @@ int main(int argc,char **argv) {
 
 	    if (target_resume(target)) {
 		verror("could not resume target!\n");
-		cleanup();
+		target_default_cleanup();
 		exit(-16);
 	    }
 	}
@@ -480,7 +458,8 @@ int main(int argc,char **argv) {
 	    fflush(stderr);
 	    fflush(stdout);
 	    printf("target exited, cleaning up.\n");
-	    cleanup();
+	    cleanup_probes();
+	    target_default_cleanup();
 
 	    goto out;
 	}
@@ -496,7 +475,8 @@ int main(int argc,char **argv) {
  err:
     fflush(stderr);
     fflush(stdout);
-    cleanup();
+    cleanup_probes();
+    target_default_cleanup();
 
  out:
     if (array_list_len(rop_violation_list)) {

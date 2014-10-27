@@ -68,14 +68,14 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
 	$(TOP_SRCDIR)/include/output.h
 
-OBJECTS := dumpthreads.lo backtrace.lo
+OBJECTS := probetargets.lo dumpthreads.lo backtrace.lo
 #ifeq ($(ENABLE_XENSUPPORT),"1")
 #	OBJECTS += psaction.lo
 #endif
 
 LIBRARIES := 
 
-PROGRAMS := dumpthreads backtrace
+PROGRAMS := probetargets dumpthreads backtrace
 #ifeq ($(ENABLE_XENSUPPORT),"1")
 #	PROGRAMS += psaction
 #endif
@@ -102,6 +102,10 @@ include $(TOP_SRCDIR)/Makerules
 
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+probetargets: $(HEADERS) $(LIBRARIES) probetargets.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
 dumpthreads: $(HEADERS) $(LIBRARIES) dumpthreads.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
