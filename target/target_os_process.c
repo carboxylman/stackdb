@@ -71,9 +71,6 @@ os_process_lookup_overlay_thread_by_id(struct target *target,int id);
 static struct target_thread *
 os_process_lookup_overlay_thread_by_name(struct target *target,char *name);
 
-static int os_process_attach_evloop(struct target *target,
-				    struct evloop *evloop);
-static int os_process_detach_evloop(struct target *target);
 static target_status_t os_process_status(struct target *target);
 static int os_process_pause(struct target *target,int nowait);
 static int os_process_resume(struct target *target);
@@ -188,8 +185,8 @@ struct target_ops os_process_ops = {
     .flush_all_threads = os_process_flush_all_threads,
     .thread_snprintf = os_process_thread_snprintf,
 
-    .attach_evloop = os_process_attach_evloop,
-    .detach_evloop = os_process_detach_evloop,
+    .attach_evloop = NULL,
+    .detach_evloop = NULL,
 
     .readreg = os_process_read_reg,
     .writereg = os_process_write_reg,
@@ -897,15 +894,6 @@ static void os_process_handle_event(struct target *target,
     }
 
     return;
-}
-
-static int os_process_attach_evloop(struct target *target,
-					struct evloop *evloop) {
-    return 0;
-}
-
-static int os_process_detach_evloop(struct target *target) {
-    return 0;
 }
 
 static target_status_t os_process_status(struct target *target) {
