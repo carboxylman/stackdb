@@ -90,7 +90,7 @@ void sigh(int signo) {
 
     if (targets) {
 	v_g_list_foreach(targets,tmp,target) {
-	    if (target_is_monitor_handling(target)) {
+	    if (target_monitor_handling_exception(target)) {
 		target_monitor_schedule_interrupt(target);
 		was_handling = 1;
 	    }

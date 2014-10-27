@@ -79,9 +79,9 @@ void cleanup() {
 void sigh(int signo) {
     needtodie = 1;
     needtodie_exitcode = 0;
-    if (target_is_monitor_handling(target))
+    if (target_monitor_handling_exception(target))
 	target_monitor_schedule_interrupt(target);
-    else if (target_is_monitor_handling(overlay))
+    else if (target_monitor_handling_exception(overlay))
 	target_monitor_schedule_interrupt(overlay);
     else {
 	cleanup();
