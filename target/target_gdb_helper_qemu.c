@@ -677,7 +677,8 @@ unsigned char *gdb_helper_qemu_read_tid(struct target *target,
 					unsigned char *buf) {
     struct target_thread *tthread;
     int rc;
-    unsigned long bwrote,left;
+    int didalloc = 0;
+    unsigned long bread,left;
     struct gdb_state *xstate;
     struct gdb_helper_qemu_state *mstate;
 
@@ -759,8 +760,7 @@ unsigned long gdb_helper_qemu_write_tid(struct target *target,
 					unsigned char *buf) {
     struct target_thread *tthread;
     int rc;
-    int didalloc = 0;
-    unsigned long bread,left;
+    unsigned long bwrote,left;
     struct gdb_state *xstate;
     struct gdb_helper_qemu_state *mstate;
 
