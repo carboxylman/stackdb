@@ -655,6 +655,13 @@ unsigned char *gdb_helper_qemu_read_v_str(struct target *target,
 }
 
 /*
+ * XXX NB: When we talk to the QEMU GDB, we can't seem to read/write
+ * "big chunks" without crashing the GDB stub, and thus QEMU --- so just
+ * read 1KB at a time.
+ */
+#define GDB_MAX_IO 1024
+
+/*
  * Reads a block of memory from the target.  If @buf is non-NULL, we
  * assume it is at least @length bytes long; the result is placed into
  * @buf and @buf is returned.  If @buf is NULL, we allocate a buffer
@@ -670,6 +677,7 @@ unsigned char *gdb_helper_qemu_read_tid(struct target *target,
 					unsigned char *buf) {
     struct target_thread *tthread;
     int rc;
+    unsigned long bwrote,left;
     struct gdb_state *xstate;
     struct gdb_helper_qemu_state *mstate;
 
@@ -708,13 +716,35 @@ unsigned char *gdb_helper_qemu_read_tid(struct target *target,
     if (length == 0)
 	return gdb_helper_qemu_read_v_str(target,tid,pgd,addr);
 
-    rc = gdb_rsp_read_mem(target,addr,length,buf);
-    if (rc == 0)
-	return buf;
-    else {
-	verror("v 0x%"PRIxADDR" len %lu: %s (%d); continuing\n",
-	       addr,length,strerror(errno),rc);
-	return NULL;
+    if (!buf) {
+	didalloc = 1;
+	buf = malloc(length);
+    }
+
+    bread = 0;
+    while (bread < length) {
+	left = length - bread;
+	rc = gdb_rsp_read_mem(target,addr + bread,
+			      (left) > GDB_MAX_IO ? GDB_MAX_IO : left,
+			      buf + bread);
+	if (rc == 0) {
+	    if (left > GDB_MAX_IO)
+		bread += GDB_MAX_IO;
+	    else
+		bread += left;
+
+	    if (bread >= length)
+		return buf;
+	    else
+		continue;
+	}
+	else {
+	    verror("v 0x%"PRIxADDR" len %lu: %s (%d); continuing\n",
+		   addr,length,strerror(errno),rc);
+	    if (didalloc)
+		free(buf);
+	    return NULL;
+	}
     }
 }
 
@@ -729,6 +759,8 @@ unsigned long gdb_helper_qemu_write_tid(struct target *target,
 					unsigned char *buf) {
     struct target_thread *tthread;
     int rc;
+    int didalloc = 0;
+    unsigned long bread,left;
     struct gdb_state *xstate;
     struct gdb_helper_qemu_state *mstate;
 
@@ -765,15 +797,32 @@ unsigned long gdb_helper_qemu_write_tid(struct target *target,
 	}
     }
 
-    rc = gdb_rsp_write_mem(target,addr,length,buf);
-    if (rc == 0) {
-	return length;
+    bwrote = 0;
+    while (bwrote < length) {
+	left = length - bwrote;
+	rc = gdb_rsp_write_mem(target,addr + bwrote,
+			       (left) > GDB_MAX_IO ? GDB_MAX_IO : left,
+			       buf + bwrote);
+	if (rc == 0) {
+	    if (left > GDB_MAX_IO)
+		bwrote += GDB_MAX_IO;
+	    else
+		bwrote += left;
+
+	    if (bwrote >= length)
+		return length;
+	    else
+		continue;
+	}
+	else {
+	    verror("v 0x%"PRIxADDR" len %lu: %s (%d)\n",
+		   addr,length,strerror(errno),rc);
+	    return 0;
+	}
     }
-    else {
-	verror("v 0x%"PRIxADDR" len %lu: %s (%d)\n",
-	       addr,length,strerror(errno),rc);
-	return 0;
-    }
+
+    /* NB: only way we get here is if length == 0 */
+    return 0;
 }
 
 int gdb_helper_qemu_addr_v2p(struct target *target,tid_t tid,ADDR pgd,
