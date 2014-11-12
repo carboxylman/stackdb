@@ -216,6 +216,13 @@ PCCFLAGS  += -I@JUDY@/include
 LDFLAGS += -L@JUDY@/lib -lJudy 
 
 #
+# Maybe use libvirt.
+#
+ifeq ("@ENABLE_LIBVIRT@","1")
+     LDFLAGS += $(shell pkg-config --libs libvirt-qemu)
+endif
+
+#
 # Some things (Fedora) need this explicitly.
 #
 LDFLAGS += -ldl

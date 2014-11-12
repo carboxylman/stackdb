@@ -451,6 +451,29 @@ AC_CHECK_TYPE(evtchn_port_or_error_t,
 AC_SUBST(XC_EVTCHN_PORT_T)
 
 #
+# Check for libvirt.
+#
+ENABLE_LIBVIRT=0
+AC_CHECK_LIB(virt-qemu,virDomainQemuMonitorCommand,
+             [ENABLE_LIBVIRT=1],
+             [ENABLE_LIBVIRT=0],
+             [])
+# Allow it to be disabled even if autodetected.
+AC_ARG_ENABLE(libvirt,
+	      AS_HELP_STRING([--disable-libvirt],
+                             [Disable libvirt support]),
+	      [if test "x$enableval" = "xno"; then \
+	           ENABLE_LIBVIRT=0; \
+	       else \
+	           ENABLE_LIBVIRT=1; \
+	       fi],
+	      [])
+if test "$ENABLE_LIBVIRT" = "1" ; then
+    AC_DEFINE([ENABLE_LIBVIRT],[1])
+fi
+AC_SUBST(ENABLE_LIBVIRT)
+
+#
 # Check for gsoap
 #
 AC_ARG_ENABLE(soap,

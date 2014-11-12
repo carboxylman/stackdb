@@ -284,6 +284,7 @@ struct target_ops gdb_ops = {
 #define GDB_ARGP_QEMU_QMP_PORT      0x650009
 #define GDB_ARGP_CLEAR_MEM_CACHES   0x65000a
 #define GDB_ARGP_MEMCACHE_MMAP_SIZE 0x65000b
+#define GDB_ARGP_LIBVIRT_DOMAIN     0x65000c
 
 struct argp_option gdb_argp_opts[] = {
     /* These options set a flag. */
@@ -307,6 +308,10 @@ struct argp_option gdb_argp_opts[] = {
           "Attach to QEMU QMP on the given port (default 1235).",-4 },
     { "qemu-mem-path",GDB_ARGP_QEMU_MEM_PATH,"PATHNAME",0,
           "Read/write QEMU's physical memory via this filename (see QEMU's -mem-path option; also preload libnunlink.so and set NUNLINK_PREFIX accordingly).",-4 },
+#ifdef ENABLE_LIBVIRT
+    { "qemu-libvirt-domain",GDB_ARGP_LIBVIRT_DOMAIN,"DOMAIN",0,
+          "Access QEMU QMP over libvirt proxy.",-4 },
+#endif
     { "kvm",GDB_ARGP_IS_KVM,NULL,0,
           "Enable QEMU GDB KVM stub support.",-4 },
     { "memcache-mmap-size",GDB_ARGP_MEMCACHE_MMAP_SIZE,"BYTES",0,
@@ -350,6 +355,10 @@ int gdb_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	ac += 2;
     if (xspec->qemu_mem_path)
 	ac += 2;
+#ifdef ENABLE_LIBVIRT
+    if (xspec->qemu_libvirt_domain)
+	ac += 2;
+#endif
     if (xspec->is_kvm)
 	ac += 1;
     if (xspec->memcache_mmap_size)
@@ -397,6 +406,12 @@ int gdb_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	av[j++] = strdup("--qemu-mem-path");
 	av[j++] = strdup(xspec->qemu_mem_path);
     }
+#ifdef ENABLE_LIBVIRT
+    if (xspec->qemu_libvirt_domain) {
+	av[j++] = strdup("--qemu-libvirt-domain");
+	av[j++] = strdup(xspec->qemu_libvirt_domain);
+    }
+#endif
     if (xspec->is_kvm)
 	av[j++] = strdup("--kvm");
     if (xspec->memcache_mmap_size) {
@@ -520,6 +535,11 @@ error_t gdb_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case GDB_ARGP_QEMU_MEM_PATH:
 	xspec->qemu_mem_path = strdup(arg);
 	break;
+#ifdef ENABLE_LIBVIRT
+    case GDB_ARGP_LIBVIRT_DOMAIN:
+	xspec->qemu_libvirt_domain = strdup(arg);
+	break;
+#endif
     case GDB_ARGP_IS_KVM:
 	xspec->is_kvm = 1;
 	break;

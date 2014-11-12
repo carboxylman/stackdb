@@ -61,6 +61,8 @@ struct gdb_spec {
     char *qemu_mem_path;
 
     char *main_filename;
+
+    char *qemu_libvirt_domain;
 };
 
 struct gdb_thread_state {
