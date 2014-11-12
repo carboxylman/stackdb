@@ -81,16 +81,15 @@ int gdb_helper_qemu_init(struct target *target) {
 
     qstate = calloc(1,sizeof(*qstate));
 
+    /* We use memcache for v2p -- create one. */
+    if (target->memcache) {
+	verror("memcache already in use!\n");
+	errno = EINVAL;
+	return -1;
+    }
     target->memcache = memcache_create(0,0,NULL);
 
     if (gspec->qemu_mem_path) {
-	/* We use memcache for v2p -- create one. */
-	if (target->memcache) {
-	    verror("memcache already in use!\n");
-	    errno = EINVAL;
-	    return -1;
-	}
-
 	if (stat(gspec->qemu_mem_path,&sbuf) < 0) {
 	    verror("could not stat QEMU mem-path file %s: %s (%d)!\n",
 		   gspec->qemu_mem_path,strerror(errno),errno);
