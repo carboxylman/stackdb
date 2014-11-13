@@ -219,7 +219,7 @@ LDFLAGS += -L@JUDY@/lib -lJudy
 # Maybe use libvirt.
 #
 ifeq ("@ENABLE_LIBVIRT@","1")
-     LDFLAGS += $(shell pkg-config --libs libvirt-qemu)
+     LDFLAGS += $(shell pkg-config --libs libvirt) -lvirt-qemu
 endif
 
 #
