@@ -68,17 +68,11 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
 	$(TOP_SRCDIR)/include/output.h
 
-OBJECTS := probetargets.lo dumpthreads.lo backtrace.lo
-#ifeq ($(ENABLE_XENSUPPORT),"1")
-#	OBJECTS += psaction.lo
-#endif
+OBJECTS := probetargets.lo dumpthreads.lo backtrace.lo psaction.lo
 
 LIBRARIES := 
 
-PROGRAMS := probetargets dumpthreads backtrace
-#ifeq ($(ENABLE_XENSUPPORT),"1")
-#	PROGRAMS += psaction
-#endif
+PROGRAMS := probetargets dumpthreads backtrace psaction
 
 STATICLIBS := $(OBJDIR)/target/libtarget.la $(OBJDIR)/dwdebug/libdwdebug.la \
 	$(OBJDIR)/lib/libvmilib.la
