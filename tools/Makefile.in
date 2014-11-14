@@ -111,9 +111,9 @@ dumpthreads: $(HEADERS) $(LIBRARIES) dumpthreads.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-#psaction: $(HEADERS) $(LIBRARIES) psaction.lo $(STATICLIBS)
-#	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
-#		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+psaction: $(HEADERS) $(LIBRARIES) psaction.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
 backtrace: $(HEADERS) $(LIBRARIES) backtrace.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \

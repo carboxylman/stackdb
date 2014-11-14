@@ -33,7 +33,7 @@
 #include "dwdebug.h"
 #include "target_api.h"
 #include "target.h"
-#include "target_xen_vm.h"
+#include "target_os_linux_generic.h"
 
 #include "probe_api.h"
 #include "probe.h"
@@ -60,7 +60,7 @@ target_status_t cleanup() {
 	}
     }
     retval = target_close(t);
-    target_free(t);
+    target_finalize(t);
 
     if (probes) 
 	g_hash_table_destroy(probes);
@@ -683,12 +683,13 @@ int main(int argc,char **argv) {
 
     struct target_location_ctxt *tlctxt;
 
-    dwdebug_init();
-    atexit(dwdebug_fini);
+    target_init();
+    atexit(target_fini);
 
     memset(&opts,0,sizeof(opts));
 
-    tspec = target_argp_driver_parse(&psa_argp,&opts,argc,argv,TARGET_TYPE_XEN,1);
+    tspec = target_argp_driver_parse_one(&psa_argp,&opts,argc,argv,
+					 TARGET_TYPE_XEN | TARGET_TYPE_GDB,1);
 
     if (!tspec) {
 	verror("could not parse target arguments!\n");
@@ -823,34 +824,34 @@ int main(int argc,char **argv) {
      */
     if (strcmp(command,"list") == 0) {
 	printf("PID\tUID\tProcess Name\n");
-	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
+	os_linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
 				   pslist_list,NULL);
 	goto exit;
     }
     else if (strcmp(command,"check") == 0) {
-	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
+	os_linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
 				   pslist_check,rf);
 	goto exit;
     }
     else if (strcmp(command,"zombie") == 0) {
-	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
+	os_linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
 				   pslist_zombie,rf);
 	goto exit;
     }
     else if (strcmp(command,"sig") == 0) {
-	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
+	os_linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
 				   pslist_sig,psa_siginfo);
 	goto exit;
     }
     else if (strcmp(command,"kill") == 0) {
-	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
+	os_linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
 				   pslist_kill,rf);
 	goto exit;
     }
     else if (strcmp(command,"hiercheck") == 0
 	     || strcmp(command,"hierkill") == 0) {
 	/* Load the process list into our structs. */
-	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",1,
+	os_linux_list_for_each_struct(t,init_task_bsymbol,"tasks",1,
 				   pslist_load,&init_task);
 
 	/* Setup the parent pointers in our structs. */
