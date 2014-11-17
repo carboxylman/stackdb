@@ -1555,8 +1555,10 @@ static int __gdb_resume(struct target *target,int detaching) {
 	return -1;
     }
 
+    /*
     REGVAL ipval = target_read_reg(target,TID_GLOBAL,target->ipregno);
     target_write_reg(target,TID_GLOBAL,target->ipregno,ipval);
+    */
 
     /*
      * Only call this if we have threads still, or we are not detaching;
