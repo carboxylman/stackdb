@@ -194,7 +194,7 @@ int gdb_rsp_connect(struct target *target) {
 
 	vdebug(5,LA_TARGET,LF_GDB,
 	       "connected to %s socket %s:%d (fd %d)\n",
-	       (spec->do_udp) ? "udp" : "tcp",he->h_addr,spec->port,gstate->fd);
+	       (spec->do_udp) ? "udp" : "tcp",he->h_name,spec->port,gstate->fd);
 
 	goto connected;
 
