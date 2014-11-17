@@ -101,7 +101,8 @@ struct os_linux_state {
 	         thread_struct_has_fs:1,
 	         thread_struct_has_debugreg:1,
 	         thread_struct_has_debugreg0:1,
-	         thread_struct_has_perf_debugreg:1;
+	         thread_struct_has_perf_debugreg:1,
+	         hypervisor_ignores_userspace_exceptions;
 
     unsigned int last_thread_count;
     uint8_t thread_auto_gc_counter;
@@ -145,6 +146,7 @@ struct os_linux_state {
      * per_cpu offset.  On x86_64, percpu data is reached via %gs :(.
      */
     OFFSET kernel_stack_percpu_offset;
+    OFFSET irq_count_percpu_offset;
 
     struct bsymbol *init_task;
     struct symbol *task_struct_type;
@@ -177,6 +179,9 @@ struct os_linux_state {
     struct bsymbol *thread_exit_v_symbol;
 
     GHashTable *task_struct_addr_to_thread;
+
+    struct probe *int3_probe;
+    struct probe *debug_probe;
 
     /*
      * OS Process metadata.

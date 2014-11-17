@@ -269,10 +269,6 @@ int xce_handle_fd = -1;
 #endif
 static XC_EVTCHN_PORT_T dbg_port = -1;
 
-#define EF_TF (0x00000100)
-#define EF_IF (0x00000200)
-#define EF_RF (0x00010000)
-
 /*
  * Set up the target interface for this library.
  */
@@ -361,6 +357,7 @@ struct target_ops xen_vm_ops = {
 #define XV_ARGP_USE_LIBVMI         0x550002
 #define XV_ARGP_CLEAR_MEM_CACHES   0x550003
 #define XV_ARGP_MEMCACHE_MMAP_SIZE 0x550004
+#define XV_ARGP_HIUE               0x550005
 
 struct argp_option xen_vm_argp_opts[] = {
     /* These options set a flag. */
@@ -388,6 +385,7 @@ struct argp_option xen_vm_argp_opts[] = {
     { "replaydir",'r',"DIR",0,"The XenTT replay directory.",-4 },
     { "no-use-multiplexer",'M',NULL,0,"Do not spawn/attach to the Xen multiplexer server",-4 },
     { "dominfo-timeout",'T',"MICROSECONDS",0,"If libxc gets a \"NULL\" dominfo status, the number of microseconds we should keep retrying",-4 },
+    { "hypervisor-ignores-userspace-exceptions",XV_ARGP_HIUE,NULL,0,"If your Xen hypervisor is not a Utah-patched version, make sure to supply this flag!",-4 },
     { 0,0,0,0,0,0 }
 };
 
@@ -434,6 +432,8 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	ac += 1;
     if (xspec->dominfo_timeout > 0)
 	ac += 2;
+    if (xspec->hypervisor_ignores_userspace_exceptions)
+	ac += 1;
 
     av = calloc(ac + 1,sizeof(char *));
     j = 0;
@@ -485,6 +485,8 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	snprintf(av[j],16,"%d",xspec->dominfo_timeout);
 	j++;
     }
+    if (xspec->hypervisor_ignores_userspace_exceptions)
+	av[j++] = strdup("--hypervisor-ignores-userspace-exceptions");
     av[j++] = NULL;
 
     if (argv)
@@ -609,6 +611,9 @@ error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	break;
     case 'T':
 	xspec->dominfo_timeout = atoi(arg);
+	break;
+    case XV_ARGP_HIUE:
+	xspec->hypervisor_ignores_userspace_exceptions = 1;
 	break;
     default:
 	return ARGP_ERR_UNKNOWN;
@@ -1815,6 +1820,7 @@ static int xen_vm_snprintf(struct target *target,char *buf,int bufsiz) {
 static int xen_vm_init(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct xen_vm_thread_state *tstate;
+    struct xen_vm_spec *xspec = (struct xen_vm_spec *)target->spec->backend_spec;
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
@@ -1822,6 +1828,11 @@ static int xen_vm_init(struct target *target) {
 	vwarn("auto-enabling SEMI_STRICT bpmode on Xen target.\n");
 	target->spec->bpmode = THREAD_BPMODE_SEMI_STRICT;
     }
+
+    if (xspec && xspec->hypervisor_ignores_userspace_exceptions)
+	g_hash_table_insert(target->config,
+			    strdup("OS_EMULATE_USERSPACE_EXCEPTIONS"),
+			    strdup("1"));
 
     /*
      * We can use the RF flag to temporarily disable the hw breakpoint
@@ -3760,8 +3771,8 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		       " at paddr 0x%"PRIxADDR" (vaddr 0x%"PRIxADDR")\n",
 		       tid,tthread->emulating_debug_mmod->addr,tmp_ipval);
 
-		target_memmod_emulate_ss_handler(target,tid,
-						 tthread->emulating_debug_mmod);
+		target_os_emulate_ss_handler(target,tid,tthread->tidctxt,
+					     tthread->emulating_debug_mmod);
 
 		/* Clear the status bits right now. */
 		/*
@@ -3854,7 +3865,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 
 	    target->sstep_thread = NULL;
 
-	    if (xtstate->context.user_regs.eflags & EF_TF
+	    if (xtstate->context.user_regs.eflags & X86_EF_TF
 		|| (xstate->hvm && xstate->hvm_monitor_trap_flag_set)) {
 	    handle_inferred_sstep:
 		if (!tthread->tpc) {
@@ -4098,7 +4109,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		    }
 		    else if (bogus_sstep_thread
 			     && target->sstep_thread_overlay == overlay
-			     && xtstate->context.user_regs.eflags & EF_TF) {
+			     && xtstate->context.user_regs.eflags & X86_EF_TF) {
 			vdebug(5,LA_TARGET,LF_XV,
 			       "inferred single step debug event in overlay\n");
 			bp_ef |= EXCEPTION_SINGLESTEP_CMD;
@@ -4140,7 +4151,9 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 			       " at paddr 0x%"PRIxADDR" (vaddr 0x%"PRIxADDR")\n",
 			       tid,pmmod->addr,tmp_ipval);
 			       
-			if (target_memmod_emulate_bp_handler(target,tid,pmmod)) {
+			if (target_os_emulate_bp_handler(target,tid,
+							     tthread->tidctxt,
+							     pmmod)) {
 			    verror("could not emulate debug memmod for"
 				   " tid %"PRIiTID" at paddr 0x%"PRIxADDR"\n",
 				   tid,pmmod->addr);
@@ -4267,7 +4280,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		 * handle the breakpoint, singlestep ourselves, AND
 		 * THEN leave the processor in single step mode.
 		 */
-		if (0 && xtstate->context.user_regs.eflags & EF_TF) {
+		if (0 && xtstate->context.user_regs.eflags & X86_EF_TF) {
 		    //target->sstep_leave_enabled = 1;
 		}
 
@@ -4296,7 +4309,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 
 		goto out_bp_again;
 	    }
-	    else if (xtstate->context.user_regs.eflags & EF_TF
+	    else if (xtstate->context.user_regs.eflags & X86_EF_TF
 		     && tthread
 		     && tthread->tpc
 		     && tthread->tpc->probepoint) {
@@ -4308,7 +4321,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		sstep_thread = tthread;
 		goto handle_inferred_sstep;
 	    }
-	    else if (xtstate->context.user_regs.eflags & EF_TF
+	    else if (xtstate->context.user_regs.eflags & X86_EF_TF
 		     && bogus_sstep_thread
 		     && bogus_sstep_thread->tpc
 		     && bogus_sstep_thread->tpc->probepoint) {
@@ -4328,7 +4341,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		sstep_thread = bogus_sstep_thread;
 		goto handle_inferred_sstep;
 	    }
-	    else if (xtstate->context.user_regs.eflags & EF_TF) {
+	    else if (xtstate->context.user_regs.eflags & X86_EF_TF) {
 	    //phantom:
 		vwarn("phantom single step for dom %d (no breakpoint"
 		      " set either!); letting user handle fault at"
@@ -5575,6 +5588,7 @@ int xen_vm_notify_sw_breakpoint(struct target *target,ADDR addr,
 int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
 		      struct target *overlay) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct xen_vm_spec *xspec = (struct xen_vm_spec *)target->spec->backend_spec;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -5603,8 +5617,13 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
      * XXX: in the future, only use HVM trap monitor flag if the thread
      * is the current or global thread.  Otherwise obviously we won't
      * get what we want.  Ugh, this is all crazy.
+     *
+     * We also can't use the MTF if this is an overlay thread and the
+     * hypervisor is not patched to handle userspace debug exceptions.
      */
-    if (xstate->hvm) {
+    if (xstate->hvm
+	&& (!overlay
+	    || (overlay	&& !xspec->hypervisor_ignores_userspace_exceptions))) {
 #ifdef XC_HAVE_DOMAIN_DEBUG_CONTROL
 	if (xc_domain_debug_control(xc_handle,xstate->id,
 				    XEN_DOMCTL_DEBUG_OP_SINGLE_STEP_ON,
@@ -5619,10 +5638,20 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
 	goto nohvm;
 #endif
     }
+    else if (overlay && xspec->hypervisor_ignores_userspace_exceptions) {
+	/*
+	 * We have to emulate the exception in the userspace part of the
+	 * target's thread.
+	 */
+	verror("BUG: overlay process driver should call"
+	       " target_os_thread_singlestep()!\n");
+	errno = EINVAL;
+	return -1;
+    }
     else {
     nohvm:
 #if __WORDSIZE == 32
-	xtstate->context.user_regs.eflags |= EF_TF;
+	xtstate->context.user_regs.eflags |= X86_EF_TF;
 	/*
 	 * If this is a single step of an instruction for which a breakpoint
 	 * is set, set the RF flag.  Why?  Because then we don't have to
@@ -5630,13 +5659,13 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
 	 * The x86 clears it after one instruction anyway, so it's safe.
 	 */
 	if (isbp)
-	    xtstate->context.user_regs.eflags |= EF_RF;
-	xtstate->context.user_regs.eflags &= ~EF_IF;
+	    xtstate->context.user_regs.eflags |= X86_EF_RF;
+	xtstate->context.user_regs.eflags &= ~X86_EF_IF;
 #else
-	xtstate->context.user_regs.rflags |= EF_TF;
+	xtstate->context.user_regs.rflags |= X86_EF_TF;
 	if (isbp)
-	    xtstate->context.user_regs.rflags |= EF_RF;
-	xtstate->context.user_regs.rflags &= ~EF_IF;
+	    xtstate->context.user_regs.rflags |= X86_EF_RF;
+	xtstate->context.user_regs.rflags &= ~X86_EF_IF;
 #endif
 	OBJSDIRTY(tthread);
     }
@@ -5653,6 +5682,7 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
 int xen_vm_singlestep_end(struct target *target,tid_t tid,
 			  struct target *overlay) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct xen_vm_spec *xspec = (struct xen_vm_spec *)target->spec->backend_spec;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -5668,7 +5698,9 @@ int xen_vm_singlestep_end(struct target *target,tid_t tid,
      * Try to use xc_domain_debug_control for HVM domains; but if it
      * fails, abort to the old way.
      */
-    if (xstate->hvm) {
+    if (xstate->hvm
+	&& (!overlay
+	    || (overlay && !xspec->hypervisor_ignores_userspace_exceptions))) {
 #ifdef XC_HAVE_DOMAIN_DEBUG_CONTROL
 	if (xc_domain_debug_control(xc_handle,xstate->id,
 				    XEN_DOMCTL_DEBUG_OP_SINGLE_STEP_OFF,
@@ -5683,12 +5715,22 @@ int xen_vm_singlestep_end(struct target *target,tid_t tid,
 	goto nohvm;
 #endif
     }
+    else if (overlay && xspec->hypervisor_ignores_userspace_exceptions) {
+	/*
+	 * We have to emulate the exception in the userspace part of the
+	 * target's thread.
+	 */
+	verror("BUG: overlay process driver should call"
+	       " target_os_thread_singlestep_end()!\n");
+	errno = EINVAL;
+	return -1;
+    }
     else {
     nohvm:
 #if __WORDSIZE ==32
-	xtstate->context.user_regs.eflags &= ~EF_TF;
+	xtstate->context.user_regs.eflags &= ~X86_EF_TF;
 #else
-	xtstate->context.user_regs.rflags &= ~EF_TF;
+	xtstate->context.user_regs.rflags &= ~X86_EF_TF;
 #endif
 	OBJSDIRTY(tthread);
     }

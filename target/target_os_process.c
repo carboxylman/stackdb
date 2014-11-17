@@ -233,7 +233,7 @@ static int os_process_init(struct target *target) {
     target->live = base->live;
     target->writeable = base->writeable;
     target->mmapable = base->mmapable;
-    target->no_adjust_bp_ip = base->no_adjust_bp_ip;
+    target->no_adjust_bp_ip = 0;
     /* NB: only native arch supported!  i.e., no 32-bit emu on 64-bit host. */
     target->arch = base->arch;
 
@@ -698,10 +698,6 @@ os_process_lookup_overlay_thread_by_name(struct target *target,char *name) {
 	return NULL;
     }
 }
-
-#define EF_TF (0x00000100)
-#define EF_IF (0x00000200)
-#define EF_RF (0x00010000)
 
 static target_status_t 
 os_process_handle_overlay_exception(struct target *overlay,
@@ -1211,29 +1207,28 @@ os_process_insert_sw_breakpoint(struct target *target,
 	return NULL;
     }
 
-    return _target_insert_sw_breakpoint(target->base,tid,paddr,1);
+    return _target_insert_sw_breakpoint(target->base,tid,paddr,1,0);
 }
-
 static int os_process_remove_sw_breakpoint(struct target *target,tid_t tid,
 					       struct target_memmod *mmod) {
-    return target_remove_sw_breakpoint(target->base,tid,mmod);
+    return _target_remove_sw_breakpoint(target->base,tid,mmod);
 }
 
 static int os_process_enable_sw_breakpoint(struct target *target,tid_t tid,
 					       struct target_memmod *mmod) {
-    return target_enable_sw_breakpoint(target->base,tid,mmod);
+    return target_memmod_set(target->base,tid,mmod);
 }
 
 static int os_process_disable_sw_breakpoint(struct target *target,tid_t tid,
 						struct target_memmod *mmod) {
-    return target_disable_sw_breakpoint(target->base,tid,mmod);
+    return target_memmod_unset(target->base,tid,mmod);
 }
 
 static int os_process_change_sw_breakpoint(struct target *target,tid_t tid,
 					       struct target_memmod *mmod,
 					       unsigned char *code,
 					       unsigned long code_len) {
-    return target_change_sw_breakpoint(target->base,tid,mmod,code,code_len);
+    return target_memmod_set_tmp(target->base,tid,mmod,code,code_len);
 }
 
 static REG os_process_get_unused_debug_reg(struct target *target,tid_t tid) {
@@ -1247,11 +1242,11 @@ int os_process_notify_sw_breakpoint(struct target *target,ADDR addr,
 }
 
 int os_process_singlestep(struct target *target,tid_t tid,int isbp,
-			      struct target *overlay) {
-    return target->base->ops->singlestep(target->base,tid,isbp,target);
+			  struct target *overlay) {
+    return target_os_thread_singlestep(target->base,tid,isbp,target,0);
 }
 
 int os_process_singlestep_end(struct target *target,tid_t tid,
-				  struct target *overlay) {
-    return target->base->ops->singlestep_end(target->base,tid,target);
+			      struct target *overlay) {
+    return target_os_thread_singlestep_end(target->base,tid,target,0);
 }

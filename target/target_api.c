@@ -1610,7 +1610,7 @@ struct action *target_lookup_action(struct target *target,int action_id) {
 
 struct target_memmod *_target_insert_sw_breakpoint(struct target *target,
 						   tid_t tid,ADDR addr,
-						   int is_phys) {
+						   int is_phys,int nowrite) {
     struct target_memmod *mmod;
     struct target_thread *tthread;
 
@@ -1647,7 +1647,7 @@ struct target_memmod *_target_insert_sw_breakpoint(struct target *target,
     else {
 	mmod = target_memmod_create(target,tid,addr,is_phys,MMT_BP,
 				    target->arch->breakpoint_instrs,
-				    target->arch->breakpoint_instrs_len);
+				    target->arch->breakpoint_instrs_len,nowrite);
 	if (!mmod) {
 	    verror("could not create memmod for tid %"PRIiTID" at 0x%"PRIxADDR"!\n",
 		   tid,addr);
@@ -1667,16 +1667,13 @@ struct target_memmod *target_insert_sw_breakpoint(struct target *target,
 	return target->ops->insert_sw_breakpoint(target,tid,addr);
     else 
 	/* Just default to sw breakpoints on virt addrs. */
-	return _target_insert_sw_breakpoint(target,tid,addr,0);
+	return _target_insert_sw_breakpoint(target,tid,addr,0,0);
 }
 
-int target_remove_sw_breakpoint(struct target *target,tid_t tid,
-				struct target_memmod *mmod) {
+int _target_remove_sw_breakpoint(struct target *target,tid_t tid,
+				 struct target_memmod *mmod) {
     int retval;
     ADDR addr;
-
-    if (target->ops->remove_sw_breakpoint)
-	return target->ops->remove_sw_breakpoint(target,tid,mmod);
 
     addr = mmod->addr;
     retval = target_memmod_release(target,tid,mmod);
@@ -1695,20 +1692,44 @@ int target_remove_sw_breakpoint(struct target *target,tid_t tid,
     return 0;
 }
 
+int target_remove_sw_breakpoint(struct target *target,tid_t tid,
+				struct target_memmod *mmod) {
+    if (target->ops->remove_sw_breakpoint)
+	return target->ops->remove_sw_breakpoint(target,tid,mmod);
+    else
+	return _target_remove_sw_breakpoint(target,tid,mmod);
+}
+
+int _target_enable_sw_breakpoint(struct target *target,tid_t tid,
+				 struct target_memmod *mmod) {
+    return target_memmod_set(target,tid,mmod);
+}
+
 int target_enable_sw_breakpoint(struct target *target,tid_t tid,
 				struct target_memmod *mmod) {
     if (target->ops->enable_sw_breakpoint)
 	return target->ops->enable_sw_breakpoint(target,tid,mmod);
 
-    return target_memmod_set(target,tid,mmod);
+    return _target_enable_sw_breakpoint(target,tid,mmod);
+}
+
+int _target_disable_sw_breakpoint(struct target *target,tid_t tid,
+				  struct target_memmod *mmod) {
+    return target_memmod_unset(target,tid,mmod);
 }
 
 int target_disable_sw_breakpoint(struct target *target,tid_t tid,
 				 struct target_memmod *mmod) {
     if (target->ops->disable_sw_breakpoint)
 	return target->ops->disable_sw_breakpoint(target,tid,mmod);
+    else
+	return _target_disable_sw_breakpoint(target,tid,mmod);
+}
 
-    return target_memmod_unset(target,tid,mmod);
+int _target_change_sw_breakpoint(struct target *target,tid_t tid,
+				struct target_memmod *mmod,
+				unsigned char *code,unsigned long code_len) {
+    return target_memmod_set_tmp(target,tid,mmod,code,code_len);
 }
 
 int target_change_sw_breakpoint(struct target *target,tid_t tid,
@@ -1716,8 +1737,21 @@ int target_change_sw_breakpoint(struct target *target,tid_t tid,
 				unsigned char *code,unsigned long code_len) {
     if (target->ops->change_sw_breakpoint)
 	return target->ops->change_sw_breakpoint(target,tid,mmod,code,code_len);
+    else
+	return _target_change_sw_breakpoint(target,tid,mmod,code,code_len);
+}
 
-    return target_memmod_set_tmp(target,tid,mmod,code,code_len);
+int _target_unchange_sw_breakpoint(struct target *target,tid_t tid,
+				   struct target_memmod *mmod) {
+    return target_memmod_set(target,tid,mmod);
+}
+
+int target_unchange_sw_breakpoint(struct target *target,tid_t tid,
+				  struct target_memmod *mmod) {
+    if (target->ops->unchange_sw_breakpoint)
+	return target->ops->unchange_sw_breakpoint(target,tid,mmod);
+    else
+	return _target_unchange_sw_breakpoint(target,tid,mmod);
 }
 
 REG target_get_unused_debug_reg(struct target *target,tid_t tid) {

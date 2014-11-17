@@ -45,6 +45,10 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 static int os_linux_updateregions(struct target *target,
 				  struct addrspace *space);
 static void os_linux_mm_free(struct os_linux_mm *olmm);
+result_t os_linux_int3_handler(struct probe *probe,tid_t tid,void *handler_data,
+			       struct probe *trigger,struct probe *base);
+result_t os_linux_debug_handler(struct probe *probe,tid_t tid,void *handler_data,
+				struct probe *trigger,struct probe *base);
 
 /*
  * We don't keep any local storage, so there is nothing to init or free!
@@ -756,6 +760,48 @@ int os_linux_postloadinit(struct target *target) {
 	}
     }
 
+    /*
+     * We have to figure out if we're on an interrupt stack or not, and
+     * on x86_64, that is in the PDA (%gs), modulo an offset.
+     */
+    if (target->arch->wordsize == 8) {
+	vdebug(3,LA_TARGET,LF_OSLINUX,
+	       "attempting to find per-cpu irq_count offset\n");
+
+	if ((tmpbs = target_lookup_sym(target,"per_cpu__irq_count",NULL,
+				       NULL,SYMBOL_TYPE_FLAG_VAR))) {
+	    errno = 0;
+	    lstate->irq_count_percpu_offset = 
+		target_addressof_symbol(target,tlctxt,tmpbs,
+					LOAD_FLAG_NONE,NULL);
+	    bsymbol_release(tmpbs);
+	    if (errno) {
+		vwarn("could not load per_cpu__irq_count percpu offset;"
+		       " cannot continue!\n");
+		lstate->irq_count_percpu_offset = -1;
+		errno = 0;
+	    }
+	}
+	else if ((tmpbs = target_lookup_sym(target,"struct x8664_pda",NULL,NULL,
+					    SYMBOL_TYPE_FLAG_TYPE))) {
+	    errno = 0;
+	    lstate->irq_count_percpu_offset = 
+		symbol_offsetof(bsymbol_get_symbol(tmpbs),"irqcount",NULL);
+	    if (errno) {
+		vwarn("could not get offsetof struct x8664_pda.irqcount;"
+		       " cannot continue!\n");
+		lstate->irq_count_percpu_offset = -1;
+		errno = 0;
+	    }
+	}
+	else {
+	    vwarn("could not find x86_64 irq_count percpu var in debuginfo;"
+		   " cannot continue!\n");
+	    lstate->irq_count_percpu_offset = -1;
+	    errno = 0;
+	}
+    }
+
     /* Fill in the init_task addr in the default thread. */
     ((struct os_linux_thread_state *)(target->global_thread->personality_state))->task_struct_addr = \
 	lstate->init_task_addr;
@@ -1117,6 +1163,10 @@ int os_linux_postopened(struct target *target) {
     struct value *v;
     struct os_linux_thread_state *ltstate;
 
+    if (g_hash_table_lookup(target->config,
+			    "OS_EMULATE_USERSPACE_EXCEPTIONS"))
+	lstate->hypervisor_ignores_userspace_exceptions = 1;
+
     /*
      * Find swapper_pg_dir.
      */
@@ -1274,11 +1324,374 @@ int os_linux_postopened(struct target *target) {
 	}
     }
 
+    /*
+     * If this hypervisor just forwards userspace debug exceptions into
+     * the guest, try to snag them so we can pass them to the overlay
+     * handler!  We assume that Linux's do_int3 and do_debug handlers
+     * will never get called for kernel code; if they do, we may have
+     * more work to do here.
+     */
+    if (lstate->hypervisor_ignores_userspace_exceptions) {
+	ADDR start = 0;
+	struct target_location_ctxt *tlctxt = NULL;
+
+	tmpbs = target_lookup_sym(target,"do_int3",NULL,NULL,
+				  SYMBOL_TYPE_FLAG_NONE);
+	if (!tmpbs) {
+	    verror("could not lookup do_int3\n");
+	    goto uperr;
+	}
+
+	tlctxt = target_location_ctxt_create_from_bsymbol(target,TID_GLOBAL,tmpbs);
+
+	if (target_lsymbol_resolve_bounds(target,tlctxt,tmpbs->lsymbol,0,
+					  &start,NULL,NULL,NULL,NULL)) {
+	    verror("could not resolve base addr for symbol %s!\n",
+		   bsymbol_get_name(tmpbs));
+	    goto uperr;
+	}
+
+	lstate->int3_probe =
+	    probe_create(target,TID_GLOBAL,NULL,"do_int3__bp_emulate",
+			 os_linux_int3_handler,NULL,NULL,1,1);
+	if (!lstate->int3_probe) {
+	    verror("could not probe do_int3\n");
+	    goto uperr;
+	}
+
+	if (!probe_register_addr(lstate->int3_probe,start,PROBEPOINT_BREAK,
+				 PROBEPOINT_SW,0,0,tmpbs)) {
+	    verror("could not probe addr 0x%"PRIxADDR" for do_int3\n",start);
+	    goto uperr;
+	}
+
+	bsymbol_release(tmpbs);
+	tmpbs = NULL;
+	target_location_ctxt_free(tlctxt);
+	tlctxt = NULL;
+
+	tmpbs = target_lookup_sym(target,"do_debug",NULL,NULL,
+				  SYMBOL_TYPE_FLAG_NONE);
+	if (!tmpbs) {
+	    verror("could not lookup do_debug\n");
+	    goto uperr;
+	}
+
+	tlctxt = target_location_ctxt_create_from_bsymbol(target,TID_GLOBAL,tmpbs);
+
+	if (target_lsymbol_resolve_bounds(target,tlctxt,tmpbs->lsymbol,0,
+					  &start,NULL,NULL,NULL,NULL)) {
+	    verror("could not resolve base addr for symbol %s!\n",
+		   bsymbol_get_name(tmpbs));
+	    goto uperr;
+	}
+
+	lstate->debug_probe =
+	    probe_create(target,TID_GLOBAL,NULL,"do_debug__bp_emulate",
+			 os_linux_debug_handler,NULL,NULL,1,1);
+	if (!lstate->debug_probe) {
+	    verror("could not probe do_debug\n");
+	    goto uperr;
+	}
+
+	if (!probe_register_addr(lstate->debug_probe,start,PROBEPOINT_BREAK,
+				 PROBEPOINT_SW,0,0,tmpbs)) {
+	    verror("could not probe addr 0x%"PRIxADDR" for do_debug\n",start);
+	    goto uperr;
+	}
+
+	bsymbol_release(tmpbs);
+	tmpbs = NULL;
+	target_location_ctxt_free(tlctxt);
+	tlctxt = NULL;
+
+
+
+	goto updone;
+
+    uperr:
+	verror("cannot handle userspace exceptions via do_int3/do_debug!\n");
+	if (tmpbs)
+	    bsymbol_release(tmpbs);
+	if (tlctxt)
+	    target_location_ctxt_free(tlctxt);
+	if (lstate->int3_probe) {
+	    probe_free(lstate->int3_probe,1);
+	    lstate->int3_probe = NULL;
+	}
+	if (lstate->debug_probe) {
+	    probe_free(lstate->debug_probe,1);
+	    lstate->debug_probe = NULL;
+	}
+    updone:
+	;
+    }
+
     v_g_list_foreach(target->spaces,t1,space) {
 	rc |= os_linux_updateregions(target,space);
     }
 
     return rc;
+}
+
+result_t os_linux_int3_handler(struct probe *probe,tid_t tid,void *handler_data,
+			       struct probe *trigger,struct probe *base) {
+    struct os_linux_state *lstate;
+    struct os_linux_thread_state *ltstate;
+    struct target *target;
+    struct target_thread *tthread;
+    struct target *overlay;
+    REGVAL ip,eflags,realip;
+    tid_t overlay_leader_tid;
+    struct target_memmod *pmmod;
+    int rc;
+    ADDR paddr;
+    target_status_t tstat;
+
+    target = probe->target;
+    tthread = target_load_thread(target,tid,0);
+    lstate = (struct os_linux_state *)target->personality_state;
+    ltstate = (struct os_linux_thread_state *)tthread->personality_state;
+
+    /*
+     * Ugh, this is complicated.  We have to handle physical address
+     * breakpoints, because that's what the OS Process driver installs
+     * (it does this because breakpoints in shared code pages are really
+     * physical breakpoints; so we have to recognize when they are hit
+     * in other processes, and "emulate" them
+     */
+
+    /*
+     * Ok, we need to load IP and EFLAGS in THREAD_CTXT_USER, then push
+     * a breakpoint notification to the overlay if EF_TF is not set in
+     * EFLAGS; else push a singlestep notification.
+     */
+    if (target->arch->wordsize == 8) {
+	ip = target_read_reg_ctxt(target,tid,THREAD_CTXT_USER,REG_X86_64_RIP);
+	eflags = target_read_reg_ctxt(target,tid,THREAD_CTXT_USER,
+				      REG_X86_64_RFLAGS);
+    }
+    else {
+	ip = target_read_reg_ctxt(target,tid,THREAD_CTXT_USER,REG_X86_EIP);
+	eflags = target_read_reg_ctxt(target,tid,THREAD_CTXT_USER,
+				      REG_X86_EFLAGS);
+    }
+
+    vdebug(5,LA_TARGET,LF_OSLINUX,
+	   "tid %d at IP 0x%"PRIxADDR"; eflags=0x%"PRIxREGVAL"\n",
+	   tid,ip,eflags);
+
+    /*
+     * Find the overlay target; if we can't find one, it is a legit
+     * exception in a process we're not attached to, or a bug!
+     */
+    overlay = target_lookup_overlay(target,tid);
+    /* If we didn't find one, try to find its leader as an overlay. */
+    if (!overlay) {
+	overlay_leader_tid =
+	    target_os_thread_get_leader(target,tthread->tid);
+	overlay = target_lookup_overlay(target,overlay_leader_tid);
+	if (overlay) {
+	    vdebug(5,LA_TARGET,LF_OSLINUX,
+		   "found yet-unknown thread %d with"
+		   " overlay leader %d; will notify!\n",
+		   tthread->tid,overlay_leader_tid);
+	}
+	else {
+	    vdebug(5,LA_TARGET,LF_OSLINUX,
+		   "could not find overlay target for tid %d!\n",tid);
+	}
+    }
+
+    /*
+     * If there is an overlay, forward the exception up to it for handling.
+     */
+    if (overlay) {
+	vdebug(9,LA_TARGET,LF_OSLINUX,
+	       "user-mode breakpoint in overlay tid %"PRIiTID
+	       " (tgid %"PRIiTID") at 0x%"PRIxADDR"; eflags 0x%"PRIxREGVAL";"
+	       " passing to overlay!\n",
+	       tid,overlay->base_tid,ip,eflags);
+	tstat = target_notify_overlay(overlay,EXCEPTION_BREAKPOINT,tid,ip,NULL);
+	if (tstat == TSTATUS_ERROR)
+	    goto out_err_again;
+    }
+    else {
+	/*
+	 * Else, find the physical mmod associated with the breaking IP, and
+	 * emulate it if there is one!
+	 */
+	pmmod = NULL;
+	realip = ip - target->arch->breakpoint_instrs_len;
+	rc = target_addr_v2p(target,TID_GLOBAL,realip,&paddr);
+	if (!rc)
+	    pmmod = target_memmod_lookup(target,TID_GLOBAL,paddr,1);
+	if (!rc && pmmod) {
+	    /*
+	     * Emulate it!
+	     */
+	    vdebug(5,LA_TARGET,LF_OSLINUX,
+		   "emulating debug memmod at bp for tid %"PRIiTID
+		   " at paddr 0x%"PRIxADDR" (vaddr 0x%"PRIxADDR")\n",
+		   tid,pmmod->addr,realip);
+
+	    if (target_os_emulate_bp_handler(target,tid,THREAD_CTXT_USER,pmmod)) {
+		verror("could not emulate debug memmod for"
+		       " tid %"PRIiTID" at paddr 0x%"PRIxADDR"\n",
+		       tid,pmmod->addr);
+		goto out_err_again;
+	    }
+	}
+	else {
+	    verror("user-mode debug event (not single step) at 0x%"PRIxADDR";"
+		   " eflags 0x%"PRIxREGVAL"; skipping handling!\n",
+		   realip,eflags);
+	    goto out_err_again;
+	}
+    }
+
+    /*
+     * Ok, we succeeded in handling this via the overlay target, or by
+     * emulating the pmmod.  Now we have to abort the interrupt handler!
+     */
+    struct action *action = action_return(0);
+    if (!action) {
+	verror("could not create return action!\n");
+    }
+    else if (action_sched(base,action,ACTION_ONESHOT,NULL,NULL)) {
+	verror("could not schedule return action!\n");
+	action_release(action);
+    }
+    else {
+	vdebug(5,LA_TARGET,LF_OSLINUX,"scheduled return action\n");
+	action_release(action);
+    }
+
+ out_bp_again:
+    return RESULT_SUCCESS;
+ out_err_again:
+    return RESULT_SUCCESS;
+}
+
+result_t os_linux_debug_handler(struct probe *probe,tid_t tid,void *handler_data,
+				struct probe *trigger,struct probe *base) {
+    struct os_linux_state *lstate;
+    struct os_linux_thread_state *ltstate;
+    struct target *target;
+    struct target_thread *tthread;
+    struct target *overlay;
+    REGVAL ip,eflags,realip;
+    tid_t overlay_leader_tid;
+    struct target_memmod *pmmod;
+    int rc;
+    ADDR paddr;
+    target_status_t tstat;
+
+    target = probe->target;
+    tthread = target_load_thread(target,tid,0);
+    lstate = (struct os_linux_state *)target->personality_state;
+    ltstate = (struct os_linux_thread_state *)tthread->personality_state;
+
+    /*
+     * Ok, we need to load IP and EFLAGS in THREAD_CTXT_USER, then push
+     * a singlestep notification to the overlay.
+     */
+    if (target->arch->wordsize == 8) {
+	ip = target_read_reg_ctxt(target,tid,THREAD_CTXT_USER,REG_X86_64_RIP);
+	eflags = target_read_reg_ctxt(target,tid,THREAD_CTXT_USER,
+				      REG_X86_64_RFLAGS);
+    }
+    else {
+	ip = target_read_reg_ctxt(target,tid,THREAD_CTXT_USER,REG_X86_EIP);
+	eflags = target_read_reg_ctxt(target,tid,THREAD_CTXT_USER,
+				      REG_X86_EFLAGS);
+    }
+
+    vdebug(5,LA_TARGET,LF_OSLINUX,
+	   "tid %d at IP 0x%"PRIxADDR"; eflags=0x%"PRIxREGVAL"\n",
+	   tid,ip,eflags);
+
+    /*
+     * Find the overlay target; if we can't find one, it is a legit
+     * exception in a process we're not attached to, or a bug!
+     */
+    overlay = target_lookup_overlay(target,tid);
+    /* If we didn't find one, try to find its leader as an overlay. */
+    if (!overlay) {
+	overlay_leader_tid =
+	    target_os_thread_get_leader(target,tthread->tid);
+	overlay = target_lookup_overlay(target,overlay_leader_tid);
+	if (overlay) {
+	    vdebug(5,LA_TARGET,LF_OSLINUX,
+		   "found yet-unknown thread %d with"
+		   " overlay leader %d; will notify!\n",
+		   tthread->tid,overlay_leader_tid);
+	}
+	else {
+	    vdebug(5,LA_TARGET,LF_OSLINUX,
+		   "could not find overlay target for tid %d!\n",tid);
+	}
+    }
+
+    /*
+     * If there is an overlay, forward the exception up to it for handling.
+     */
+    if (overlay) {
+	vdebug(9,LA_TARGET,LF_OSLINUX,
+	       "user-mode breakpoint in overlay tid %"PRIiTID
+	       " (tgid %"PRIiTID") at 0x%"PRIxADDR"; eflags 0x%"PRIxREGVAL";"
+	       " passing to overlay!\n",
+	       tid,overlay->base_tid,ip,eflags);
+	tstat = target_notify_overlay(overlay,EXCEPTION_SINGLESTEP,tid,ip,NULL);
+	if (tstat == TSTATUS_ERROR)
+	    goto out_err_again;
+    }
+    else if (tthread->emulating_debug_mmod) {
+	pmmod = tthread->emulating_debug_mmod;
+
+	/*
+	 * Else, emulate the stepping mmod.
+	 */
+	vdebug(5,LA_TARGET,LF_OSLINUX,
+	       "emulating debug memmod at ss for tid %"PRIiTID
+	       " at paddr 0x%"PRIxADDR" (vaddr 0x%"PRIxADDR")\n",
+	       tid,pmmod->addr,ip);
+
+	    if (target_os_emulate_ss_handler(target,tid,THREAD_CTXT_USER,pmmod)) {
+		verror("could not emulate debug memmod for"
+		       " tid %"PRIiTID" at paddr 0x%"PRIxADDR"\n",
+		       tid,pmmod->addr);
+		goto out_err_again;
+	    }
+    }
+    else {
+	verror("user-mode debug event (not single step) at 0x%"PRIxADDR";"
+	       " eflags 0x%"PRIxREGVAL"; skipping handling!\n",
+	       ip,eflags);
+	goto out_err_again;
+    }
+
+    /*
+     * Ok, we succeeded in handling this via the overlay target, or by
+     * emulating the pmmod.  Now we have to abort the interrupt handler!
+     */
+    struct action *action = action_return(0);
+    if (!action) {
+	verror("could not create return action!\n");
+    }
+    else if (action_sched(base,action,ACTION_ONESHOT,NULL,NULL)) {
+	verror("could not schedule return action!\n");
+	action_release(action);
+    }
+    else {
+	vdebug(5,LA_TARGET,LF_OSLINUX,"scheduled return action\n");
+	action_release(action);
+    }
+
+ out_bp_again:
+    return RESULT_SUCCESS;
+ out_err_again:
+    return RESULT_SUCCESS;
 }
 
 int os_linux_handle_exception(struct target *target) {
@@ -2636,6 +3049,63 @@ num_t os_linux_get_preempt_count(struct target *target) {
     return ltstate->thread_info_preempt_count;
 }
 
+static int os_linux_current_gs(struct target *target,REGVAL *gs) {
+    struct os_linux_state *lstate =
+	(struct os_linux_state *)target->personality_state;
+    REGVAL rgb,gbk,gb,gbu;
+
+    rgb = gbk = gb = gbu = 0;
+
+    vdebug(9,LA_TARGET,LF_OSLINUX,"reading current %%gs\n");
+
+    /*
+     * Try to read Xen's special kernel gs base.
+     */
+    rgb = gbk = target_read_reg(target,TID_GLOBAL,REG_X86_64_GS_BASE_KERNEL);
+
+    if (!rgb) {
+	/*
+	 * If that doesn't work, read the vanilla one.
+	 */
+	rgb = gb = target_read_reg(target,TID_GLOBAL,REG_X86_64_GS_BASE);
+
+	/*
+	 * Finally, if that doesn't work, try Xen's special user gs base;
+	 * if that *does* work, check ipval and sanitize -- we need
+	 * a kernel gs base.
+	 */
+	if (!rgb) {
+	    rgb = gbu = target_read_reg(target,TID_GLOBAL,REG_X86_64_GS_BASE_USER);
+	    if (rgb) {
+		REGVAL ipval,spval;
+
+		ipval = target_read_reg(target,TID_GLOBAL,target->ipregno);
+		spval = target_read_reg(target,TID_GLOBAL,target->spregno);
+
+		if (!(ipval < lstate->kernel_start_addr
+		      || spval < lstate->kernel_start_addr)) {
+		    vdebug(5,LA_TARGET,LF_OSLINUX,
+			   "doctoring gs to 0 because ip/sp is usermode\n");
+		    rgb = gb = 0;
+		}
+	    }
+	}
+    }
+
+    vdebug(9,LA_TARGET,LF_OSLINUX,"current %%gs = 0x%"PRIxREGVAL"\n",rgb);
+
+    if (gs)
+	*gs = rgb;
+
+    if (!rgb) {
+	vwarn("invalid gs_base_kernel=0x%"PRIxADDR"/gs_base_user=0x%"PRIxADDR
+	      "/gs_base=0x%"PRIxADDR"; cannot get percpu data and current thread!\n",
+	      gbk,gbu,gb);
+    }
+
+    return 0;
+}
+
 /*
  * For i386/x86:
  *
@@ -2694,47 +3164,14 @@ ADDR os_linux_current_thread_ptr(struct target *target,REGVAL kernel_esp) {
 	ipval = target_read_reg(target,TID_GLOBAL,target->ipregno);
 	sp = target_read_reg(target,TID_GLOBAL,target->spregno);
 
-	/*
-	 * Try to read Xen's special kernel gs base.
-	 */
-	gs_base = target_read_reg(target,TID_GLOBAL,REG_X86_64_GS_BASE_KERNEL);
+	os_linux_current_gs(target,&gs_base);
 
 	if (!gs_base) {
-	    /*
-	     * If that doesn't work, read the vanilla one.
-	     */
-	    gs_base = target_read_reg(target,TID_GLOBAL,REG_X86_64_GS_BASE);
-
-	    /*
-	     * Finally, if that doesn't work, try Xen's special user gs base;
-	     * if that *does* work, check ipval and sanitize -- we need
-	     * a kernel gs base.
-	     */
-	    if (!gs_base) {
-		gs_base = target_read_reg(target,TID_GLOBAL,
-					  REG_X86_64_GS_BASE_USER);
-		if (gs_base) {
-		    if (!(ipval < lstate->kernel_start_addr
-			  || sp < lstate->kernel_start_addr))
-			gs_base = 0;
-		}
-	    }
-	}
-
-	if (!gs_base) {
-	    vwarn("invalid gs_base_kernel=0x%"PRIxADDR"/gs_base_user=0x%"PRIxADDR
-		  "/gs_base=0x%"PRIxADDR" for rip=0x%"PRIxADDR"/rsp=0x%"PRIxADDR
-		  "; will not be able to load current thread info!\n",
-		  target_read_reg(target,TID_GLOBAL,REG_X86_64_GS_BASE_KERNEL),
-		  target_read_reg(target,TID_GLOBAL,REG_X86_64_GS_BASE_USER),
-		  target_read_reg(target,TID_GLOBAL,REG_X86_64_GS_BASE),
-		  ipval,sp);
-
 	    if (ipval >= lstate->kernel_start_addr) {
 		kernel_stack_addr = sp & ~(THREAD_SIZE - 1);
 
 		vdebug(8,LA_TARGET,LF_OSLINUX,
-		       "current->thread_info at 0x%"PRIxADDR"\n",
+		       "assuming current->thread_info at 0x%"PRIxADDR"\n",
 		       kernel_stack_addr);
 
 		return kernel_stack_addr;
@@ -3791,7 +4228,7 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
     struct os_linux_thread_state *ltstate = NULL;
     struct os_linux_thread_state *gtstate;
     struct value *v = NULL;
-    REGVAL ipval;
+    REGVAL ipval,spval;
     ADDR mm_addr = 0;
     uint64_t pgd = 0;
     REGVAL kernel_esp = 0;
@@ -3804,6 +4241,7 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
     thread_ctxt_t ctidctxt;
     struct target_event *event;
     int in_hypercall = 0;
+    ADDR ptregs_stack_addr = 0;
 
     /*
      * Load EIP for later user-mode check.
@@ -3812,6 +4250,25 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
     ipval = target_read_reg(target,TID_GLOBAL,target->ipregno);
     if (errno) {
 	vwarn("could not read EIP for user-mode check; continuing anyway.\n");
+	errno = 0;
+    }
+
+    /*
+     * Load SP.  Sometimes (on x86_64) we might be on one of many
+     * stacks.  With i386 code, there's only one stack per task, and
+     * interrupts and syscalls are all handled on that stack (I think).
+     * But on x86_64, there are all kinds of stacks.  There's the task's
+     * kernel stack; there's the several interrupt stacks.  %sp is
+     * always the "current" stack, but even though the current thread is
+     * a userspace process, it might not be on its current stack... like
+     * if the userspace process caused a debug exception!  In that case,
+     * the interrupt handling code swaps us over to one of the per-cpu,
+     * per-exception stacks very early on in the interrupt.  Our latest
+     * userspace state is always on that stack.
+     */
+    spval = target_read_reg(target,TID_GLOBAL,target->spregno);
+    if (errno) {
+	vwarn("could not read SP; continuing anyway.\n");
 	errno = 0;
     }
 
@@ -3867,6 +4324,12 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 	       " thread with kernel_sp 0x%"PRIxADDR"\n",
 	       ipval,kernel_esp);
     }
+    else
+	/*
+	 * There are different ways to find the current thread on Linux;
+	 * setting this to 0 handles it elsewhere!
+	 */
+	kernel_esp = 0;
 
     /*
      * If we're a PV guest Linux, and we're on the hypercall page, we
@@ -4216,24 +4679,73 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
      * user level-saved regs off the stack and put them in alt_context.
      */
     if (mm_addr && tthread->tidctxt == THREAD_CTXT_KERNEL) {
-	ADDR stack_top = value_addr(threadinfov) + THREAD_SIZE;
-	ADDR ptregs_stack_addr;
-	ADDR gs_base_kernel;
+	ADDR stack_top;
+	ADDR gs_base;
 	ADDR old_rsp = 0;
+	int irq_count = 0;
+	int altstack = 0;
 
 	if (target->arch->wordsize == 8) {
+	    /*
+	     * Check if we're on an irq stack.
+	     */
+	    os_linux_current_gs(target,&gs_base);
+
+	    if (!gs_base) {
+		vwarn("%%gs is 0x0; cannot check if on irqstack!\n");
+	    }
+	    else if (lstate->irq_count_percpu_offset > 0) {
+		if (!target_read_addr(target,
+				      gs_base + lstate->irq_count_percpu_offset,
+				      sizeof(int),
+				      (unsigned char *)&irq_count)) {
+		    vwarn("could not read %%gs:irq_count"
+			  " (0x%"PRIxADDR":%"PRIiOFFSET");"
+			  "; assuming not on irqstack!\n",
+			  (ADDR)gs_base,lstate->irq_count_percpu_offset);
+		}
+
+		vdebug(9,LA_TARGET,LF_OSLINUX,"irq_count = %d\n",irq_count);
+	    }
+
+	    if (spval < (value_addr(threadinfov) + THREAD_SIZE)
+		&& spval >= value_addr(threadinfov))
+		altstack = 0;
+	    else
+		altstack = 1;
+
+	    if (altstack)
+		/*
+		 * On x86_64, there are multiple IRQ stacks for
+		 * different IRQs -- and they are per-processor.
+		 *
+		 * What really sucks is that most of the stacks are 4K,
+		 * but the debug stacks (currently) are 8K!
+		 *
+		 * So what we do here is, if we're not on the real task
+		 * stack, assume that we're not very deep into (one of)
+		 * the other stack yet -- that it's on the first page.
+		 * Then our userspace regs are on the "top" (base) of
+		 * the page, minus ptregs size!
+		 */
+		stack_top = (spval & ~(ADDR)(PAGE_SIZE - 1)) + PAGE_SIZE;
+	    else
+		stack_top = value_addr(threadinfov) + THREAD_SIZE;
+
+
 	    ptregs_stack_addr = 
 		stack_top - 0 - symbol_get_bytesize(lstate->pt_regs_type);
 	}
 	else {
+	    stack_top = value_addr(threadinfov) + THREAD_SIZE;
 	    ptregs_stack_addr = 
 		stack_top - 8 - symbol_get_bytesize(lstate->pt_regs_type);
 	}
 
 	vdebug(5,LA_TARGET,LF_OSLINUX,
 	       "loading userspace regs from kernel stack for user tid %d"
-	       " currently in kernel!\n",
-	       tid);
+	       " currently in kernel (altstack = %d)!\n",
+	       tid,altstack);
 
 	v = target_load_addr_real(target,ptregs_stack_addr,
 				  LOAD_FLAG_NONE,
@@ -4390,19 +4902,12 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 					     REG_X86_FS,rv);
 	}
 
-	gs_base_kernel = target_read_reg(target,TID_GLOBAL,
-					 REG_X86_64_GS_BASE_KERNEL);
-	if (!gs_base_kernel) {
-	    gs_base_kernel = target_read_reg(target,TID_GLOBAL,
-					     REG_X86_64_GS_BASE);
-	}
-
-	if (!target_read_addr(target,gs_base_kernel + 0xbf00,
+	if (!target_read_addr(target,gs_base + 0xbf00,
 			      target->arch->wordsize,
 			      (unsigned char *)&old_rsp)) {
 	    verror("could not read %%gs:old_rsp (%%gs+0xbf00)"
 		   " (0x%"PRIxADDR":%"PRIxOFFSET"); cannot continue!\n",
-		   gs_base_kernel,0xbf00UL);
+		   gs_base,0xbf00UL);
 	    if (!errno)
 		errno = EFAULT;
 	    return 0;
@@ -4469,7 +4974,8 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
      * hardware.
      */
     ltstate->thread_struct = NULL;
-    ltstate->ptregs_stack_addr = 0;
+    /* NB: ptregs might have been loaded; save addr. */
+    ltstate->ptregs_stack_addr = ptregs_stack_addr;
     ltstate->mm_addr = mm_addr;
     ltstate->pgd = pgd;
     /*
@@ -4491,6 +4997,7 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
 	gtstate->task_flags = 0;
 	gtstate->group_leader = 0;
 	gtstate->thread_struct = NULL;
+	/* Still don't save ptregs for global thread */
 	gtstate->ptregs_stack_addr = 0;
 	gtstate->mm_addr = 0;
 	gtstate->pgd = 0;
@@ -5640,6 +6147,7 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
 }
 
 int os_linux_flush_current_thread(struct target *target) {
+    struct os_linux_state *lstate;
     struct target_thread *tthread;
     struct os_linux_thread_state *ltstate;
     struct value *v;
@@ -5652,6 +6160,7 @@ int os_linux_flush_current_thread(struct target *target) {
 	return -1;
     }
 
+    lstate = (struct os_linux_state *)target->personality_state;
     tthread = target->current_thread;
     tid = tthread->tid;
     ltstate = (struct os_linux_thread_state *)tthread->personality_state;
@@ -5695,10 +6204,219 @@ int os_linux_flush_current_thread(struct target *target) {
 	value_free(v);
     }
 
+    /*
+     * Ok, if this is a userspace thread that is in the kernel, if the
+     * userspace regs on the stack were dirty, we need to replace them!
+     */
+    if (ltstate->mm_addr && tthread->tidctxt == THREAD_CTXT_KERNEL
+	&& ltstate->ptregs_stack_addr
+	&& target_regcache_isdirty(target,tthread,THREAD_CTXT_USER)) {
+	ADDR ptregs_stack_addr = ltstate->ptregs_stack_addr;
+
+	vdebug(5,LA_TARGET,LF_OSLINUX,
+	       "writing dirty userspace regs from kernel stack for user tid %d"
+	       " currently in kernel to ptregs_stack_addr 0x%"PRIxADDR"!\n",
+	       tid,ptregs_stack_addr);
+
+	v = target_load_addr_real(target,ptregs_stack_addr,
+				  LOAD_FLAG_NONE,
+				  symbol_get_bytesize(lstate->pt_regs_type));
+	if (!v) {
+	    verror("could not load stack register save frame task %"PRIiTID"!\n",
+		   tid);
+	    goto errout;
+	}
+
+	if (vdebug_is_on(13,LA_TARGET,LF_OSLINUX)) {
+           char *pp;
+           vdebug(8,LA_TARGET,LF_OSLINUX,"  current stack:\n");
+           pp = v->buf + v->bufsiz - target->arch->wordsize;
+           while (pp >= v->buf) {
+               if (target->arch->wordsize == 8) {
+                   vdebug(13,LA_TARGET,LF_OSLINUX,
+			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+                          value_addr(v) + (pp - v->buf),*(uint64_t *)pp);
+               }
+               else {
+                   vdebug(13,LA_TARGET,LF_OSLINUX,
+			  "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+                          value_addr(v) + (pp - v->buf),*(uint32_t *)pp);
+               }
+               pp -= target->arch->wordsize;
+           }
+           vdebug(13,LA_TARGET,LF_OSLINUX,"\n");
+       }
+
+	/* Copy the first range. */
+	if (target->arch->type == ARCH_X86_64) {
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+				     REG_X86_64_R15,&(((uint64_t *)v->buf)[0]));
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+				     REG_X86_64_R14,&(((uint64_t *)v->buf)[1]));
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+				     REG_X86_64_R13,&(((uint64_t *)v->buf)[2]));
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+				     REG_X86_64_R12,&(((uint64_t *)v->buf)[3]));
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+				     REG_X86_64_RBP,&(((uint64_t *)v->buf)[4]));
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+				     REG_X86_64_RBX,&(((uint64_t *)v->buf)[5]));
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+				     REG_X86_64_R11,&(((uint64_t *)v->buf)[6]));
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+				     REG_X86_64_R10,&(((uint64_t *)v->buf)[7]));
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+				     REG_X86_64_R9,&(((uint64_t *)v->buf)[8]));
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+				     REG_X86_64_R8,&(((uint64_t *)v->buf)[9]));
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+				     REG_X86_64_RAX,&(((uint64_t *)v->buf)[10]));
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+				     REG_X86_64_RCX,&(((uint64_t *)v->buf)[11]));
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+				     REG_X86_64_RDX,&(((uint64_t *)v->buf)[12]));
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+				     REG_X86_64_RSI,&(((uint64_t *)v->buf)[13]));
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+				     REG_X86_64_RDI,&(((uint64_t *)v->buf)[14]));
+	}
+	else {
+	    REGVAL rv;
+	    if (target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+						REG_X86_EBX,&rv) == 1)
+		((uint32_t *)v->buf)[0] = (uint32_t)rv;
+	    if (target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+						REG_X86_ECX,&rv) == 1)
+		((uint32_t *)v->buf)[1] = (uint32_t)rv;
+	    if (target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+						REG_X86_EDX,&rv) == 1)
+		((uint32_t *)v->buf)[2] = (uint32_t)rv;
+	    if (target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+						REG_X86_ESI,&rv) == 1)
+		((uint32_t *)v->buf)[3] = (uint32_t)rv;
+	    if (target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+						REG_X86_EDI,&rv) == 1)
+		((uint32_t *)v->buf)[4] = (uint32_t)rv;
+	    if (target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+						REG_X86_EBP,&rv) == 1)
+		((uint32_t *)v->buf)[5] = (uint32_t)rv;
+	    if (target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+						REG_X86_EAX,&rv) == 1)
+		((uint32_t *)v->buf)[6] = (uint32_t)rv;
+	}
+	/*
+	if (target->arch->wordsize == 8)
+	    memcpy(v->buf,&ltstate->context.user_regs,8 * 15);
+	else
+	    memcpy(v->buf,&ltstate->context.user_regs,4 * 7);
+	*/
+
+	/* Copy the second range. */
+	/**
+	 ** WARNING: esp and ss may not be valid if the sleeping thread was
+	 ** interrupted while it was in the kernel, because the interrupt
+	 ** gate does not push ss and esp; see include/asm-i386/processor.h .
+	 **/
+	//ADDR ssp;
+	int ip_offset = lstate->pt_regs_ip_offset;
+	if (__WORDSIZE == 64 || target->arch->wordsize == 8) {
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+					    REG_X86_64_RIP,
+					    ((uint64_t *)(v->buf + ip_offset)) + 0);
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+					    REG_X86_64_CS,
+					    ((uint64_t *)(v->buf + ip_offset)) + 1);
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+					    REG_X86_64_RFLAGS,
+					    ((uint64_t *)(v->buf + ip_offset)) + 2);
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+					    REG_X86_64_RSP,
+					    ((uint64_t *)(v->buf + ip_offset)) + 3);
+	    target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+					    REG_X86_64_SS,
+					    ((uint64_t *)(v->buf + ip_offset)) + 4);
+	}
+	else {
+	    REGVAL rv;
+	    if (target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+						REG_X86_EIP,&rv) == 1)
+		((uint32_t *)(v->buf + ip_offset))[0] = (uint32_t)rv;
+	    if (target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+						REG_X86_CS,&rv) == 1)
+		((uint32_t *)(v->buf + ip_offset))[1] = (uint32_t)rv;
+	    if (target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+						REG_X86_EFLAGS,&rv) == 1)
+		((uint32_t *)(v->buf + ip_offset))[2] = (uint32_t)rv;
+	    if (target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+						REG_X86_ESP,&rv) == 1)
+		((uint32_t *)(v->buf + ip_offset))[3] = (uint32_t)rv;
+	    if (target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+						REG_X86_SS,&rv) == 1)
+		((uint32_t *)(v->buf + ip_offset))[4] = (uint32_t)rv;
+	}
+
+	/*
+	 * ds, es, fs, gs are all special; see other comments.
+	 */
+	if (target->arch->type == ARCH_X86
+	    && !lstate->thread_struct_has_ds_es && lstate->pt_regs_has_ds_es) {
+	    REGVAL rv;
+	    /* XXX: this works because we know the location of (x)ds/es;
+	     * it's only on i386/x86; and because Xen pads its
+	     * cpu_user_regs structs from u16s to ulongs for segment
+	     * registers.  :)
+	     */
+	    if (target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+						REG_X86_DS,&rv) == 1)
+		*(uint32_t *)(v->buf + 7 * target->arch->wordsize) = (uint32_t)rv;
+	    if (target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+						REG_X86_ES,&rv) == 1)
+		*(uint32_t *)(v->buf + 8 * target->arch->wordsize) = (uint32_t)rv;
+	}
+	if (target->arch->type == ARCH_X86
+	    && !lstate->thread_struct_has_fs && lstate->pt_regs_has_fs_gs) {
+	    REGVAL rv;
+	    /* XXX: this is only true on newer x86 stuff; x86_64 and old
+	     * i386 stuff did not save it on the stack.
+	     */
+	    if (target_regcache_readreg_ifdirty(target,tthread,THREAD_CTXT_USER,
+						REG_X86_FS,&rv) == 1)
+		*(uint32_t *)(v->buf + 9 * target->arch->wordsize) = (uint32_t)rv;
+	}
+
+	if (vdebug_is_on(13,LA_TARGET,LF_OSLINUX)) {
+	    char *pp;
+	    vdebug(8,LA_TARGET,LF_OSLINUX,"  new stack (about to write):\n");
+	    pp = v->buf + v->bufsiz - target->arch->wordsize;
+	    while (pp >= v->buf) {
+		if (target->arch->wordsize == 8) {
+		    vdebug(13,LA_TARGET,LF_OSLINUX,
+			   "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+			   value_addr(v) + (pp - v->buf),*(uint64_t *)pp);
+		}
+		else {
+		    vdebug(13,LA_TARGET,LF_OSLINUX,
+			   "    0x%"PRIxADDR" == %"PRIxADDR"\n",
+			   value_addr(v) + (pp - v->buf),*(uint32_t *)pp);
+		}
+		pp -= target->arch->wordsize;
+	    }
+	    vdebug(13,LA_TARGET,LF_OSLINUX,"\n");
+	}
+
+	target_store_value(target,v);
+
+	value_free(v);
+	v = NULL;
+    }
+
     /* Mark cached copy as clean. */
     OBJSCLEAN(tthread);
 
     return 0;
+
+ errout:
+    return -1;
 }
 
 int os_linux_flush_thread(struct target *target,tid_t tid) {
@@ -8500,6 +9218,81 @@ int os_linux_set_active_probing(struct target *target,
     return retval;
 }
 
+int os_linux_thread_singlestep(struct target *target,tid_t tid,int isbp,
+			       struct target *overlay,int force_emulate) {
+    REGVAL eflags;
+    int rc;
+
+    /*
+     * If this driver handles exceptions both in kernel and user spaces,
+     * then we need to let it do the single step.
+     */
+    if (!g_hash_table_lookup(target->config,"OS_EMULATE_USERSPACE_EXCEPTIONS")
+	&& !force_emulate)
+	return target->ops->singlestep(target,tid,isbp,overlay);
+
+    /*
+     * We have to emulate the exception in the userspace part of the
+     * target's thread.
+     */
+    if (target->arch->wordsize == 8)
+	eflags = target_read_reg_ctxt(target,tid,THREAD_CTXT_USER,
+				      REG_X86_64_RFLAGS);
+    else
+	eflags = target_read_reg_ctxt(target,tid,THREAD_CTXT_USER,
+				      REG_X86_EFLAGS);
+    eflags |= X86_EF_TF;
+    //if (isbp)
+    //	eflags |= X86_EF_RF;
+    //eflags &= ~X86_EF_IF;
+    if (target->arch->wordsize == 8)
+	rc = target_write_reg_ctxt(target,tid,THREAD_CTXT_USER,
+				   REG_X86_64_RFLAGS,eflags);
+    else
+	rc = target_write_reg_ctxt(target,tid,THREAD_CTXT_USER,
+				   REG_X86_EFLAGS,eflags);
+    //OBJSDIRTY(tthread);
+
+    return 0;
+}
+
+int os_linux_thread_singlestep_end(struct target *target,tid_t tid,
+				   struct target *overlay,int force_emulate) {
+    REGVAL eflags;
+    int rc;
+
+    /*
+     * If this driver handles exceptions both in kernel and user spaces,
+     * then we need to let it do the single step.
+     */
+    if (!g_hash_table_lookup(target->config,"OS_EMULATE_USERSPACE_EXCEPTIONS")
+	&& !force_emulate)
+	return target->ops->singlestep_end(target,tid,overlay);
+
+    /*
+     * If this is a userspace thread that is in the kernel, and our
+     * hypervisor doesn't catch userspace debug exceptions, we have
+     * to make sure we edit the *userspace* regs, not the kernel
+     * ones!
+     */
+    if (target->arch->wordsize == 8)
+	eflags = target_read_reg_ctxt(target,tid,THREAD_CTXT_USER,
+				      REG_X86_64_RFLAGS);
+    else
+	eflags = target_read_reg_ctxt(target,tid,THREAD_CTXT_USER,
+				      REG_X86_EFLAGS);
+    eflags &= ~X86_EF_TF;
+    if (target->arch->wordsize == 8)
+	rc = target_write_reg_ctxt(target,tid,THREAD_CTXT_USER,
+				   REG_X86_64_RFLAGS,eflags);
+    else
+	rc = target_write_reg_ctxt(target,tid,THREAD_CTXT_USER,
+				   REG_X86_EFLAGS,eflags);
+    //OBJSDIRTY(tthread);
+
+    return 0;
+}
+
 struct target_personality_ops os_linux_generic_personality_ops = {
     .attach = os_linux_attach,
     .init = NULL,
@@ -8541,6 +9334,9 @@ struct target_os_ops os_linux_generic_os_ops = {
     .thread_get_pgd_phys = os_linux_thread_get_pgd_phys,
     .thread_is_user = os_linux_thread_is_user,
     .thread_get_leader = os_linux_thread_get_leader,
+
+    .thread_singlestep = os_linux_thread_singlestep,
+    .thread_singlestep_end = os_linux_thread_singlestep_end,
 
     .processes_get = os_linux_processes_load,
     .process_get = os_linux_process_load,

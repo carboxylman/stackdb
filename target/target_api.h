@@ -1314,6 +1314,8 @@ int target_disable_sw_breakpoint(struct target *target,tid_t tid,
 int target_change_sw_breakpoint(struct target *target,tid_t tid,
 				struct target_memmod *mmod,
 				unsigned char *code,unsigned long code_len);
+int target_unchange_sw_breakpoint(struct target *target,tid_t tid,
+				  struct target_memmod *mmod);
 
 REG target_get_unused_debug_reg(struct target *target,tid_t tid);
 int target_set_hw_breakpoint(struct target *target,tid_t tid,REG reg,ADDR addr);
@@ -3051,6 +3053,8 @@ struct target_ops {
     int (*change_sw_breakpoint)(struct target *target,tid_t tid,
 				struct target_memmod *mmod,
 				unsigned char *code,unsigned long code_len);
+    int (*unchange_sw_breakpoint)(struct target *target,tid_t tid,
+				  struct target_memmod *mmod);
     REG (*get_unused_debug_reg)(struct target *target,tid_t tid);
     int (*set_hw_breakpoint)(struct target *target,tid_t tid,REG reg,ADDR addr);
     int (*set_hw_watchpoint)(struct target *target,tid_t tid,REG reg,ADDR addr,
@@ -3178,6 +3182,8 @@ struct target_personality_ops {
     int (*change_sw_breakpoint)(struct target *target,tid_t tid,
 				struct target_memmod *mmod,
 				unsigned char *code,unsigned long code_len);
+    int (*unchange_sw_breakpoint)(struct target *target,tid_t tid,
+				  struct target_memmod *mmod);
     REG (*get_unused_debug_reg)(struct target *target,tid_t tid);
     int (*set_hw_breakpoint)(struct target *target,tid_t tid,REG reg,ADDR addr);
     int (*set_hw_watchpoint)(struct target *target,tid_t tid,REG reg,ADDR addr,

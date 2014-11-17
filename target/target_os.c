@@ -26,6 +26,9 @@
 #include "probe.h"
 #include "target_os.h"
 #include "target_event.h"
+#include "arch.h"
+#include "arch_x86.h"
+#include "arch_x86_64.h"
 
 target_os_type_t target_os_type(struct target *target) {
     SAFE_TARGET_OS_OP(target,os_type,TARGET_OS_TYPE_NONE,
@@ -65,6 +68,144 @@ tid_t target_os_thread_get_leader(struct target *target,tid_t tid) {
 	return tthread->tid;
     else
 	return -1;
+}
+
+int target_os_thread_singlestep(struct target *target,tid_t tid,int isbp,
+				struct target *overlay,int force_emulate) {
+    SAFE_TARGET_OS_OP(target,thread_singlestep,-1,target,tid,isbp,
+		      overlay,force_emulate);
+}
+
+int target_os_thread_singlestep_end(struct target *target,tid_t tid,
+				    struct target *overlay,int force_emulate) {
+    SAFE_TARGET_OS_OP(target,thread_singlestep_end,-1,target,tid,
+		      overlay,force_emulate);
+}
+
+result_t target_os_emulate_bp_handler(struct target *target,tid_t tid,
+				      thread_ctxt_t tidctxt,
+				      struct target_memmod *mmod) {
+    struct target_thread *tthread;
+    REGVAL ipval;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("tid %"PRIiTID" does not exist!\n",tid);
+	errno = ESRCH;
+	return RESULT_ERROR;
+    }
+
+    if (tthread->emulating_debug_mmod) {
+	verror("tid %"PRIiTID" already is emulating a memmod"
+	       " at 0x%"PRIxADDR"; cannot do another one!\n",
+	       tid,tthread->emulating_debug_mmod->addr);
+	errno = EBUSY;
+	return RESULT_ERROR;
+    }
+
+    tthread->emulating_debug_mmod = mmod;
+
+    /*
+     * If we're in BPMODE_STRICT, we have to pause all the other
+     * threads.
+     */
+    if (target->spec->bpmode == THREAD_BPMODE_STRICT) {
+	if (target_pause(target)) {
+	    vwarn("could not pause the target for blocking thread"
+		  " %"PRIiTID"!\n",tthread->tid);
+	    return RESULT_ERROR;
+	}
+	target->blocking_thread = tthread;
+    }
+
+    errno = 0;
+    ipval = target_read_reg_ctxt(target,tid,tidctxt,target->ipregno);
+    if (!ipval && errno) {
+	verror("could not read IP in tid %"PRIiTID"!\n",tid);
+	return RESULT_ERROR;
+    }
+
+    /* Disable the memmod. */
+    if (target_memmod_unset(target,tid,mmod)) {
+	verror("could not disable breakpoint before singlestep;"
+	       " assuming breakpoint is left in place and"
+	       " skipping single step, but badness will ensue!");
+	goto errout;
+    }
+
+    /* Enable singlestep. */
+    if (target_os_thread_singlestep(target,tid,1,NULL,0)) {
+	verror("could not singlestep tid %"PRIiTID"!\n",tid);
+	goto errout;
+    }
+
+    /* Reset ip. */
+    ipval -= target->arch->breakpoint_instrs_len; //target_memmod_length(target,mmod);
+    if (target_write_reg_ctxt(target,tid,tidctxt,target->ipregno,ipval)) {
+	verror("could not write IP!\n");
+	goto errout;
+    }
+
+    /* Temporarily add this thread to the mmod. */
+    array_list_append(mmod->threads,tthread);
+
+    return RESULT_SUCCESS;
+
+ errout:
+    target_os_thread_singlestep_end(target,tid,NULL,0);
+    if (target->blocking_thread == tthread)
+	target->blocking_thread = NULL;
+    tthread->emulating_debug_mmod = NULL;
+
+    return RESULT_ERROR;
+}
+
+result_t target_os_emulate_ss_handler(struct target *target,tid_t tid,
+				      thread_ctxt_t tidctxt,
+				      struct target_memmod *mmod) {
+    struct target_thread *tthread;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("tid %"PRIiTID" does not exist!\n",tid);
+	errno = ESRCH;
+	return RESULT_ERROR;
+    }
+
+    if (tthread->emulating_debug_mmod 
+	&& tthread->emulating_debug_mmod != mmod) {
+	verror("tid %"PRIiTID" already is emulating a memmod"
+	       " at 0x%"PRIxADDR"; cannot do another one!\n",
+	       tid,tthread->emulating_debug_mmod->addr);
+	errno = EBUSY;
+	return RESULT_ERROR;
+    }
+    else if (!tthread->emulating_debug_mmod)
+	vwarn("not set to emulate a debug mmod; trying anyway!\n");
+
+    /* Disable singlestep. */
+    target_os_thread_singlestep_end(target,tid,NULL,0);
+
+    /* Reenable the memmod. */
+    target_memmod_set(target,tid,mmod);
+
+    /* Remove this thread from the memmod's list. */
+    array_list_remove_item(mmod->threads,tthread);
+
+    if (target->spec->bpmode == THREAD_BPMODE_STRICT) {
+	if (target->blocking_thread == tthread)
+	    target->blocking_thread = NULL;
+    }
+
+    if (tthread->emulating_debug_mmod == mmod)
+	tthread->emulating_debug_mmod = NULL;
+    else if (tthread->emulating_debug_mmod) {
+	verror("tid %"PRIiTID" already is emulating a memmod"
+	       " at 0x%"PRIxADDR"; cannot clear it!\n",
+	       tid,tthread->emulating_debug_mmod->addr);
+    }
+
+    return RESULT_SUCCESS;
 }
 
 int target_os_update_process_threads_generic(struct target_process *process,

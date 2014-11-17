@@ -117,6 +117,14 @@ int gdb_helper_qemu_init(struct target *target) {
     qstate->qemu_qmp_fd = -1;
     gstate->hops_priv = qstate;
 
+    /*
+     * No version of QEMU hijacks userspace exceptions for us... we must
+     * have them emulated in the OS personality...
+     */
+    g_hash_table_insert(target->config,
+			strdup("OS_EMULATE_USERSPACE_EXCEPTIONS"),
+			strdup("1"));
+
 #ifdef ENABLE_LIBVIRT
     qstate->qemu_libvirt_conn = 0;
     qstate->qemu_libvirt_dom = 0;

@@ -79,7 +79,8 @@ struct xen_vm_spec {
 	         clear_mem_caches_each_exception:1,
 	         use_libvmi:1,
 	         use_xenaccess:1,
-	         no_use_multiplexer:1;
+	         no_use_multiplexer:1,
+	         hypervisor_ignores_userspace_exceptions:1;
 };
 
 struct xen_vm_thread_state {

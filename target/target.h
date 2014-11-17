@@ -132,7 +132,18 @@ unsigned char *__target_load_addr_real(struct target *target,
  */
 struct target_memmod *_target_insert_sw_breakpoint(struct target *target,
 						   tid_t tid,ADDR addr,
-						   int is_phys);
+						   int is_phys,int nowrite);
+int _target_remove_sw_breakpoint(struct target *target,tid_t tid,
+				 struct target_memmod *mmod);
+int _target_enable_sw_breakpoint(struct target *target,tid_t tid,
+				 struct target_memmod *mmod);
+int _target_disable_sw_breakpoint(struct target *target,tid_t tid,
+				  struct target_memmod *mmod);
+int _target_change_sw_breakpoint(struct target *target,tid_t tid,
+				 struct target_memmod *mmod,
+				 unsigned char *code,unsigned long code_len);
+int _target_unchange_sw_breakpoint(struct target *target,tid_t tid,
+				   struct target_memmod *mmod);
 
 /**
  ** Register regcache helpers.
@@ -162,6 +173,9 @@ int target_regcache_foreach_dirty(struct target *target,
 int target_regcache_readreg_ifdirty(struct target *target,
 				    struct target_thread *tthread,
 				    thread_ctxt_t tctxt,REG reg,REGVAL *regval);
+int target_regcache_isdirty(struct target *target,
+			    struct target_thread *tthread,
+			    thread_ctxt_t tctxt);
 int target_regcache_isdirty_reg(struct target *target,
 				struct target_thread *tthread,
 				thread_ctxt_t tctxt,REG reg);
@@ -324,15 +338,13 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
 					   ADDR addr,int is_phys,
 					   target_memmod_type_t mmt,
 					   unsigned char *code,
-					   unsigned int code_len);
+					   unsigned int code_len,int nowrite);
+void target_memmod_set_writeable(struct target *target,
+				 struct target_memmod *mmod,int writeable);
 struct target_memmod *target_memmod_lookup(struct target *target,tid_t tid,
 					   ADDR addr,int is_phys);
 unsigned long target_memmod_length(struct target *target,
 				   struct target_memmod *mmod);
-result_t target_memmod_emulate_bp_handler(struct target *target,tid_t tid,
-					  struct target_memmod *mmod);
-result_t target_memmod_emulate_ss_handler(struct target *target,tid_t tid,
-					  struct target_memmod *mmod);
 int target_memmod_set(struct target *target,tid_t tid,
 		      struct target_memmod *mmod);
 int target_memmod_unset(struct target *target,tid_t tid,
@@ -363,7 +375,8 @@ struct target_memmod {
 
     target_memmod_type_t type:MEMMOD_TYPE_BITS;
     target_memmod_state_t state:MEMMOD_STATE_BITS;
-    unsigned int is_phys:1;
+    unsigned int is_phys:1,
+	         no_write:1;
 
     ADDR addr;
 
