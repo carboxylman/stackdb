@@ -131,14 +131,6 @@ struct gdb_state {
     struct gdb_helper_ops *hops;
     void *hops_priv;
 
-    /*
-#ifdef __x86_64__
-    uint8_t *hvm_context_buf;
-    uint32_t hvm_context_bufsiz;
-    HVM_SAVE_TYPE(CPU) *hvm_cpu;
-#endif
-    */
-
     int evloop_fd;
 };
 
