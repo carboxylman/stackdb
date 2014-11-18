@@ -1858,6 +1858,7 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
     int root_added = 0;
     int root_preexisting = 0;
 
+    int have_stmt_list_offset = 0;
     Dwarf_Word cu_stmt_list_offset = 0;
 
     struct array_list *die_offsets = NULL;
@@ -2579,6 +2580,12 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	 * hash the symtab.
 	 */
 	if (tag == DW_TAG_compile_unit && unlikely(!root_added)) {
+	    /* Try to find prologue info from line table for this CU. */
+	    if (args.have_stmt_list_offset) {
+		have_stmt_list_offset = 1;
+		cu_stmt_list_offset = args.stmt_list_offset;
+	    }
+
 	    if (!symbol_get_name(root)) {
 		verror("CU did not have a src filename; aborting processing!\n");
 		/* Don't free preexisting ones! */
@@ -2645,11 +2652,6 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		    dwarf_dieoffset(&top_level_first_die);
 	    else
 		srd->first_top_level_die_offset = 0;
-
-	    /* Try to find prologue info from line table for this CU. */
-	    if (args.have_stmt_list_offset) {
-		cu_stmt_list_offset = args.stmt_list_offset;
-	    }
 	}
 
 	/*
@@ -3489,7 +3491,7 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
     }
 
     /* Try to find prologue info from line table for this CU. */
-    if (cu_stmt_list_offset) {
+    if (have_stmt_list_offset) {
 	dwarf_get_lines(srd,cu_stmt_list_offset);
     }
 
