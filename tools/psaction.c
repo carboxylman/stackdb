@@ -84,6 +84,9 @@ int pslist_list(struct target *target,struct value *value,void *data) {
     pid_v = target_load_value_member(target,NULL,value,"pid",NULL,LOAD_FLAG_NONE);
     name_v = target_load_value_member(target,NULL,value,"comm",NULL,LOAD_FLAG_NONE);
     uid_v = target_load_value_member(target,NULL,value,"uid",NULL,LOAD_FLAG_NONE);
+    if (!uid_v)
+	uid_v = target_load_value_member(target,NULL,value,"cred.uid",NULL,
+					 LOAD_FLAG_NONE);
 
     printf("%d\t%d\t%s\n",v_u32(pid_v),v_u32(uid_v),name_v->buf);
 
@@ -110,6 +113,9 @@ int pslist_check(struct target *target,struct value *value,void *data) {
 
     pid_v = target_load_value_member(target,NULL,value,"pid",NULL,LOAD_FLAG_NONE);
     uid_v = target_load_value_member(target,NULL,value,"uid",NULL,LOAD_FLAG_NONE);
+    if (!uid_v)
+	uid_v = target_load_value_member(target,NULL,value,"cred.uid",NULL,
+					 LOAD_FLAG_NONE);
 
     printf("Check found bad %d\t%d\t%s\n",v_u32(pid_v),v_u32(uid_v),name_v->buf);
 
@@ -137,6 +143,9 @@ int pslist_zombie(struct target *target,struct value *value,void *data) {
 
     pid_v = target_load_value_member(target,NULL,value,"pid",NULL,LOAD_FLAG_NONE);
     uid_v = target_load_value_member(target,NULL,value,"uid",NULL,LOAD_FLAG_NONE);
+    if (!uid_v)
+	uid_v = target_load_value_member(target,NULL,value,"cred.uid",NULL,
+					 LOAD_FLAG_NONE);
 
     printf("Zombifying %d\t%d\t%s\n",v_u32(pid_v),v_u32(uid_v),name_v->buf);
 
@@ -287,6 +296,9 @@ int pslist_sig(struct target *target,struct value *value,void *data) {
 
     pid_v = target_load_value_member(target,NULL,value,"pid",NULL,LOAD_FLAG_NONE);
     uid_v = target_load_value_member(target,NULL,value,"uid",NULL,LOAD_FLAG_NONE);
+    if (!uid_v)
+	uid_v = target_load_value_member(target,NULL,value,"cred.uid",NULL,
+					 LOAD_FLAG_NONE);
 
     printf("Sending %s (%d) to %d\t%d\t%s\n",
 	   convert_sig_to_name(sig),sig,v_u32(pid_v),v_u32(uid_v),name_v->buf);
@@ -369,8 +381,33 @@ int pslist_sig(struct target *target,struct value *value,void *data) {
     /* Finally, set SIGPENDING in the task_struct's thread_info struct. */
     thread_info_v = target_load_value_member(target,NULL,value,"thread_info",NULL,
 					     LOAD_FLAG_AUTO_DEREF);
+    if (!thread_info_v) {
+        struct target_location_ctxt *tlctxt = target_global_tlctxt(target);
+        v = target_load_value_member(target,tlctxt,
+                                     value,"stack",NULL,LOAD_FLAG_NONE);
+        target_location_ctxt_free(tlctxt);
+        tlctxt = NULL;
+        if (!v) {
+            printf("  ERROR: could not load stack (thread_info) in"
+		   " task %d\t%d\t%s!\n",
+                   v_u32(pid_v),v_u32(uid_v),name_v->buf);
+            return 0;
+        }
+        ADDR stack_member_addr = v_addr(v);
+        value_free(v);
+        v = NULL;
+
+        thread_info_v = target_load_type(target,value->type,
+                                         stack_member_addr,LOAD_FLAG_NONE);
+        if (!thread_info_v) {
+            printf("  ERROR: could not load stack (thread_info)"
+		   " in task %d\t%d\t%s!\n",
+                   v_u32(pid_v),v_u32(uid_v),name_v->buf);
+            return 0;
+        }
+    }
     v = target_load_value_member(target,NULL,thread_info_v,"flags",NULL,
-				 LOAD_FLAG_NONE);
+                                 LOAD_FLAG_NONE);
     value_update_u32(v,v_u32(v) | LOCAL_TIF_SIGPENDING);
     target_store_value(target,v);
     value_free(v);
@@ -394,6 +431,9 @@ int __ps_kill(struct target *target,struct value *value) {
     name_v = target_load_value_member(target,NULL,value,"comm",NULL,LOAD_FLAG_NONE);
     pid_v = target_load_value_member(target,NULL,value,"pid",NULL,LOAD_FLAG_NONE);
     uid_v = target_load_value_member(target,NULL,value,"uid",NULL,LOAD_FLAG_NONE);
+    if (!uid_v)
+	uid_v = target_load_value_member(target,NULL,value,"cred.uid",NULL,
+					 LOAD_FLAG_NONE);
 
     printf("Killing %d\t%d\t%s\n",v_u32(pid_v),v_u32(uid_v),name_v->buf);
 
@@ -453,6 +493,31 @@ int __ps_kill(struct target *target,struct value *value) {
     /* Finally, set SIGPENDING in the task_struct's thread_info struct. */
     thread_info_v = target_load_value_member(target,NULL,value,"thread_info",NULL,
 					     LOAD_FLAG_AUTO_DEREF);
+    if (!thread_info_v) {
+        struct target_location_ctxt *tlctxt = target_global_tlctxt(target);
+        v = target_load_value_member(target,tlctxt,
+                                     value,"stack",NULL,LOAD_FLAG_NONE);
+        target_location_ctxt_free(tlctxt);
+        tlctxt = NULL;
+        if (!v) {
+            printf("  ERROR: could not load stack (thread_info) in"
+		   " task %d\t%d\t%s!\n",
+                   v_u32(pid_v),v_u32(uid_v),name_v->buf);
+            return 0;
+        }
+        ADDR stack_member_addr = v_addr(v);
+        value_free(v);
+        v = NULL;
+
+        thread_info_v = target_load_type(target,value->type,
+                                         stack_member_addr,LOAD_FLAG_NONE);
+        if (!thread_info_v) {
+            printf("  ERROR: could not load stack (thread_info)"
+		   " in task %d\t%d\t%s!\n",
+                   v_u32(pid_v),v_u32(uid_v),name_v->buf);
+            return 0;
+        }
+    }
     v = target_load_value_member(target,NULL,thread_info_v,"flags",NULL,
 				 LOAD_FLAG_NONE);
     value_update_u32(v,v_u32(v) | LOCAL_TIF_SIGPENDING);
