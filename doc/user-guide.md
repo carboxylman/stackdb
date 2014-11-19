@@ -113,6 +113,34 @@ drivers.  If you develop your own personality outside the Stackdb source
 repository, you can specify a shared library filename where the
 personality can be found via `--personality-lib`.
 
+### Specifying Multiple Targets
+
+Originally, Stackdb's argp argument processing was designed to be able
+to handle a single target passed on the command line, via the above
+arguments (and driver-specific arguments, discussed below).  However, it
+is very useful at times to be able to specify multiple targets so that
+you can create stacks of targets.  Many Stackdb programs support
+multiple targets (although a few are best suited to analyzing single
+targets only).  Thus, for these kinds of programs that do support
+multiple targets, not only can you specify a "primary" target on the
+command line; you can also use the `--base` and `--overlay` arguments to
+specify additional base targets, and additional overlay targets:
+
+      --base=TARGET_OPTIONS  Specify an entire base target in a single
+                             argument.  Any standard target option other than
+                             --base and --overlay may be used.
+      --overlay=OVERLAY_PREFIX:TARGET_OPTIONS
+                             Specify an entire overlay target in a single
+                             argument.  Your argument must be of the form
+                             [<base_target_id>:]<thread_name_or_id>:TARGET_OPTIONS
+
+So, for instance, you could invoke the `backtrace` tool like this:
+
+    $ backtrace --base '-t xen -m vm1 -i 10' --base '-t xen -m vm2 -i 20' \
+        --overlay '10:bash:-t os-process' --overlay '20:php:-t os-process'
+
+and thus obtain backtraces for each thread in the four targets.
+
 ### Improving Debuginfo Loading Times ###
 
 The dwdebug
@@ -369,17 +397,17 @@ demultiplexing service, you can disable it via the `-M` option.
 The other options mainly cover special cases and problems we've observed
 in Xen.
 
-### GDB Driver (QEMU/KVM support!) ###
+### GDB/QEMU/KVM Driver ###
 
 The GDB driver allows you to attach to any program that is coupled to a
-[GDB server stub].  Many embedded systems, or more relevant to Stackdb,
-virtual machine hypervisors like Xen and QEMU/KVM, provide GDB server
-stubs that a GDB client can interact with to debug the embedded system,
-or the OS running inside a VM.  Since each GDB server stub is different,
-and because Stackdb might require (or be able to leverage) additional
-platform information beyond what can be expressed in the GDB remote
-protocol), Stackdb's GDB driver allows the user to "plug in" *helper*
-modules.
+[GDB server stub] (and we use it to provide access to QEMU/KVM VMs) too.
+Many embedded systems, or more relevant to Stackdb, virtual machine
+hypervisors like Xen and QEMU/KVM, provide GDB server stubs that a GDB
+client can interact with to debug the embedded system, or the OS running
+inside a VM.  Since each GDB server stub is different, and because
+Stackdb might require (or be able to leverage) additional platform
+information beyond what can be expressed in the GDB remote protocol),
+Stackdb's GDB driver allows the user to "plug in" *helper* modules.
 
 Here are the primary options for the GDB driver:
 
@@ -416,6 +444,8 @@ Here are the QEMU helper's options:
                                filename (see QEMU's -mem-path option; also
                                preload libnunlink.so and set QEMU_MEMPATH_PREFIX
                                accordingly).
+        --qemu-libvirt-domain=DOMAIN
+                               Access QEMU QMP over libvirt proxy.
         --qemu-qmp-host=HOST   Attach to QEMU QMP on the given host
                                (default localhost).
         --qemu-qmp-port=PORT   Attach to QEMU QMP on the given port
@@ -426,7 +456,7 @@ Here are the QEMU helper's options:
 
 You must run your QEMU VM specifically to take advantage of Stackdb ---
 although you do *not* have to modify QEMU itself!  We have only tested
-our method with QEMU 2.0.0; it may fail with other versions.  Here's
+our method with QEMU 2.0.x and 2.1.x; it may fail with other versions.  Here's
 what you have to do.
 
 First, follow instructions like those at
@@ -450,6 +480,8 @@ set of commands that will help you get this going:
     # recover some memory is to kill Firefox!
     $ cat /proc/meminfo | grep Huge
 
+#### Manually Running QEMU/KVM ####
+
 Once you have hugetlbfs setup, run your QEMU VM:
 
     $ sudo QEMU_MEMPATH_PREFIX=/hugetlbfs/qemu \
@@ -470,10 +502,17 @@ immediately unlink()'d after QEMU opens it.  Thus, it interposes on mmap
 and unlink, and ensures that any filename passed to those system calls
 that starts with the value in QEMU_MEMPATH_PREFIX is 1) mmap'd with
 MAP_SHARED, and 2) is not actually unlinked, so it stays present in the
-filesystem.  This does mean that when the QEMU process ends, you'll need
-to manually remove those files.  libqemuhacks.so.0.0.0 does install an
-atexit() handler to try to remove these files, but that doesn't seem to
-work at the moment.  Finally, of course, you must also set LD_PRELOAD to
+filesystem.  libqemuhacks.so does try to remove those files when the
+QEMU process terminates, but if the process is sent a SIGKILL, it cannot
+catch the dying/exiting process --- and in this case, you'll need
+to manually remove those files.  libqemuhacks.so supports different
+strategies to try to remove these files.  First, it interposes on the
+signals QEMU monitors to terminate itself (the same code path is
+followed if the QEMU process is signaled externally, or the code inside
+the machine shuts it down); this is the default and best option.  It can
+also install an atexit() handler to try to remove these files, but that
+doesn't do anything for QEMU 2.x, because QEMU self-terminates by
+signaling its process.  Finally, of course, you must also set LD_PRELOAD to
 preload libqemuhacks.so.0.0.0.
 
 Then, once your VM has started, a file like `/hugetlbfs/qemu_back_mem.pc.ram.*` 
@@ -493,13 +532,126 @@ mountpoint.  All we care about is that QEMU leaves us with a file we can
 mmap to get physical memory access --- and this was the only way to get
 access without hacking QEMU!)
 
+#### Using Libvirt to Run QEMU/KVM ####
+
+First, make sure you've read the section above on running QEMU/KVM
+manually; this will explain the necessary environment variables and
+command-line options.  We need to customize the libvirt VM config file
+to allow Stackdb to attach to it.
+
+One of my config files (`/etc/libvirt/qemu/vm1.xml`) looks like this:
+
+    <domain type='kvm' xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>
+      <name>vm1</name>
+      <uuid>29bfac01-b24d-e4ab-e741-f33f7e880d9d</uuid>
+      <memory unit='KiB'>524288</memory>
+      <currentMemory unit='KiB'>524288</currentMemory>
+
+      <memoryBacking>
+        <hugepages/>
+      </memoryBacking>
+
+      <vcpu placement='static'>1</vcpu>
+      <os>
+        <type arch='x86_64' machine='pc-i440fx-2.0'>hvm</type>
+        <kernel>/tftpboot/roots/centos5.5-x86_64/boot/vmlinuz-2.6.18-308.el5</kernel>
+        <initrd>/tftpboot/roots/centos5.5-x86_64/boot/initrd-2.6.18-308-full.el5.img</initrd>
+        <cmdline>"console=tty0 console=ttyS0,115200n8"</cmdline>
+        <boot dev='hd'/>
+      </os>
+      <features>
+        <acpi/>
+        <pae/>
+      </features>
+      <clock offset='utc'/>
+      <on_poweroff>destroy</on_poweroff>
+      <on_reboot>restart</on_reboot>
+      <on_crash>restart</on_crash>
+      <devices>
+        <emulator>/usr/bin/qemu-system-x86_64</emulator>
+        <controller type='usb' index='0'>
+          <address type='pci' domain='0x0000' bus='0x00' slot='0x01' function='0x2'/>
+        </controller>
+        <controller type='pci' index='0' model='pci-root'/>
+        <serial type='pty'>
+          <target port='0'/>
+        </serial>
+        <console type='pty'>
+          <target type='serial' port='0'/>
+        </console>
+        <input type='mouse' bus='ps2'/>
+        <input type='keyboard' bus='ps2'/>
+        <graphics type='vnc' port='-1' autoport='yes' keymap='en-us'/>
+        <video>
+          <model type='cirrus' vram='9216' heads='1'/>
+          <address type='pci' domain='0x0000' bus='0x00' slot='0x03' function='0x0'/>
+        </video>
+        <memballoon model='virtio'>
+          <address type='pci' domain='0x0000' bus='0x00' slot='0x02' function='0x0'/>
+        </memballoon>
+      </devices>
+
+      <qemu:commandline>
+        <qemu:arg value='-gdb'/>
+        <qemu:arg value='tcp:127.0.0.1:1234,nowait,nodelay,server'/>
+        <qemu:env name='QEMU_MEMPATH_PREFIX' value='/hugetlbfs/'/>
+        <qemu:env name='LD_PRELOAD' value='/home/johnsond/g/a3/vmi.master.obj/target/.libs/libqemuhacks.so.0.0.0'/>
+      </qemu:commandline>
+
+    </domain>
+
+The first important bit is
+
+      <memoryBacking>
+        <hugepages/>
+      </memoryBacking>
+
+This will execute QEMU with hugepage support.  Current libvirt
+distributions automatically detect your `hugetlbfs` mountpoint, and will
+place a directory in it for QEMU VMs to use, like
+`/hugetlbfs/libvirt/qemu`.  This directory must be readable/writeable by
+the `qemu` user on my install; yours is probably similar.  If this
+doesn't happen automatically, you can manually tell libvirt where the
+hugetlbfs mountpoint is, by changing the following line in
+`/etc/libvirt/qemu.conf`:
+
+    hugetlbfs_mount = "/hugetlbfs"
+
+The second important bit is
+
+      <qemu:commandline>
+        <qemu:arg value='-gdb'/>
+        <qemu:arg value='tcp:127.0.0.1:1234,nowait,nodelay,server'/>
+        <qemu:env name='QEMU_MEMPATH_PREFIX' value='/hugetlbfs/'/>
+        <qemu:env name='LD_PRELOAD' value='/home/johnsond/g/a3/vmi.master.obj/target/.libs/libqemuhacks.so.0.0.0'/>
+      </qemu:commandline>
+
+This tells the QEMU process to start up its GDB stub, and listen on the
+host/port indicated; and to set the two environment variables we need.
+Change the value for LD_PRELOAD to the location where
+libqemuhacks.so.0.0.0 is on your system.
+
+#### Using Eucalyptus to Run QEMU/KVM ####
+
+[ TBD. ]
+
+#### Using OpenStack to Run QEMU/KVM ####
+
+[ TBD. ]
+
+
 ### OS Process Driver ###
 
-
+There is no special configuration necessary to use this driver --- but
+you must ensure that the underlying base driver is configured with an OS
+personality!  This currently happens automatically, and is assumed.
 
 ### PHP Driver ###
 
-
+There is no special configuration necessary to use this driver.
+However, it does not support many Stackdb features, and only supports a
+tiny subset of PHP.  You probably shouldn't use this driver except for
+global or member function breakpoints, unless you're willing to hack it!
 
 ### Personalities ###
 
@@ -507,13 +659,31 @@ access without hacking QEMU!)
 
 #### "Generic" Linux OS Personality ####
 
-
+The only personality currently available is the Linux OS personality,
+which provides the OS personality interface.  We have tested it on Linux
+kernels 2.6.18, 2.6.32, 3.2.x, and 3.8.x.  It may well work on kernels
+in between, or it may not.  The reason it may not work for every kernel
+is because it relies on the presence of specific symbols and data types
+to obtain some of its information to provide a full model of the running
+kernel to Stackdb.  When these symbols change, Stackdb must account for
+them.  Fortunately, Stackdb's symbol set is quite small and unlikely to
+change.
 
 
 Supported Configurations
 ------------------------
 
-
+Remember, Stackdb is designed to allow you to stack targets atop each
+other to debug an entire software stack.  You can use each of the base
+drivers (xen, gdb, ptrace) to attach to individual targets; and you can
+stack the overlay drivers atop them.  The OS-Process driver can sit atop
+any base driver that provides an OS personality (the Xen and
+GDB/KVM/QEMU drivers do, when combined with the Linux OS personality);
+and the PHP driver can sit atop either the OS-Process or Ptrace drivers,
+since they provide access to processes, and PHP runs in a process.
+Here are two diagrams that may help you visualize how stacked driver
+configurations work: [stack of Xen, OS-Process, and PHP drivers];
+[stack of Ptrace and PHP drivers] 
 
 Working with Debuginfo
 ----------------------
@@ -955,31 +1125,67 @@ search will still return a chain of symbols (an lsymbol).
 
 ### dumptarget ###
 
+The `dumptarget` program is the original "test" program we evolved as we
+developed Stackdb.  We don't recommend using it, but it can be a useful
+tool to place probes on functions, addresses, sourcefile/lines, and
+variables --- using the "old" `target_monitor()` style (a single,
+blocking event loop --- probetargets, for instance, uses
+`target_monitor_evloop()` to be able to monitor multiple targets at
+once).  Basic usage would look like
 
+    $ dumptarget -t gdb --qemu --kvm --gdb-host 127.0.0.1 --gdb-port 1234 \
+        --qemu-libvirt-domain vm1 --qemu-mem-path /hugetlbfs/libvirt/qemu/qemu_back_mem.pc.ram.* \
+        -M /tftpboot/roots/centos5.5-x86_64/boot/vmlinux-syms-2.6.18-308.el5 \
+        --overlay 'bash:-t os-process -s -R /tftpboot/roots/centos5.5-x86_64'
+        sys_open make_child
+
+to place probes on `sys_open` in the Linux kernel in the base target,
+and on `make_child` in the bash process the overlay target is attached to.
+
+### probetargets ###
+
+The `probetargets` program is a modern, less-complicated version of
+`dumptarget`, but it only accepts symbols to place probes on.  However,
+you can also prefix each symbol with the ID of a target.  So, you could
+run the command above like this:
+
+    $ probetargets \
+        --base '-t gdb -i 10 --qemu --kvm --gdb-host 127.0.0.1 --gdb-port 1234 \
+                --qemu-libvirt-domain vm1 \
+                --qemu-mem-path /hugetlbfs/libvirt/qemu/qemu_back_mem.pc.ram.* \
+                -M /tftpboot/roots/centos5.5-x86_64/boot/vmlinux-syms-2.6.18-308.el5' \
+        --overlay '10:bash:-t os-process -i 20 -s -R /tftpboot/roots/centos5.5-x86_64'
+        10:sys_open 20:make_child
+
+because you want to place the `sys_open` probe on target id 10, and the
+`make_child` probe on target id 20.
 
 ### dumpthreads ###
 
-
+`dumpthreads` can dump (detailed) information about each thread in a
+target, and it can loop and dump threads at a given interval.
 
 ### backtrace ###
 
-
+`backtrace` can dump backtraces for target threads.
 
 ### spf ###
 
-
+`spf` is a generic, multi-target, multi-stack debugger with a very
+simple configuration file interface.  See `tools/spf/README.spf` in the
+source tree for a detailed manual.
 
 ### syscall ###
 
-
+[ TDB. ]
 
 ### cfi_check ###
 
-
+[ TDB. ]
 
 ### rop_checkret ###
 
-
+[ TDB. ]
 
 
 
@@ -1033,6 +1239,10 @@ to anything, make sure to read <http://www.linux-kvm.org/page/Networking>).
 libqemuhacks.so.0.0.0 to point to your build tree, not mine!  Also
 change the -kernel and -initrd arguments to point to wherever you
 unpacked the tarball, not `/tftpboot/roots/centos5.5-x86_64`.)
+
+(Note also that if you are attaching to a QEMU VM that is managed by
+`libvirt`, or a cloud platform such as OpenStack or Eucalyptus, you'll
+want to read the [GDB/QEMU/KVM driver notes].)
 
 Once it's booted, login with user `root`, passwd `root`.
 
@@ -1135,11 +1345,235 @@ target program running on the same host, or on another host.  You want
 to investigate it, either by passively reading its memory, or by
 actively installing breakpoints and watchpoints, and reacting to its
 control flows.  Sometimes you might even alter memory content or change
-control flow.
+control flow by modifying CPU registers or the stack.  Usually, after
+inserting some probes, you let the target program continue running, and
+"handle" the events when your target program hits the probes (perhaps
+you do some kind of analysis, or wait for a specific kind of state to be
+reached).
 
-You've probably done these kinds of things interactively with GDB.
-However, Stackdb provides a library for doing them in C.  We'll show you
-a little bit of how to use that library here.
+
+### Library Overview ###
+
+In a Stackdb program, the target program being debugged is accessed
+through a target "object," as illustrated in [the Stackdb architecture
+diagram].  A target object corresponds to a particular level of
+abstraction or a portion of the whole system being debugged; and it
+provides access to the target program and creates and maintains a model
+of it (i.e., tracks its threads, its address spaces, etc).  By invoking
+target API functions, which are common to all targets, you can install
+breakpoints ("probes" in Stackdb terminology), examine software state
+and symbols, single-step, and potentially modify execution at the level
+of a particular target.
+
+[The Stackdb architecture diagram] also shows that each target is paired
+with a driver, whose purpose is to implement debugger-like inspection
+and control features for a particular software abstraction: e.g.,
+kernel, process, or language runtime.  Although all drivers implement a
+common driver API, we distinguish two primary classes of implementation.
+A base driver interacts directly with the system being debugged, e.g.,
+via a hypervisor-provided interface or `ptrace(2)`.  An overlay driver
+interacts with the system through another target, i.e., by "stacking on
+top of an appropriate underlying target.  The overlay driver
+communicates with the underlying target through the target API.
+
+Because the target API is "implemented" by every target, a user can easily
+instantiate multi-level stacks of targets.  In addition, the ability to
+implement drivers in terms of underlying targets greatly eases the
+process of developing new drivers, e.g., for new language runtimes.
+Finally, the target API makes it possible to implement generic analyses and
+utilities that can be applied to multiple levels of a software stack.
+
+
+### Integrating Stackdb Into Your Program: "Running" Stackdb ###
+
+When you write a Stackdb program, you might want to insert some probes,
+wait until they are hit, and then analyze the target program's state,
+and/or modify its execution.  In this mode, your program will be a
+simple event loop --- you call a Stackdb function that "runs" your
+target program (`target_monitor()`) and calls your probe handlers when
+their corresponding probes are hit --- Stackdb does the "dirty work"
+behind the scenes to implement breakpoints, safely read and write target
+memory and CPU registers, etc.  Your handlers do all the work while
+the target program is paused.  This is a simple, synchronous,
+event-driven model for writing Stackdb programs.  Currently, only the
+base drivers need to be "run" --- but the API supports runnable overlay
+drivers as well, if you need to develop some strange hybrid overlay
+driver that both receives exception notifications from its underlying
+base target, and from some external source (very unlikely).
+
+If you are integrating Stackdb with another program that must
+do other tasks in addition to handling debug exceptions, you'll need to
+choose between a couple different styles.  (You'll also need to handle
+signals in your Stackdb program; if your program is signaled with a
+fatal signal, and you haven't specified a handler for the signal, your
+Stackdb program will exit before the Stackdb library can remove probes
+on the target!  This likely will crash the target program next time it
+hits a breakpoint.  See the section on signal handling below; Stackdb
+can help.)
+
+First, you can use one of the Stackdb monitoring/polling mechanisms
+below to create your own event loop that can monitor one or more targets.
+If you have an existing event loop and don't want to poll, 
+you can minimize polling overhead by adding Stackdb targets to
+your own event loop construct (which probably involves a `select()` loop ---
+you might already have one, or might have to create one --- Stackdb
+provides its own event loop abstraction around `select()` that you can
+borrow if you like).  Most Stackdb drivers are able to proxy debug
+exceptions over a file descriptor --- in other words, they write a
+single byte to a file descriptor when the target has a debug exception
+that needs to be handled --- and that file descriptor can then be added
+to a `select()` loop.  When the file descriptor is ready to read, then
+you should call the `target_poll()` function to handle the pending debug
+exception.  Third, you can either divide your program into multiple
+threads or multiple processes; and dedicate a single thread or process
+to call `target_monitor()`.  In this case, you'll need to use
+appropriate synchronization mechanisms to coordinate your threads'
+interoperation.  Stackdb is *not thread-safe* --- it does not have
+built-in support for a threading API like `pthreads(2)` --- and it is
+never safe to apply the Target API to a single target from different
+threads at the same time.  If you need to do this, you'll need to
+protect such accesses with a mutex of some kind!
+
+Finally, you might want to analyze the target's memory asynchronously,
+without pausing the target (except when you attach or detach from it).
+In Stackdb, you can access memory asynchronously (without pausing the
+target program), but you must pause it to read or write its CPU state.
+Thus, in this mode, you might never pause or unpause the target --- and
+never call `target_monitor()` nor `target_poll()`.
+
+
+#### Monitoring One Target: `target_monitor()` ####
+
+If you only need to monitor a single target object, and don't already
+have an existing program or event loop, you can use `target_monitor()`.
+
+#### Monitoring Multiple Targets: `target_monitor_evloop()` ####
+
+If you need to monitor multiple base target objects, you'll want to use
+`target_monitor_evloop()` (unless you have written a new base driver
+that doesn't support evloops!).  This function uses Stackdb's evloops,
+and if you have existing file descriptor-based sources of events in a
+program you're adding Stackdb to, you may be able to replace your
+existing event loop with Stackdb's evloop.
+
+(*If you use Stackdb's evloops, be aware that some drivers may use the `waitpipe`
+data structure to turn signals into file descriptor I/O that may be
+detected via a select() loop; so don't install your own `SIGCHLD`
+handler!*)
+
+#### Monitoring Multiple Targets (polling): `target_poll()` ####
+
+If your application is best-suited to a polling style of handling
+Stackdb targets, you can use Stackdb's `target_poll()` function to check
+for (and handle) debug exceptions, and regularly poll in a coordinated
+manner with your program's other tasks.  With polling, you can avoid
+blocking your program's main thread of control, or block for finite
+amounts of time.
+
+#### Manually Handling One or More Targets: `evloop_run()` ####
+
+(*This section is not for the faint-of-heart; it will cause your code to
+become more complex; make sure your use case really demands this power.*)
+
+The `struct evloop` object is essentially a powerful wrapper around a
+select() loop.  It provides a loop monitor that monitors a set of file
+descriptors with select(), and triggers callback functions associated
+with those descriptors when they are available for I/O.  Thus, any
+target type whose debug exceptions can be represented by file I/O can be
+monitored by an evloop.  All current built-in Stackdb drivers support
+evloops.
+
+To use this run mechanism, call `evloop_create()` to obtain an evloop.
+Then, pass that evloop to each target_instantiate*() call you make; your
+new target will be attached to the evloop.  Finally, call `evloop_run()`
+to run the loop.  Read the evloop API documentation for more details, or
+take a look at `examples/multi-target-evloop.c`.
+
+(*If you use evloops, be aware that some drivers may use the `waitpipe`
+data structure to turn signals into file descriptor I/O that may be
+detected via a select() loop; so don't install your own `SIGCHLD`
+handler!*)
+
+
+#### Signals ####
+
+Unfortunately, since Stackdb handles significant I/O on your behalf, and
+responds to asynchronous events like signals --- you must carefully deal
+with signals.
+
+*Never* send a fatal signal to a Stackdb program.  For instance, when
+using GDB, if you have installed a software breakpoint in a program;
+then kill GDB with signal 9 or 15; then trigger the breakpoint to be hit
+in the target program --- the program will die with an unhandled debug
+trap.  The same is true is of Stackdb.  If you signal a debugger program
+with a signal number it doesn't (or can't) catch, any modifications that
+it made to its target will persist and very likely cause trouble!
+
+Stackdb provides much built-in help to appropriately handle signals on
+your behalf.  Its default signal handler (see
+target_install_default_sighandler(); target_default_sighandler() is the
+actual handler function) catches `SIGHUP`, `SIGINT`, `SIGQUIT`,
+`SIGABRT`, `SIGFPE`, `SIGSEGV`, `SIGPIPE`, `SIGALRM`, `SIGTERM`.  Only
+`SIGINT` is nonfatal (it will cause whatever target_monitor*() function
+that is running the loop to return with an interrupt condition), so you
+can do some asynchronous work, like handling user input.  The other
+signals cause an immediate target_pause(), target_close(), and
+target_finalize() to be applied to each existing target.
+
+However, Stackdb does not provide a general signal-handling and
+-dispatch infrastructure.  Odds are that if you need such support,
+you'll want to design your own signal handling mechanisms, and manually
+clean up all Stackdb targets (i.e., close and finalize) as necessary.
+
+There's one other important note about Stackdb's signal usage.  Some
+Stackdb drivers make use of the internal `waitpipe` object, which turns
+a `SIGCHLD` into a write on a pipe file descriptor (so that a select
+loop can be notified --- this is how we turn all debug exception
+notifications into file descriptor events).  If you need to handle
+`SIGCHLD` signals yourself, make sure to provide your own handler to
+`waitpipe_init_ext()`.  If this mechanism isn't sufficient (i.e., you
+need fine-grained control over the `sigaction()` mask or flags), let
+us know.
+
+
+#### Forking ####
+
+Stackdb does not support use of fork() at the moment.  If you must embed
+Stackdb in a multi-process architecture, do not call fork() once you've
+instantiated Stackdb targets within a process.
+
+
+### Targets ###
+
+[ TBD. ]
+
+#### CPU State: Threads and Registers ####
+
+[ TBD. ]
+
+#### Memory: Address Spaces, Regions, Ranges ####
+
+[ TBD. ]
+
+
+Overlay Targets
+---------------
+
+[ TBD. ]
+
+
+### Examples ###
+
+Let's walk through some examples.  The full source code for each of
+these programs can be found in the source tree in the `examples/`
+subdirectory.
+
+#### Example 1: Placing a Breakpoint in a Userspace Process ####
+
+Let's start simply 
+
+
+#### Example 3: Finding Unique Control Flows in the Linux Kernel ####
 
 Suppose we want to write a program that allows us to find unique control
 flows at known, interesting functions within another program.  For
@@ -1204,6 +1638,8 @@ line, all of which we probe for unique execution paths:
 
 Now let's add an option to disable certain threads based on name:
 
+[ TBD... ]
+
 ### C API ###
 
 Refer to the [online Stackdb C API](api.html).
@@ -1211,10 +1647,13 @@ Refer to the [online Stackdb C API](api.html).
 Writing Stackdb Programs in Python
 ----------------------------------
 
-We haven't yet built this binding, but will do so.
+We haven't yet built this binding, but may do so.
 
 
 
 [Ubuntu Debug Symbol Packages]: https://wiki.ubuntu.com/DebuggingProgramCrash#Debug_Symbol_Packages
 [Fedora Debug Symbol Packages]: https://fedoraproject.org/wiki/StackTraces
 [GNU argp]: http://www.gnu.org/software/libc/manual/html_node/Argp.html
+[the Stackdb architecture diagram]: arch.svg
+[stack of Xen, OS-Process, and PHP drivers]: arch.svg
+[stack of Ptrace and PHP drivers]: arch-ptrace.svg
