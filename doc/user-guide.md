@@ -633,7 +633,50 @@ libqemuhacks.so.0.0.0 is on your system.
 
 #### Using Eucalyptus to Run QEMU/KVM ####
 
-[ TBD. ]
+Eucalyptus uses Libvirt to manage VMs.  When Eucalyptus creates a VM
+(i.e., if you use the `euca-install-image` command, or the Eucalyptus
+web console), Eucalyptus will take the input, then map a Libvirt XML
+file template, and finally generate an XML file that could be taken as
+an input by Libvirt APIs.  We need to modify the Libvirt XML file
+template as done in the previous section.
+
+The template file is probably /etc/eucalyptus/libvirt.xsl .  This is a
+template to match all the Eucalyptus options, so you would see many "if"
+clauses in it.  You would find below three lines, which checks whether
+the hypervisor type is Xen or KVM.
+
+    <domain>
+      <xsl:attribute name="type">
+        <xsl:value-of select="/instance/hypervisor/@type"/>
+      </xsl:attribute>
+
+Since Xen on Eucalyptus isn't well-supported, and since we only want it
+to work for KVM here, you could safely comment out those three lines,
+and add the extra lines for KVM like in last section.
+
+Then, add several lines right after the lines being commented out:
+
+    <domain type="kvm" xmlns:qemu="http://libvirt.org/schemas/domain/qemu/1.0">
+      <memoryBacking>
+        <hugepages/>
+      </memoryBacking>
+      <qemu:commandline>
+        <qemu:arg value='-gdb'/>
+        <qemu:arg value='tcp:127.0.0.1:1234,nowait,nodelay,server'/>
+        <qemu:env name='QEMU_MEMPATH_PREFIX' value='/hugetlbfs/'/>
+        <qemu:env name='LD_PRELOAD' value='/home/mind/Downloads/vmi/stackDB/vmi.obj/target/.libs/libqemuhacks.so.0.0.0'/>
+      </qemu:commandline>
+                
+Then you can create Eucalyptus VMs as before, using "euca-run-instances"
+or web console; the generated memory file will be in
+`/hugetlbfs/libvirt/qemu`.  Note that since the tcp port is specified as
+`1234` in the XML template, so when you simply use the same way to
+create Eucalyptus VM again, it would fail since the specific tcp port
+has been taken, so remember to change the file to some other port number
+if you want multiple VMs running which all could use StackDB.  (There
+might be a way to modify the Eucalyptus source code or the template
+itself in order to automatically change the port number, but we haven't
+needed that yet.)
 
 #### Using OpenStack to Run QEMU/KVM ####
 
