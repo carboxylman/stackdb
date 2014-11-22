@@ -61,14 +61,8 @@ ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
 
-HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
-	$(TOP_SRCDIR)/target/target.h $(TOP_SRCDIR)/target/target_api.h \
-	$(TOP_SRCDIR)/target/probe.h $(TOP_SRCDIR)/target/probe_api.h \
-	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
-	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
-	$(TOP_SRCDIR)/include/output.h
-
 OBJECTS := probetargets.lo dumpthreads.lo backtrace.lo psaction.lo
+DEPENDENCIES := $(OBJECTS:%.lo=%.d)
 
 LIBRARIES := 
 
@@ -94,22 +88,22 @@ all:	$(LIBRARIES) $(PROGRAMS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
-.c.lo:	$(HEADERS)
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+# Don't fail on missing .d files; there won't be any on the first run.
+-include $(DEPENDENCIES)
 
-probetargets: $(HEADERS) $(LIBRARIES) probetargets.lo $(STATICLIBS)
+probetargets: $(LIBRARIES) probetargets.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-dumpthreads: $(HEADERS) $(LIBRARIES) dumpthreads.lo $(STATICLIBS)
+dumpthreads: $(LIBRARIES) dumpthreads.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-psaction: $(HEADERS) $(LIBRARIES) psaction.lo $(STATICLIBS)
+psaction: $(LIBRARIES) psaction.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-backtrace: $(HEADERS) $(LIBRARIES) backtrace.lo $(STATICLIBS)
+backtrace: $(LIBRARIES) backtrace.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
@@ -119,6 +113,7 @@ clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS)
 	$(RM) -f $(LIBRARIES) 
 	$(RM) -f $(PROGRAMS)
+	$(RM) -f $(DEPENDENCIES)
 
 distclean: distclean-subdirs
 

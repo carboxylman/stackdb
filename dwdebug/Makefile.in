@@ -36,16 +36,9 @@ PYCFLAGS += -I@PYTHON_INCLUDE@ $(LCFLAGS)
 
 LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS)
 
-HEADERS := $(SRCDIR)/dwdebug.h $(SRCDIR)/dwdebug_priv.h \
-	$(SRCDIR)/binfile.h \
-	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
-	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
-	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h \
-	$(TOP_SRCDIR)/include/glib_wrapper.h
-
 OBJECTS := symdict.lo scope.lo location.lo binfile.lo binfile_elf.lo debug.lo \
 	dwarf_debuginfo.lo dwarf_elfutils.lo dwarf_expr.lo dwarf_cfa.lo
-
+DEPENDENCIES := $(OBJECTS:%.lo=%.d)
 LIBRARIES := libdwdebug.la 
 STATICLIBS :=  $(OBJDIR)/lib/libvmilib.la 
 ifeq ($(ENABLE_PYTHON),"1")
@@ -70,8 +63,8 @@ all:	$(LIBRARIES) $(SWIGLIBS) $(PROGRAMS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
-.c.lo:	$(HEADERS)
-	$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+# Don't fail on missing .d files; there won't be any on the first run.
+-include $(DEPENDENCIES) 
 
 libdwdebug.la: $(OBJECTS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS) \
@@ -90,7 +83,7 @@ libpydwdebug.la: dwdebug_wrap_py.lo
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $< -rpath $(INSTALL_LIBDIR) \
 		${LDFLAGS}
 
-dumpdebuginfo: $(HEADERS) $(LIBRARIES) dumpdebuginfo.lo $(STATICLIBS)
+dumpdebuginfo: $(LIBRARIES) dumpdebuginfo.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
@@ -114,6 +107,7 @@ clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(PROGRAMS)
 	rm -f dumpdebuginfo* .libs/dwdebug_wrap* dwdebug_wrap* dwdebug.py
 	$(RM) -rf .libs
+	$(RM) -f $(DEPENDENCIES)
 
 distclean: distclean-subdirs
 

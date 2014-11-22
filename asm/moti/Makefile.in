@@ -60,15 +60,8 @@ endif
 
 LDFLAGS += -L$(CLIPSSRC) -lclips -lm -lrt
 
-HEADERS := $(SRCDIR)/command_interface.h $(SRCDIR)/policy_engine.h \
-	$(SRCDIR)/repair_engine.h $(TOP_SRCDIR)/dwdebug/dwdebug.h \
-	$(TOP_SRCDIR)/target/target.h $(TOP_SRCDIR)/target/target_api.h \
-	$(TOP_SRCDIR)/target/probe.h $(TOP_SRCDIR)/target/probe_api.h \
-	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
-	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
-	$(TOP_SRCDIR)/include/output.h
-
 OBJECTS := policy_engine.lo
+DEPENDENCIES := $(OBJECTS:%.lo=%.d)
 
 LIBRARIES := 
 
@@ -100,10 +93,10 @@ all:	$(LIBRARIES) $(PROGRAMS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
-.c.lo:	$(HEADERS)
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+# Don't fail on missing .d files; there won't be any on the first run.
+-include $(DEPENDENCIES)
 
-policy_engine: $(HEADERS) $(LIBRARIES) $(OBJECTS) $(STATICLIBS)
+policy_engine: $(LIBRARIES) $(OBJECTS) $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $(OBJECTS) \
 	    $(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
@@ -112,6 +105,7 @@ install: def-install install-subdirs
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS)
 	$(RM) $(LIBRARIES) $(PROGRAMS)
+	$(RM) -f $(DEPENDENCIES)
 
 distclean: distclean-subdirs
 

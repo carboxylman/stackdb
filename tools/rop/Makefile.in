@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2012-2013 The University of Utah
+## Copyright (c) 2012-2014 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -54,15 +54,8 @@ ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
 
-HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
-	$(TOP_SRCDIR)/target/target.h $(TOP_SRCDIR)/target/target_api.h \
-	$(TOP_SRCDIR)/target/probe.h $(TOP_SRCDIR)/target/probe_api.h \
-	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
-	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
-	$(TOP_SRCDIR)/include/output.h \
-	$(TOP_SRCDIR)/tools/rop/rop.h
-
-OBJECTS := rop_util.lo 
+OBJECTS := rop_util.lo rop_checkret.lo
+DEPENDENCIES := $(OBJECTS:%.lo=%.d)
 
 PROGRAMS := rop_checkret
 
@@ -86,11 +79,11 @@ all:	$(LIBRARIES) $(PROGRAMS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
-.c.lo:	$(HEADERS)
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+# Don't fail on missing .d files; there won't be any on the first run.
+-include $(DEPENDENCIES)
 
-rop_checkret: $(HEADERS) $(OBJECTS) rop_checkret.lo $(STATICLIBS)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+rop_checkret: $(OBJECTS) $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ \
 		$(CFLAGS) $(OBJECTS) $(STATICLIBS) $(LDFLAGS)
 
 install: def-install install-subdirs
@@ -100,8 +93,9 @@ install: def-install install-subdirs
 		$(INSTALL_LIBEXECDIR)/analysis/RopComeFrom
 
 clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(PROGRAMS) rop_checkret.lo
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(PROGRAMS)
 	$(RM) -rf .libs
+	$(RM) -f $(DEPENDENCIES)
 
 distclean: distclean-subdirs
 

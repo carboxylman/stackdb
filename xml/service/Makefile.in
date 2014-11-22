@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2012, 2013 The University of Utah
+## Copyright (c) 2012, 2013, 2014 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -25,6 +25,8 @@ OBJDIR		= @top_builddir@
 ODIR		= @top_builddir@/$(SUBDIR)
 
 SUBDIRS = 
+
+.SUFFIXES: .nsmap
 
 include $(OBJDIR)/Makeconf
 
@@ -77,11 +79,6 @@ ifeq ($(ENABLE_LIBVMI),"1")
 	STATICLIBS += $(LIBVMI)/lib/libvmi.a
 endif
 
-HEADERS := $(SRCDIR)/../schema/debuginfo_xml.h $(SRCDIR)/debuginfo_rpc.h \
-	$(SRCDIR)/../schema/target_xml.h $(SRCDIR)/target_rpc.h \
-	$(SRCDIR)/../schema/analysis_xml.h $(SRCDIR)/analysis_rpc.h \
-	$(SRCDIR)/../util.h proxyreq.h
-
 OBJECTS-LIB := proxyreq.lo generic_rpc.lo # util.lo
 
 OBJECTS-DEBUGINFO-RPCLIB := debuginfo_rpc.lo
@@ -121,6 +118,7 @@ OBJECTS-ANALYSIS-ALL := $(OBJECTS-ANALYSIS-RPCLIB) $(OBJECTS-ANALYSIS-MODULE) \
 OBJECTS := $(OBJECTS-DEBUGINFO-ALL) $(OBJECTS-TARGET-ALL) \
 	$(OBJECTS-ANALYSIS-ALL) $(OBJECTS-TARGETLISTENER-CLIENTLIB) \
 	$(OBJECTS-ANALYSISLISTENER-CLIENTLIB)
+DEPENDENCIES := $(OBJECTS:%.lo=%.d) $(OBJECTS-LIB:%.lo=%.d)
 
 #
 # Stuff for building libraries.  NB: if you link against the analysis lib, you
@@ -166,6 +164,9 @@ RM=rm -f
 all:	$(PROGRAMS) $(HELPERS) $(LIBRARIES) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
+
+# Don't fail on missing .d files; there won't be any on the first run.
+-include $(DEPENDENCIES)
 
 %_rpc_moduleH.h: $(SRCDIR)/%_rpc.gsm.h
 	$(SOAPCPP2) -w $< 
@@ -268,19 +269,27 @@ DEFPORT-analysis = 3903
 	@echo -n ""
 
 %_listener_moduleClientLib.lo: %_listener_moduleClientLib.c
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -DWITH_NOSERVERREQUEST -c $<
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-DWITH_NOSERVERREQUEST \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
 %_rpc_moduleServerLib.lo: %_rpc_moduleServerLib.c
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -DWITH_NOSERVERREQUEST -c $<
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-DWITH_NOSERVERREQUEST \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
 %_rpc_moduleServer.lo: %_rpc_moduleServer.c
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -DWITH_NOGLOBAL -DWITH_NOSERVEREQUEST -DWITH_NOSERVE -c $<
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-DWITH_NOGLOBAL -DWITH_NOSERVEREQUEST -DWITH_NOSERVE \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
 %_rpc_moduleC.lo: %_rpc_moduleC.c
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
 #%_rpc_moduleServer.lo: %_rpc_moduleServer.c
-#	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -DWITH_NOGLOBAL -c $<
+#	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -DWITH_NOGLOBAL \
+#		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
 %C.c: %.wsdl 
 	@echo -n ""
@@ -289,37 +298,48 @@ DEFPORT-analysis = 3903
 	@echo -n ""
 
 %C.lo: %C.c 
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
 %Server.lo: %Server.c
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
 %ServerLib.lo: %ServerLib.c
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
 %_lib.lo: $(SRCDIR)/%_lib.c $(SRCDIR)/%_lib.h %.wsdl
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
 common_xml.lo: $(SRCDIR)/common_xml.c $(SRCDIR)/common_xml.h common_xml.gsm.h
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
 %_rpc.lo: $(SRCDIR)/%_rpc.c $(SRCDIR)/%_xml.h  $(SRCDIR)/%_rpc.h %.wsdl
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
-debuginfo.lo: $(SRCDIR)/debuginfo.c $(HEADERS) debuginfo.wsdl
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+debuginfo.lo: $(SRCDIR)/debuginfo.c debuginfo.wsdl
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
-target.lo: $(SRCDIR)/target.c $(HEADERS) target.wsdl
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+target.lo: $(SRCDIR)/target.c target.wsdl
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
-analysis.lo: $(SRCDIR)/analysis.c $(HEADERS) analysis.wsdl
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+analysis.lo: $(SRCDIR)/analysis.c analysis.wsdl
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
-monitored_target.lo: $(SRCDIR)/monitored_target.c $(HEADERS) target.wsdl
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+monitored_target.lo: $(SRCDIR)/monitored_target.c target.wsdl
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
 %.lo: $(SRCDIR)/%.c 
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
 debuginfo: debuginfo.wsdl \
 	  $(OBJECTS-LIB) \
@@ -337,7 +357,8 @@ debuginfo: debuginfo.wsdl \
 	   $(STATICLIBS) $(LDFLAGS)
 
 %.nsmap.lo: %.wsdl
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $(@:.lo=).c 
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $(@:.lo=).c 
 
 target: target.wsdl \
 	  $(OBJECTS-LIB) \
@@ -406,27 +427,27 @@ analysis: analysis.wsdl \
 		$(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
 		$(STATICLIBS) $(LDFLAGS)
 
-libdebuginfo_rpc.a: $(HEADERS) $(OBJECTS-DEBUGINFO-LIB)
+libdebuginfo_rpc.a: $(OBJECTS-DEBUGINFO-LIB)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-DEBUGINFO-LIB)
-libdebuginfo_rpc.lo: $(HEADERS) $(OBJECTS-DEBUGINFO-SHLIB)
-	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS-DEBUGINFO-SHLIB)
+libdebuginfo_rpc.lo: $(OBJECTS-DEBUGINFO-SHLIB)
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS-DEBUGINFO-SHLIB) -MD -MP -MT $@ -MF ${@:.lo=.d} 
 libdebuginfo_rpc.so.$(LIBVERSION): libdebuginfo_rpc.lo
 	$(CP) -f libdebuginfo_rpc.lo $@
 libdebuginfo_rpc.so: libdebuginfo_rpc.so.$(LIBVERSION)
 	$(LN_S) $< $@
 
-libtarget_rpc.a: $(HEADERS) $(OBJECTS-TARGET-LIB)
+libtarget_rpc.a: $(OBJECTS-TARGET-LIB)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-TARGET-LIB)
-libtarget_rpc.lo: $(HEADERS) $(OBJECTS-TARGET-SHLIB)
+libtarget_rpc.lo: $(OBJECTS-TARGET-SHLIB)
 	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS-TARGET-SHLIB)
 libtarget_rpc.so.$(LIBVERSION): libtarget_rpc.lo
 	$(CP) -f libtarget_rpc.lo $@
 libtarget_rpc.so: libtarget_rpc.so.$(LIBVERSION)
 	$(LN_S) $< $@
 
-libanalysis_rpc.a: $(HEADERS) $(OBJECTS-ANALYSIS-LIB)
+libanalysis_rpc.a: $(OBJECTS-ANALYSIS-LIB)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-ANALYSIS-LIB)
-libanalysis_rpc.lo: $(HEADERS) $(OBJECTS-ANALYSIS-SHLIB)
+libanalysis_rpc.lo: $(OBJECTS-ANALYSIS-SHLIB)
 	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS-ANALYSIS-SHLIB)
 libanalysis_rpc.so.$(LIBVERSION): libanalysis_rpc.lo
 	$(CP) -f libanalysis_rpc.lo $@
@@ -467,6 +488,7 @@ clean: clean-debuginfo clean-target clean-analysis clean-misc clean-subdirs
 	$(RM) RECV.log TEST.log
 	$(RM) $(PROGRAMS) $(OBJECTS) $(HELPERS) $(LIBRARIES) lib*
 	$(RM) -rf .libs
+	$(RM) -f $(DEPENDENCIES) monitored_target.d
 
 distclean: distclean-subdirs
 
