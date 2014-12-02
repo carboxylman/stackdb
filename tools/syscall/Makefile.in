@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2013 The University of Utah
+## Copyright (c) 2013, 2014 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -54,15 +54,8 @@ ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
 
-HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
-	$(TOP_SRCDIR)/target/target.h $(TOP_SRCDIR)/target/target_api.h \
-	$(TOP_SRCDIR)/target/probe.h $(TOP_SRCDIR)/target/probe_api.h \
-	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
-	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
-	$(TOP_SRCDIR)/include/output.h \
-	$(TOP_SRCDIR)/tools/cfi/cfi.h
-
 OBJECTS := dumpsyscalltable.lo strace.lo
+DEPENDENCIES := $(OBJECTS:%.lo=%.d)
 
 PROGRAMS := dumpsyscalltable strace
 
@@ -86,14 +79,14 @@ all:	$(LIBRARIES) $(PROGRAMS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
-.c.lo:	$(HEADERS)
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+# Don't fail on missing .d files; there won't be any on the first run.
+-include $(DEPENDENCIES)
 
-dumpsyscalltable: $(HEADERS) $(LIBRARIES) dumpsyscalltable.lo $(STATICLIBS)
+dumpsyscalltable: $(LIBRARIES) dumpsyscalltable.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-strace: $(HEADERS) $(OBJECTS) strace.lo $(STATICLIBS)
+strace: $(OBJECTS) strace.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
@@ -106,6 +99,7 @@ install: def-install install-subdirs
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(PROGRAMS) 
 	$(RM) -rf .libs
+	$(RM) -f $(DEPENDENCIES)
 
 distclean: distclean-subdirs
 

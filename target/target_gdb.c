@@ -149,6 +149,11 @@ static int gdb_enable_sw_breakpoint(struct target *target,tid_t tid,
 				    struct target_memmod *mmod);
 static int gdb_disable_sw_breakpoint(struct target *target,tid_t tid,
 				     struct target_memmod *mmod);
+static int gdb_change_sw_breakpoint(struct target *target,tid_t tid,
+				    struct target_memmod *mmod,
+				    unsigned char *code,unsigned long code_len);
+static int gdb_unchange_sw_breakpoint(struct target *target,tid_t tid,
+				      struct target_memmod *mmod);
 static int gdb_set_hw_breakpoint(struct target *target,tid_t tid,
 				 REG num,ADDR addr);
 static int gdb_set_hw_watchpoint(struct target *target,tid_t tid,
@@ -253,7 +258,8 @@ struct target_ops gdb_ops = {
 
     .insert_sw_breakpoint = gdb_insert_sw_breakpoint,
     .remove_sw_breakpoint = gdb_remove_sw_breakpoint,
-    .change_sw_breakpoint = NULL,
+    .change_sw_breakpoint = gdb_change_sw_breakpoint,
+    .unchange_sw_breakpoint = gdb_unchange_sw_breakpoint,
     .enable_sw_breakpoint = gdb_enable_sw_breakpoint,
     .disable_sw_breakpoint = gdb_disable_sw_breakpoint,
 
@@ -284,6 +290,7 @@ struct target_ops gdb_ops = {
 #define GDB_ARGP_QEMU_QMP_PORT      0x650009
 #define GDB_ARGP_CLEAR_MEM_CACHES   0x65000a
 #define GDB_ARGP_MEMCACHE_MMAP_SIZE 0x65000b
+#define GDB_ARGP_LIBVIRT_DOMAIN     0x65000c
 
 struct argp_option gdb_argp_opts[] = {
     /* These options set a flag. */
@@ -307,6 +314,10 @@ struct argp_option gdb_argp_opts[] = {
           "Attach to QEMU QMP on the given port (default 1235).",-4 },
     { "qemu-mem-path",GDB_ARGP_QEMU_MEM_PATH,"PATHNAME",0,
           "Read/write QEMU's physical memory via this filename (see QEMU's -mem-path option; also preload libnunlink.so and set NUNLINK_PREFIX accordingly).",-4 },
+#ifdef ENABLE_LIBVIRT
+    { "qemu-libvirt-domain",GDB_ARGP_LIBVIRT_DOMAIN,"DOMAIN",0,
+          "Access QEMU QMP over libvirt proxy.",-4 },
+#endif
     { "kvm",GDB_ARGP_IS_KVM,NULL,0,
           "Enable QEMU GDB KVM stub support.",-4 },
     { "memcache-mmap-size",GDB_ARGP_MEMCACHE_MMAP_SIZE,"BYTES",0,
@@ -350,6 +361,10 @@ int gdb_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	ac += 2;
     if (xspec->qemu_mem_path)
 	ac += 2;
+#ifdef ENABLE_LIBVIRT
+    if (xspec->qemu_libvirt_domain)
+	ac += 2;
+#endif
     if (xspec->is_kvm)
 	ac += 1;
     if (xspec->memcache_mmap_size)
@@ -397,6 +412,12 @@ int gdb_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	av[j++] = strdup("--qemu-mem-path");
 	av[j++] = strdup(xspec->qemu_mem_path);
     }
+#ifdef ENABLE_LIBVIRT
+    if (xspec->qemu_libvirt_domain) {
+	av[j++] = strdup("--qemu-libvirt-domain");
+	av[j++] = strdup(xspec->qemu_libvirt_domain);
+    }
+#endif
     if (xspec->is_kvm)
 	av[j++] = strdup("--kvm");
     if (xspec->memcache_mmap_size) {
@@ -520,6 +541,11 @@ error_t gdb_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case GDB_ARGP_QEMU_MEM_PATH:
 	xspec->qemu_mem_path = strdup(arg);
 	break;
+#ifdef ENABLE_LIBVIRT
+    case GDB_ARGP_LIBVIRT_DOMAIN:
+	xspec->qemu_libvirt_domain = strdup(arg);
+	break;
+#endif
     case GDB_ARGP_IS_KVM:
 	xspec->is_kvm = 1;
 	break;
@@ -1535,8 +1561,10 @@ static int __gdb_resume(struct target *target,int detaching) {
 	return -1;
     }
 
+    /*
     REGVAL ipval = target_read_reg(target,TID_GLOBAL,target->ipregno);
     target_write_reg(target,TID_GLOBAL,target->ipregno,ipval);
+    */
 
     /*
      * Only call this if we have threads still, or we are not detaching;
@@ -2638,12 +2666,22 @@ static unsigned long gdb_write_phys(struct target *target,ADDR paddr,
 
 static struct target_memmod *gdb_insert_sw_breakpoint(struct target *target,
 						      tid_t tid,ADDR addr) {
+    struct target_memmod *mmod;
+
+    /*
+     * Create a fake memmod before gdb changes memory.
+     */
+    mmod = target_memmod_create(target,tid,addr,0,MMT_BP,
+				target->arch->breakpoint_instrs,
+				target->arch->breakpoint_instrs_len,1);
+
     if (gdb_rsp_insert_break(target,addr,GDB_RSP_BREAK_SW,1)) {
 	verror("could not insert breakpoint!\n");
+	target_memmod_release(target,tid,mmod);
 	return NULL;
     }
-    else
-	return target_memmod_create(target,tid,addr,0,MMT_BP,NULL,0);
+
+    return mmod;
 }
 
 static int gdb_remove_sw_breakpoint(struct target *target,tid_t tid,
@@ -2653,7 +2691,8 @@ static int gdb_remove_sw_breakpoint(struct target *target,tid_t tid,
 	return -1;
     }
     else
-	return 0;
+	/* Make sure the no-write mmod is removed. */
+	return _target_remove_sw_breakpoint(target,tid,mmod);
 }
 
 static int gdb_enable_sw_breakpoint(struct target *target,tid_t tid,
@@ -2663,13 +2702,44 @@ static int gdb_enable_sw_breakpoint(struct target *target,tid_t tid,
 	return -1;
     }
     else
-	return 0;
+	return _target_enable_sw_breakpoint(target,tid,mmod);
 }
 
 static int gdb_disable_sw_breakpoint(struct target *target,tid_t tid,
 				     struct target_memmod *mmod) {
     if (gdb_rsp_remove_break(target,mmod->addr,GDB_RSP_BREAK_SW,1)) {
 	verror("could not remove breakpoint!\n");
+	return -1;
+    }
+    else
+	return _target_disable_sw_breakpoint(target,tid,mmod);
+}
+
+int gdb_change_sw_breakpoint(struct target *target,tid_t tid,
+				struct target_memmod *mmod,
+				unsigned char *code,unsigned long code_len) {
+    /*
+     * GDB (at least QEMU's stub) is persnickety.  We have to remove the
+     * breakpoint first, then change the code, then change it back.
+     */
+    if (gdb_rsp_remove_break(target,mmod->addr,GDB_RSP_BREAK_SW,1)) {
+	vwarn("could not remove breakpoint before change;"
+	      " it may quit working!\n");
+    }
+
+    target_memmod_set_writeable(target,mmod,1);
+
+    return _target_change_sw_breakpoint(target,tid,mmod,code,code_len);
+}
+
+int gdb_unchange_sw_breakpoint(struct target *target,tid_t tid,
+			       struct target_memmod *mmod) {
+    _target_unchange_sw_breakpoint(target,tid,mmod);
+
+    target_memmod_set_writeable(target,mmod,0);
+
+    if (gdb_rsp_insert_break(target,mmod->addr,GDB_RSP_BREAK_SW,1)) {
+	verror("could not insert breakpoint!\n");
 	return -1;
     }
     else

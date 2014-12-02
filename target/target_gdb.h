@@ -61,6 +61,8 @@ struct gdb_spec {
     char *qemu_mem_path;
 
     char *main_filename;
+
+    char *qemu_libvirt_domain;
 };
 
 struct gdb_thread_state {
@@ -128,14 +130,6 @@ struct gdb_state {
     /* Which hops are we using? */
     struct gdb_helper_ops *hops;
     void *hops_priv;
-
-    /*
-#ifdef __x86_64__
-    uint8_t *hvm_context_buf;
-    uint32_t hvm_context_bufsiz;
-    HVM_SAVE_TYPE(CPU) *hvm_cpu;
-#endif
-    */
 
     int evloop_fd;
 };

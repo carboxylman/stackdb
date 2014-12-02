@@ -28,6 +28,10 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/mman.h>
+#ifdef ENABLE_LIBVIRT
+#include <libvirt/libvirt.h>
+#include <libvirt/libvirt-qemu.h>
+#endif
 
 #include "common.h"
 #include "arch.h"
@@ -63,6 +67,10 @@ struct gdb_helper_qemu_state {
     int ram_mmap_fd;
     void *ram_mmap;
     unsigned long ram_mmap_size;
+#ifdef ENABLE_LIBVIRT
+    virConnectPtr qemu_libvirt_conn;
+    virDomainPtr qemu_libvirt_dom;
+#endif
 };
 
 int gdb_helper_qemu_init(struct target *target) {
@@ -73,16 +81,15 @@ int gdb_helper_qemu_init(struct target *target) {
 
     qstate = calloc(1,sizeof(*qstate));
 
+    /* We use memcache for v2p -- create one. */
+    if (target->memcache) {
+	verror("memcache already in use!\n");
+	errno = EINVAL;
+	return -1;
+    }
+    target->memcache = memcache_create(0,0,NULL);
+
     if (gspec->qemu_mem_path) {
-	/* We use memcache for v2p -- create one. */
-	if (target->memcache) {
-	    verror("memcache already in use!\n");
-	    errno = EINVAL;
-	    return -1;
-	}
-
-	target->memcache = memcache_create(0,0,NULL);
-
 	if (stat(gspec->qemu_mem_path,&sbuf) < 0) {
 	    verror("could not stat QEMU mem-path file %s: %s (%d)!\n",
 		   gspec->qemu_mem_path,strerror(errno),errno);
@@ -109,6 +116,19 @@ int gdb_helper_qemu_init(struct target *target) {
 
     qstate->qemu_qmp_fd = -1;
     gstate->hops_priv = qstate;
+
+    /*
+     * No version of QEMU hijacks userspace exceptions for us... we must
+     * have them emulated in the OS personality...
+     */
+    g_hash_table_insert(target->config,
+			strdup("OS_EMULATE_USERSPACE_EXCEPTIONS"),
+			strdup("1"));
+
+#ifdef ENABLE_LIBVIRT
+    qstate->qemu_libvirt_conn = 0;
+    qstate->qemu_libvirt_dom = 0;
+#endif
 
     return 0;
 }
@@ -259,6 +279,25 @@ int gdb_helper_qemu_attach(struct target *target) {
 	write(qstate->qemu_qmp_fd,cmd,strlen(cmd));
 	__recv_til_block(qstate->qemu_qmp_fd,NULL,0,1);
     }
+#ifdef ENABLE_LIBVIRT
+    else if (gspec->qemu_libvirt_domain) {
+	qstate->qemu_libvirt_conn = virConnectOpen(NULL);
+	if (!qstate->qemu_libvirt_conn)
+	    return -1;
+	qstate->qemu_libvirt_dom =
+	    virDomainLookupByName(qstate->qemu_libvirt_conn,
+				  gspec->qemu_libvirt_domain);
+	if (!qstate->qemu_libvirt_dom) {
+	    verror("could not find libvirt domain '%s'!\n",
+		   gspec->qemu_libvirt_domain);
+	    if (!errno)
+		errno = ECONNREFUSED;
+	    virConnectClose(qstate->qemu_libvirt_conn);
+	    qstate->qemu_libvirt_conn = NULL;
+	    return -1;
+	}
+    }
+#endif
 
     return 0;
 
@@ -312,23 +351,44 @@ int gdb_helper_qemu_load_machine(struct target *target,
     unsigned int i;
     char *cmd = "{ \"execute\": \"human-monitor-command\","
 	        "  \"arguments\": { \"command-line\": \"info registers\" } }\n";
-    char buf[4096];
+    char *buf;
+    unsigned int bufsiz;
     char *idx;
     REGVAL regval;
 
-    __recv_til_block(qstate->qemu_qmp_fd,NULL,0,0);
+    if (qstate->qemu_qmp_fd > 0) {
+	bufsiz = 4096;
+	buf = malloc(bufsiz);
+	__recv_til_block(qstate->qemu_qmp_fd,NULL,0,0);
 
-    /*
-     * Send the command -- the whole thing.
-     */
-    write(qstate->qemu_qmp_fd,cmd,strlen(cmd));
+	/*
+	 * Send the command -- the whole thing.
+	 */
+	write(qstate->qemu_qmp_fd,cmd,strlen(cmd));
 
-    /*
-     * Block until we receive enough crap that has a GS *= *deadbeef.xs
-     */
-    __recv_til_block(qstate->qemu_qmp_fd,buf,sizeof(buf),1);
+	/*
+	 * Block until we receive enough crap that has a GS *= *deadbeef.xs
+	 */
+	__recv_til_block(qstate->qemu_qmp_fd,buf,bufsiz,1);
+    }
+#ifdef ENABLE_LIBVIRT
+    else if (qstate->qemu_libvirt_conn) {
+	buf = NULL;
+	virDomainQemuMonitorCommand(qstate->qemu_libvirt_dom,cmd,&buf,0);
+	if (!buf) {
+	    if (!errno)
+		errno = ECOMM;
+	    return -1;
+	}
+	bufsiz = strlen(buf);
+    }
+#endif
+    else {
+	errno = EINVAL;
+	return -1;
+    }
 
-    for (i = 0; i < sizeof(buf); ++i) {
+    for (i = 0; i < bufsiz; ++i) {
 	if (buf[i] == '\r' || buf[i] == '\n')
 	    buf[i] = ' ';
     }
@@ -416,7 +476,10 @@ int gdb_helper_qemu_load_machine(struct target *target,
     else
 	vwarnopt(9,LA_TARGET,LF_GDB,"no efer!\n");
 
-    __recv_til_block(qstate->qemu_qmp_fd,NULL,0,0);
+    if (qstate->qemu_qmp_fd > 0)
+	__recv_til_block(qstate->qemu_qmp_fd,NULL,0,0);
+
+    free(buf);
 
     return 0;
 }
@@ -655,6 +718,13 @@ unsigned char *gdb_helper_qemu_read_v_str(struct target *target,
 }
 
 /*
+ * XXX NB: When we talk to the QEMU GDB, we can't seem to read/write
+ * "big chunks" without crashing the GDB stub, and thus QEMU --- so just
+ * read 1KB at a time.
+ */
+#define GDB_MAX_IO 1024
+
+/*
  * Reads a block of memory from the target.  If @buf is non-NULL, we
  * assume it is at least @length bytes long; the result is placed into
  * @buf and @buf is returned.  If @buf is NULL, we allocate a buffer
@@ -670,6 +740,8 @@ unsigned char *gdb_helper_qemu_read_tid(struct target *target,
 					unsigned char *buf) {
     struct target_thread *tthread;
     int rc;
+    int didalloc = 0;
+    unsigned long bread,left;
     struct gdb_state *xstate;
     struct gdb_helper_qemu_state *mstate;
 
@@ -708,13 +780,35 @@ unsigned char *gdb_helper_qemu_read_tid(struct target *target,
     if (length == 0)
 	return gdb_helper_qemu_read_v_str(target,tid,pgd,addr);
 
-    rc = gdb_rsp_read_mem(target,addr,length,buf);
-    if (rc == 0)
-	return buf;
-    else {
-	verror("v 0x%"PRIxADDR" len %lu: %s (%d); continuing\n",
-	       addr,length,strerror(errno),rc);
-	return NULL;
+    if (!buf) {
+	didalloc = 1;
+	buf = malloc(length);
+    }
+
+    bread = 0;
+    while (bread < length) {
+	left = length - bread;
+	rc = gdb_rsp_read_mem(target,addr + bread,
+			      (left) > GDB_MAX_IO ? GDB_MAX_IO : left,
+			      buf + bread);
+	if (rc == 0) {
+	    if (left > GDB_MAX_IO)
+		bread += GDB_MAX_IO;
+	    else
+		bread += left;
+
+	    if (bread >= length)
+		return buf;
+	    else
+		continue;
+	}
+	else {
+	    verror("v 0x%"PRIxADDR" len %lu: %s (%d); continuing\n",
+		   addr,length,strerror(errno),rc);
+	    if (didalloc)
+		free(buf);
+	    return NULL;
+	}
     }
 }
 
@@ -729,6 +823,7 @@ unsigned long gdb_helper_qemu_write_tid(struct target *target,
 					unsigned char *buf) {
     struct target_thread *tthread;
     int rc;
+    unsigned long bwrote,left;
     struct gdb_state *xstate;
     struct gdb_helper_qemu_state *mstate;
 
@@ -765,15 +860,32 @@ unsigned long gdb_helper_qemu_write_tid(struct target *target,
 	}
     }
 
-    rc = gdb_rsp_write_mem(target,addr,length,buf);
-    if (rc == 0) {
-	return length;
+    bwrote = 0;
+    while (bwrote < length) {
+	left = length - bwrote;
+	rc = gdb_rsp_write_mem(target,addr + bwrote,
+			       (left) > GDB_MAX_IO ? GDB_MAX_IO : left,
+			       buf + bwrote);
+	if (rc == 0) {
+	    if (left > GDB_MAX_IO)
+		bwrote += GDB_MAX_IO;
+	    else
+		bwrote += left;
+
+	    if (bwrote >= length)
+		return length;
+	    else
+		continue;
+	}
+	else {
+	    verror("v 0x%"PRIxADDR" len %lu: %s (%d)\n",
+		   addr,length,strerror(errno),rc);
+	    return 0;
+	}
     }
-    else {
-	verror("v 0x%"PRIxADDR" len %lu: %s (%d)\n",
-	       addr,length,strerror(errno),rc);
-	return 0;
-    }
+
+    /* NB: only way we get here is if length == 0 */
+    return 0;
 }
 
 int gdb_helper_qemu_addr_v2p(struct target *target,tid_t tid,ADDR pgd,
@@ -941,6 +1053,13 @@ int gdb_helper_qemu_fini(struct target *target) {
 	close(qstate->qemu_qmp_fd);
 	qstate->qemu_qmp_fd = -1;
     }
+#ifdef ENABLE_LIBVIRT
+    else if (qstate->qemu_libvirt_conn) {
+	qstate->qemu_libvirt_dom = 0;
+	virConnectClose(qstate->qemu_libvirt_conn);
+	qstate->qemu_libvirt_conn = 0;
+    }
+#endif
 
     if (qstate->ram_mmap) {
 	munmap(qstate->ram_mmap,qstate->ram_mmap_size);

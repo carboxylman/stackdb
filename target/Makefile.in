@@ -63,15 +63,6 @@ ifeq ($(ENABLE_DISTORM),"1")
 	PCLDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
 
-HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h $(TOP_SRCDIR)/dwdebug/dwdebug_priv.h \
-	$(TOP_SRCDIR)/dwdebug/binfile.h \
-	$(SRCDIR)/target.h $(SRCDIR)/target_api.h \
-	$(SRCDIR)/probe.h $(SRCDIR)/probe_api.h \
-	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
-	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
-	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h \
-	$(TOP_SRCDIR)/include/glib_wrapper.h
-
 OBJECTS := target.lo target_api.lo target_generic.lo memory.lo location.lo \
 	symbol.lo value.lo probe.lo probe_lib.lo probe_value.lo probe_filter.lo \
 	target_nv_filter.lo target_event.lo \
@@ -93,6 +84,7 @@ endif
 ifeq ($(ENABLE_DISTORM),"1")
 	OBJECTS += disasm.lo
 endif
+DEPENDENCIES := $(OBJECTS:%.lo=%.d)
 
 LIBRARIES := libtarget.la libqemuhacks.la
 
@@ -132,8 +124,8 @@ all:	$(LIBRARIES) $(PROGRAMS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
-.c.lo:	$(HEADERS)
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+# Don't fail on missing .d files; there won't be any on the first run.
+-include $(DEPENDENCIES)
 
 libtarget.la:	$(OBJECTS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS) \
@@ -143,11 +135,11 @@ libqemuhacks.la: qemuhacks.lo
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ qemuhacks.lo \
 		-rpath $(INSTALL_LIBDIR) -ldl
 
-dumptarget: $(HEADERS) dumptarget.lo $(LIBRARIES) $(STATICLIBS)
+dumptarget: dumptarget.lo $(LIBRARIES) $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-target_xen_vm_vmp: $(HEADERS) target_xen_vm_vmp.lo $(LIBRARIES) $(STATICLIBS)
+target_xen_vm_vmp: target_xen_vm_vmp.lo $(LIBRARIES) $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
@@ -171,6 +163,7 @@ clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(PROGRAMS)
 	rm -f dumptarget* target_xen_vm_vmp* qemuhacks*
 	$(RM) -rf .libs
+	$(RM) -f $(DEPENDENCIES)
 
 distclean: distclean-subdirs
 

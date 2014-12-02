@@ -47,3 +47,7 @@ xen: xen.lo
 xen-os-process: xen-os-process.lo
 	libtool --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(LIBS)
+
+clean:
+	@$(LIBTOOL) --mode=clean rm -f *.lo
+	$(RM) -f $(PROGRAMS) *.o .libs/*

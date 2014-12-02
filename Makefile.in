@@ -61,6 +61,8 @@ ifeq ("@ENABLE_SOAP@","1")
     SUBDIRS += xml
 endif
 
+.NOTPARALLEL:
+
 all: all-subdirs 
 
 include $(TOP_SRCDIR)/Makerules

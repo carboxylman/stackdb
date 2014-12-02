@@ -23,6 +23,10 @@
 
 extern struct arch arch_x86;
 
+#define X86_EF_TF (0x00000100)
+#define X86_EF_IF (0x00000200)
+#define X86_EF_RF (0x00010000)
+
 /*
  * This is the SVR4 DWARF map from gdb/gdb/i386-tdep.c .
  */

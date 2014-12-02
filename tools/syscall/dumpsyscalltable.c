@@ -74,8 +74,8 @@ int main(int argc,char **argv) {
     struct dump_info ud = { .stream = stdout,.prefix = "",.detail = 0,.meta = 0 };
     GSList *gsltmp;
 
-    tspec = target_argp_driver_parse(NULL,NULL,argc,argv,
-				     TARGET_TYPE_XEN | TARGET_TYPE_GDB,1);
+    tspec = target_argp_driver_parse_one(NULL,NULL,argc,argv,
+					 TARGET_TYPE_XEN | TARGET_TYPE_GDB,1);
 
     if (!tspec) {
 	verror("could not parse target arguments!\n");

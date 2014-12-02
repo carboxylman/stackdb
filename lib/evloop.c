@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -192,8 +192,8 @@ int evloop_maxsize(struct evloop *evloop) {
     return evloop->nfds;
 }
 
-int evloop_run(struct evloop *evloop,struct timeval *timeout,
-	    struct evloop_fdinfo **error_fdinfo) {
+int evloop_run(struct evloop *evloop,evloop_flags_t flags,struct timeval *timeout,
+	       struct evloop_fdinfo **error_fdinfo) {
     int rc;
     int hrc;
     int i;
@@ -228,8 +228,12 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 	    return 0;
 	}
 	else if (rc < 0) {
-	    if (errno == EINTR)
-		continue;
+	    if (errno == EINTR) {
+		if (flags & EVLOOP_RETONINT)
+		    return -1;
+		else
+		    continue;
+	    }
 	    else {
 		verror("select: %s\n",strerror(errno));
 		return -1;
@@ -427,8 +431,10 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
     }
 }
 
-int evloop_handleone(struct evloop *evloop,struct timeval *timeout,
-		     struct evloop_fdinfo **handled_fdinfo,int *handled_hrc) {
+int evloop_handleone(struct evloop *evloop,evloop_flags_t flags,
+		     struct timeval *timeout,
+		     struct evloop_fdinfo **handled_fdinfo,
+		     int *handled_fdtype,int *handled_hrc) {
     int rc;
     int hrc;
     int i;
@@ -472,12 +478,12 @@ int evloop_handleone(struct evloop *evloop,struct timeval *timeout,
 	    return 0;
 	}
 	else if (rc < 0) {
-	    if (errno == EINTR)
-		/*
-		 * This is the only way in which we could continue the
-		 * while loop!
-		 */
-		continue;
+	    if (errno == EINTR) {
+		if (flags & EVLOOP_RETONINT)
+		    return -1;
+		else
+		    continue;
+	    }
 	    else {
 		verror("select: %s\n",strerror(errno));
 		return -1;
@@ -572,6 +578,8 @@ int evloop_handleone(struct evloop *evloop,struct timeval *timeout,
 
 	    if (handled_fdinfo)
 		*handled_fdinfo = fdinfo;
+	    if (handled_fdtype)
+		*handled_fdtype = fdtype;
 	    if (handled_hrc)
 		*handled_hrc = hrc;
 

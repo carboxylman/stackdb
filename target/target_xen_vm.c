@@ -269,13 +269,6 @@ int xce_handle_fd = -1;
 #endif
 static XC_EVTCHN_PORT_T dbg_port = -1;
 
-static int xen_vm_vmp_client_fd = -1;
-static char *xen_vm_vmp_client_path = NULL;
-
-#define EF_TF (0x00000100)
-#define EF_IF (0x00000200)
-#define EF_RF (0x00010000)
-
 /*
  * Set up the target interface for this library.
  */
@@ -364,6 +357,7 @@ struct target_ops xen_vm_ops = {
 #define XV_ARGP_USE_LIBVMI         0x550002
 #define XV_ARGP_CLEAR_MEM_CACHES   0x550003
 #define XV_ARGP_MEMCACHE_MMAP_SIZE 0x550004
+#define XV_ARGP_HIUE               0x550005
 
 struct argp_option xen_vm_argp_opts[] = {
     /* These options set a flag. */
@@ -391,6 +385,7 @@ struct argp_option xen_vm_argp_opts[] = {
     { "replaydir",'r',"DIR",0,"The XenTT replay directory.",-4 },
     { "no-use-multiplexer",'M',NULL,0,"Do not spawn/attach to the Xen multiplexer server",-4 },
     { "dominfo-timeout",'T',"MICROSECONDS",0,"If libxc gets a \"NULL\" dominfo status, the number of microseconds we should keep retrying",-4 },
+    { "hypervisor-ignores-userspace-exceptions",XV_ARGP_HIUE,NULL,0,"If your Xen hypervisor is not a Utah-patched version, make sure to supply this flag!",-4 },
     { 0,0,0,0,0,0 }
 };
 
@@ -437,6 +432,8 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	ac += 1;
     if (xspec->dominfo_timeout > 0)
 	ac += 2;
+    if (xspec->hypervisor_ignores_userspace_exceptions)
+	ac += 1;
 
     av = calloc(ac + 1,sizeof(char *));
     j = 0;
@@ -488,6 +485,8 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	snprintf(av[j],16,"%d",xspec->dominfo_timeout);
 	j++;
     }
+    if (xspec->hypervisor_ignores_userspace_exceptions)
+	av[j++] = strdup("--hypervisor-ignores-userspace-exceptions");
     av[j++] = NULL;
 
     if (argv)
@@ -612,6 +611,9 @@ error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	break;
     case 'T':
 	xspec->dominfo_timeout = atoi(arg);
+	break;
+    case XV_ARGP_HIUE:
+	xspec->hypervisor_ignores_userspace_exceptions = 1;
 	break;
     default:
 	return ARGP_ERR_UNKNOWN;
@@ -1818,6 +1820,7 @@ static int xen_vm_snprintf(struct target *target,char *buf,int bufsiz) {
 static int xen_vm_init(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct xen_vm_thread_state *tstate;
+    struct xen_vm_spec *xspec = (struct xen_vm_spec *)target->spec->backend_spec;
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
@@ -1825,6 +1828,11 @@ static int xen_vm_init(struct target *target) {
 	vwarn("auto-enabling SEMI_STRICT bpmode on Xen target.\n");
 	target->spec->bpmode = THREAD_BPMODE_SEMI_STRICT;
     }
+
+    if (xspec && xspec->hypervisor_ignores_userspace_exceptions)
+	g_hash_table_insert(target->config,
+			    strdup("OS_EMULATE_USERSPACE_EXCEPTIONS"),
+			    strdup("1"));
 
     /*
      * We can use the RF flag to temporarily disable the hw breakpoint
@@ -1848,6 +1856,9 @@ static int xen_vm_init(struct target *target) {
     xstate->dominfo.shutdown_reason = 0;
     xstate->dominfo.max_vcpu_id = 0;
     xstate->dominfo.shared_info_frame = 0;
+
+    xstate->xen_vm_vmp_client_fd = -1;
+    xstate->xen_vm_vmp_client_path = NULL;
 
     /* Create the default thread. */
     tstate = (struct xen_vm_thread_state *)calloc(1,sizeof(*tstate));
@@ -2154,15 +2165,23 @@ int xen_vm_vmp_launch() {
 }
 
 int xen_vm_virq_or_vmp_attach_or_launch(struct target *target) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct xen_vm_spec *xspec = (struct xen_vm_spec *)target->spec->backend_spec;
     int i;
     int rc = -1;
 
-    if (xspec->no_use_multiplexer)
-	return xen_vm_virq_attach(xce_handle,&dbg_port);
+    if (xspec->no_use_multiplexer) {
+	if (dbg_port > -1) {
+	    verror("cannot connect for multiple domains without multiplexer!\n");
+	    errno = EINVAL;
+	    return -1;
+	}
+	else
+	    return xen_vm_virq_attach(xce_handle,&dbg_port);
+    }
 
     /* Try to connect.  If we can't, then launch, wait, and try again. */
-    if (xen_vm_vmp_attach(NULL,&xen_vm_vmp_client_fd,&xen_vm_vmp_client_path)) {
+    if (xen_vm_vmp_attach(NULL,&xstate->xen_vm_vmp_client_fd,&xstate->xen_vm_vmp_client_path)) {
 	if (xen_vm_vmp_launch()) {
 	    verror("could not launch Xen VIRQ_DEBUGGER multiplexer!\n");
 	    return -1;
@@ -2172,8 +2191,8 @@ int xen_vm_virq_or_vmp_attach_or_launch(struct target *target) {
 	}
 
 	for (i = 0; i < 5; ++i) {
-	    rc = xen_vm_vmp_attach(NULL,&xen_vm_vmp_client_fd,
-				   &xen_vm_vmp_client_path);
+	    rc = xen_vm_vmp_attach(NULL,&xstate->xen_vm_vmp_client_fd,
+				   &xstate->xen_vm_vmp_client_path);
 	    if (rc == 0)
 		break;
 	    else
@@ -2191,27 +2210,32 @@ int xen_vm_virq_or_vmp_attach_or_launch(struct target *target) {
     return 0;
 }
 
-int xen_vm_virq_or_vmp_detach() {
+int xen_vm_virq_or_vmp_detach(struct target *target) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+
     if (dbg_port != -1) {
 	xce_handle_fd = -1;
 	return xen_vm_virq_detach(xce_handle,&dbg_port);
     }
     else
-	return xen_vm_vmp_detach(&xen_vm_vmp_client_fd,
-				 &xen_vm_vmp_client_path);
+	return xen_vm_vmp_detach(&xstate->xen_vm_vmp_client_fd,
+				 &xstate->xen_vm_vmp_client_path);
 }
 
-int xen_vm_virq_or_vmp_get_fd() {
+int xen_vm_virq_or_vmp_get_fd(struct target *target) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+
     if (dbg_port != -1) {
 	if (xce_handle_fd == -1)
 	    xce_handle_fd = xc_evtchn_fd(xce_handle);
 	return xce_handle_fd;
     }
     else
-	return xen_vm_vmp_client_fd;
+	return xstate->xen_vm_vmp_client_fd;
 }
 
-int xen_vm_virq_or_vmp_read(int *vmid) {
+ int xen_vm_virq_or_vmp_read(struct target *target,int *vmid) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     XC_EVTCHN_PORT_T port = -1;
     struct target_xen_vm_vmp_client_response resp = { 0 };
     int retval;
@@ -2243,7 +2267,7 @@ int xen_vm_virq_or_vmp_read(int *vmid) {
 	}
     }
     else {
-	rc = read(xen_vm_vmp_client_fd,&resp,sizeof(resp));
+	rc = read(xstate->xen_vm_vmp_client_fd,&resp,sizeof(resp));
 	if (rc < 0) {
 	    if (errno == EINTR) {
 		*vmid = -1;
@@ -2442,7 +2466,7 @@ static int xen_vm_detach(struct target *target,int stay_paused) {
 	/* Close all the xc stuff; we're the last one. */
 	vdebug(4,LA_TARGET,LF_XV,"last domain; closing xc/xce interfaces.\n");
 
-	if (xen_vm_virq_or_vmp_detach(xce_handle,&dbg_port))
+	if (xen_vm_virq_or_vmp_detach(target))
 	    verror("failed to unbind debug virq port\n");
 
 	if (xen_vm_xc_detach(&xc_handle,&xce_handle))
@@ -3747,8 +3771,8 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		       " at paddr 0x%"PRIxADDR" (vaddr 0x%"PRIxADDR")\n",
 		       tid,tthread->emulating_debug_mmod->addr,tmp_ipval);
 
-		target_memmod_emulate_ss_handler(target,tid,
-						 tthread->emulating_debug_mmod);
+		target_os_emulate_ss_handler(target,tid,tthread->tidctxt,
+					     tthread->emulating_debug_mmod);
 
 		/* Clear the status bits right now. */
 		/*
@@ -3841,7 +3865,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 
 	    target->sstep_thread = NULL;
 
-	    if (xtstate->context.user_regs.eflags & EF_TF
+	    if (xtstate->context.user_regs.eflags & X86_EF_TF
 		|| (xstate->hvm && xstate->hvm_monitor_trap_flag_set)) {
 	    handle_inferred_sstep:
 		if (!tthread->tpc) {
@@ -4066,9 +4090,30 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 			   xtstate->context.debugreg[6],
 			   xtstate->context.user_regs.eflags);
 
+		    /*
+		     * We don't really know what kind of exception it
+		     * is.  We can only assume it might be a breakpoint,
+		     * and set additional singlestep indicator flags if
+		     * possible.  Some Xens don't get dr6 set
+		     * appropriately, it seems, so we have to catch the
+		     * inferred single step.  But just cause we
+		     * commanded a single step doesn't mean it happened
+		     * appropriately, etc... the overlay has to handle
+		     * it.
+		     */
 		    target_exception_flags_t bp_ef = EXCEPTION_BREAKPOINT;
-		    if (xtstate->context.debugreg[6] & 0x4000)
-			bp_ef = EXCEPTION_BREAKPOINT_STEP;
+		    if (xtstate->context.debugreg[6] & 0x4000) {
+			bp_ef |= EXCEPTION_SINGLESTEP;
+			vdebug(5,LA_TARGET,LF_XV,
+			       "single step debug event in overlay\n");
+		    }
+		    else if (bogus_sstep_thread
+			     && target->sstep_thread_overlay == overlay
+			     && xtstate->context.user_regs.eflags & X86_EF_TF) {
+			vdebug(5,LA_TARGET,LF_XV,
+			       "inferred single step debug event in overlay\n");
+			bp_ef |= EXCEPTION_SINGLESTEP_CMD;
+		    }
 
 		    /* Clear the status bits right now. */
 		    xtstate->context.debugreg[6] = 0;
@@ -4106,7 +4151,9 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 			       " at paddr 0x%"PRIxADDR" (vaddr 0x%"PRIxADDR")\n",
 			       tid,pmmod->addr,tmp_ipval);
 			       
-			if (target_memmod_emulate_bp_handler(target,tid,pmmod)) {
+			if (target_os_emulate_bp_handler(target,tid,
+							     tthread->tidctxt,
+							     pmmod)) {
 			    verror("could not emulate debug memmod for"
 				   " tid %"PRIiTID" at paddr 0x%"PRIxADDR"\n",
 				   tid,pmmod->addr);
@@ -4233,7 +4280,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		 * handle the breakpoint, singlestep ourselves, AND
 		 * THEN leave the processor in single step mode.
 		 */
-		if (0 && xtstate->context.user_regs.eflags & EF_TF) {
+		if (0 && xtstate->context.user_regs.eflags & X86_EF_TF) {
 		    //target->sstep_leave_enabled = 1;
 		}
 
@@ -4262,7 +4309,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 
 		goto out_bp_again;
 	    }
-	    else if (xtstate->context.user_regs.eflags & EF_TF
+	    else if (xtstate->context.user_regs.eflags & X86_EF_TF
 		     && tthread
 		     && tthread->tpc
 		     && tthread->tpc->probepoint) {
@@ -4274,7 +4321,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		sstep_thread = tthread;
 		goto handle_inferred_sstep;
 	    }
-	    else if (xtstate->context.user_regs.eflags & EF_TF
+	    else if (xtstate->context.user_regs.eflags & X86_EF_TF
 		     && bogus_sstep_thread
 		     && bogus_sstep_thread->tpc
 		     && bogus_sstep_thread->tpc->probepoint) {
@@ -4294,7 +4341,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 		sstep_thread = bogus_sstep_thread;
 		goto handle_inferred_sstep;
 	    }
-	    else if (xtstate->context.user_regs.eflags & EF_TF) {
+	    else if (xtstate->context.user_regs.eflags & X86_EF_TF) {
 	    //phantom:
 		vwarn("phantom single step for dom %d (no breakpoint"
 		      " set either!); letting user handle fault at"
@@ -4345,10 +4392,10 @@ int xen_vm_evloop_handler(int readfd,int fdtype,void *state) {
     struct target *target = (struct target *)state;
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     int again;
-    int retval;
+    target_status_t retval;
     int vmid = -1;
 
-    if (xen_vm_virq_or_vmp_read(&vmid)) {
+    if (xen_vm_virq_or_vmp_read(target,&vmid)) {
 	return EVLOOP_HRET_BADERROR;
     }
 
@@ -4369,7 +4416,8 @@ int xen_vm_evloop_handler(int readfd,int fdtype,void *state) {
     //else if (retval == TSTATUS_PAUSED && again == 0)
     //    return EVLOOP_HRET_SUCCESS;
 
-    __xen_vm_resume(target,0);
+    if (retval != TSTATUS_RUNNING)
+	__xen_vm_resume(target,0);
 
     return EVLOOP_HRET_SUCCESS;
 }
@@ -4383,7 +4431,7 @@ int xen_vm_attach_evloop(struct target *target,struct evloop *evloop) {
     }
 
     /* get a select()able file descriptor of the event channel */
-    xstate->evloop_fd = xen_vm_virq_or_vmp_get_fd();
+    xstate->evloop_fd = xen_vm_virq_or_vmp_get_fd(target);
     if (xstate->evloop_fd == -1) {
         verror("event channel not initialized\n");
         return -1;
@@ -4421,7 +4469,7 @@ static target_status_t xen_vm_monitor(struct target *target) {
     int vmid = -1;
 
     /* get a select()able file descriptor of the event channel */
-    fd = xen_vm_virq_or_vmp_get_fd();
+    fd = xen_vm_virq_or_vmp_get_fd(target);
     if (fd == -1) {
         verror("event channel not initialized\n");
         return TSTATUS_ERROR;
@@ -4441,7 +4489,7 @@ static target_status_t xen_vm_monitor(struct target *target) {
         if (!FD_ISSET(fd, &inset)) 
             continue; // nothing in eventchn
 
-	if (xen_vm_virq_or_vmp_read(&vmid)) {
+	if (xen_vm_virq_or_vmp_read(target,&vmid)) {
 	    verror("failed to unmask event channel\n");
 	    break;
 	}
@@ -4488,7 +4536,7 @@ static target_status_t xen_vm_poll(struct target *target,struct timeval *tv,
     int vmid = -1;
 
     /* get a select()able file descriptor of the event channel */
-    fd = xen_vm_virq_or_vmp_get_fd();
+    fd = xen_vm_virq_or_vmp_get_fd(target);
     if (fd == -1) {
         verror("event channel not initialized\n");
         return TSTATUS_ERROR;
@@ -4516,7 +4564,7 @@ static target_status_t xen_vm_poll(struct target *target,struct timeval *tv,
 	return TSTATUS_RUNNING;
     }
 
-    if (xen_vm_virq_or_vmp_read(&vmid)) {
+    if (xen_vm_virq_or_vmp_read(target,&vmid)) {
 	verror("failed to unmask event channel\n");
 	if (outcome)
 	    *outcome = POLL_ERROR;
@@ -5540,6 +5588,7 @@ int xen_vm_notify_sw_breakpoint(struct target *target,ADDR addr,
 int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
 		      struct target *overlay) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct xen_vm_spec *xspec = (struct xen_vm_spec *)target->spec->backend_spec;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -5568,8 +5617,13 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
      * XXX: in the future, only use HVM trap monitor flag if the thread
      * is the current or global thread.  Otherwise obviously we won't
      * get what we want.  Ugh, this is all crazy.
+     *
+     * We also can't use the MTF if this is an overlay thread and the
+     * hypervisor is not patched to handle userspace debug exceptions.
      */
-    if (xstate->hvm) {
+    if (xstate->hvm
+	&& (!overlay
+	    || (overlay	&& !xspec->hypervisor_ignores_userspace_exceptions))) {
 #ifdef XC_HAVE_DOMAIN_DEBUG_CONTROL
 	if (xc_domain_debug_control(xc_handle,xstate->id,
 				    XEN_DOMCTL_DEBUG_OP_SINGLE_STEP_ON,
@@ -5584,10 +5638,20 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
 	goto nohvm;
 #endif
     }
+    else if (overlay && xspec->hypervisor_ignores_userspace_exceptions) {
+	/*
+	 * We have to emulate the exception in the userspace part of the
+	 * target's thread.
+	 */
+	verror("BUG: overlay process driver should call"
+	       " target_os_thread_singlestep()!\n");
+	errno = EINVAL;
+	return -1;
+    }
     else {
     nohvm:
 #if __WORDSIZE == 32
-	xtstate->context.user_regs.eflags |= EF_TF;
+	xtstate->context.user_regs.eflags |= X86_EF_TF;
 	/*
 	 * If this is a single step of an instruction for which a breakpoint
 	 * is set, set the RF flag.  Why?  Because then we don't have to
@@ -5595,13 +5659,13 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
 	 * The x86 clears it after one instruction anyway, so it's safe.
 	 */
 	if (isbp)
-	    xtstate->context.user_regs.eflags |= EF_RF;
-	xtstate->context.user_regs.eflags &= ~EF_IF;
+	    xtstate->context.user_regs.eflags |= X86_EF_RF;
+	xtstate->context.user_regs.eflags &= ~X86_EF_IF;
 #else
-	xtstate->context.user_regs.rflags |= EF_TF;
+	xtstate->context.user_regs.rflags |= X86_EF_TF;
 	if (isbp)
-	    xtstate->context.user_regs.rflags |= EF_RF;
-	xtstate->context.user_regs.rflags &= ~EF_IF;
+	    xtstate->context.user_regs.rflags |= X86_EF_RF;
+	xtstate->context.user_regs.rflags &= ~X86_EF_IF;
 #endif
 	OBJSDIRTY(tthread);
     }
@@ -5618,6 +5682,7 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
 int xen_vm_singlestep_end(struct target *target,tid_t tid,
 			  struct target *overlay) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct xen_vm_spec *xspec = (struct xen_vm_spec *)target->spec->backend_spec;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -5633,7 +5698,9 @@ int xen_vm_singlestep_end(struct target *target,tid_t tid,
      * Try to use xc_domain_debug_control for HVM domains; but if it
      * fails, abort to the old way.
      */
-    if (xstate->hvm) {
+    if (xstate->hvm
+	&& (!overlay
+	    || (overlay && !xspec->hypervisor_ignores_userspace_exceptions))) {
 #ifdef XC_HAVE_DOMAIN_DEBUG_CONTROL
 	if (xc_domain_debug_control(xc_handle,xstate->id,
 				    XEN_DOMCTL_DEBUG_OP_SINGLE_STEP_OFF,
@@ -5648,12 +5715,22 @@ int xen_vm_singlestep_end(struct target *target,tid_t tid,
 	goto nohvm;
 #endif
     }
+    else if (overlay && xspec->hypervisor_ignores_userspace_exceptions) {
+	/*
+	 * We have to emulate the exception in the userspace part of the
+	 * target's thread.
+	 */
+	verror("BUG: overlay process driver should call"
+	       " target_os_thread_singlestep_end()!\n");
+	errno = EINVAL;
+	return -1;
+    }
     else {
     nohvm:
 #if __WORDSIZE ==32
-	xtstate->context.user_regs.eflags &= ~EF_TF;
+	xtstate->context.user_regs.eflags &= ~X86_EF_TF;
 #else
-	xtstate->context.user_regs.rflags &= ~EF_TF;
+	xtstate->context.user_regs.rflags &= ~X86_EF_TF;
 #endif
 	OBJSDIRTY(tthread);
     }

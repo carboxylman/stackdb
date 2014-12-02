@@ -37,14 +37,8 @@ ifeq ($(ENABLE_LIBVMI),"1")
 	ENABLE_XENSUPPORT=1
 endif
 
-HEADERS := $(SRCDIR)/analysis.h \
-	$(TOP_SRCDIR)/target/target.h $(TOP_SRCDIR)/target/target_api.h \
-	$(TOP_SRCDIR)/target/probe.h $(TOP_SRCDIR)/target/probe_api.h \
-	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
-	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
-	$(TOP_SRCDIR)/include/output.h
-
 OBJECTS := analysis.lo
+DEPENDENCIES := $(OBJECTS:%.lo=%.d)
 
 #
 # We have to be careful here!  We can only depend libs in xml/schema; more 
@@ -63,7 +57,6 @@ STATICLIBS := $(OBJDIR)/dwdebug/libtarget.a $(OBJDIR)/dwdebug/libdwdebug.a \
 #
 ifeq ("@ENABLE_SOAP@","1")
 	CFLAGS += -I$(TOP_SRCDIR)/xml/schema -I$(OBJDIR)/xml/schema
-	HEADERS += $(TOP_SRCDIR)/xml/schema/analysis_xml.h
 	STATICLIBS += $(OBJDIR)/xml/schema/libdebuginfo_xml.la \
 		      $(OBJDIR)/xml/schema/libtarget_xml.la \
 		      $(OBJDIR)/xml/schema/libanalysis_xml.la
@@ -83,14 +76,14 @@ all:	$(LIBRARIES) $(PROGRAMS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
-.c.lo:	$(HEADERS)
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+# Don't fail on missing .d files; there won't be any on the first run.
+-include $(DEPENDENCIES)
 
 libanalysis.la: $(OBJECTS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS) \
 		-rpath $(INSTALL_LIBDIR) ${LDFLAGS}
 
-#analyze: $(HEADERS) libanalysis.a analyze.lo $(STATICLIBS)
+#analyze: libanalysis.a analyze.lo $(STATICLIBS)
 #	$(CC) -o $@ $(CFLAGS) $@.o libtarget.a $(STATICLIBS) $(LDFLAGS)
 
 
@@ -112,6 +105,7 @@ install: def-install install-subdirs
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(LIBRARIES)
 	@$(LIBTOOL) --mode=clean rm -f $(PROGRAMS)
+	$(RM) -f $(DEPENDENCIES)
 
 distclean: distclean-subdirs
 

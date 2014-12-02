@@ -152,21 +152,16 @@ struct spf_argp_state {
 /*
  * Globals.
  */
-struct target *t = NULL;
-int ots_len = 0;
-struct target **ots = NULL;
-char **otnames = NULL;
+GList *targets;
 struct spf_config *config = NULL;
 struct spf_argp_state opts;
 
 GHashTable *sprobes = NULL;
 GHashTable *fprobes = NULL;
 
-int needreload = 0;
 int needtodie = 0;
 int needtodie_exitcode = 0;
 
-int have_syscall_table = 0;
 int result_counter = 0;
 
 /* A few prototypes. */
@@ -182,8 +177,12 @@ void cleanup_probes() {
     GHashTableIter iter;
     gpointer key;
     struct probe *probe;
+    GList *t1;
+    struct target *target;
 
-    target_pause(t);
+    v_g_list_foreach(targets,t1,target) {
+	target_pause(target);
+    }
 
     if (fprobes) {
 	g_hash_table_iter_init(&iter,fprobes);
@@ -209,56 +208,12 @@ void cleanup_probes() {
     }
 }
 
-void cleanup() {
-    static int cleaning = 0;
+sigset_t ignored,interrupt,exitset;
 
-    int j;
-
-    if (cleaning)
-	return;
-    cleaning = 1;
-
-    cleanup_probes();
-
-    if (ots) {
-	for (j = ots_len - 1; j >= 0; --j) {
-	    if (!ots[j])
-		continue;
-	    target_close(ots[j]);
-	    target_finalize(ots[j]);
-	    ots[j] = NULL;
-	}
+void sigh_cleanup_probes(int signo,siginfo_t *siginfo,void *x) {
+    if (sigismember(&exitset,signo)) {
+	cleanup_probes();
     }
-
-    if (t) {
-	target_close(t);
-	target_finalize(t);
-	t = NULL;
-    }
-}
-
-void sigr(int signo) {
-    needreload = 1;
-    if (target_is_monitor_handling(t))
-	target_monitor_schedule_interrupt(t);
-    else {
-	target_pause(t);
-	reload_config_file();
-	target_resume(t);
-    }
-    signal(signo,sigr);
-}
-
-void sigh(int signo) {
-    needtodie = 1;
-    needtodie_exitcode = 0;
-    if (target_is_monitor_handling(t))
-	target_monitor_schedule_interrupt(t);
-    else {
-	cleanup();
-	exit(needtodie_exitcode);
-    }
-    signal(signo,sigh);
 }
 
 void print_thread_context(FILE *stream,struct target *target,tid_t tid,
@@ -323,7 +278,7 @@ void print_thread_context(FILE *stream,struct target *target,tid_t tid,
 	    fprintf(stream,"%s[%s",tprefix,buf);
 
 	if (bt) {
-	    rc = target_unwind_snprintf(buf,sizeof(buf),t,tthread->tid,
+	    rc = target_unwind_snprintf(buf,sizeof(buf),target,tthread->tid,
 					TARGET_UNWIND_STYLE_PROG_KEYS,"|",",");
 	    if (rc < 0)
 		fprintf(stream,"%sbacktrace=[error!]",sep);
@@ -708,17 +663,16 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		exit(-69);
 	    }
 
-	    if (target_is_monitor_handling(t)) {
-		target_monitor_schedule_interrupt(t);
-		needtodie = 1;
-		needtodie_exitcode = spfa->exit.retval;
-		vdebug(5,LA_USER,LF_U_PROBE,"probe %s: scheduled exit with %d!\n",
-		       probe_name(probe),spfa->exit.retval);
-	    }
-	    else {
-		verror("probe %s: target is in a prehandler but not monitoring -- BUG!\n",
-		       probe_name(probe));
-	    }
+	    /*
+	     * We don't need to actually interrupt the monitor, though,
+	     * because we're in a handler -- so some driver is handling
+	     * us.
+	     */
+	    target_monitor_schedule_global_interrupt();
+	    needtodie = 1;
+	    needtodie_exitcode = spfa->exit.retval;
+	    vdebug(5,LA_USER,LF_U_PROBE,"probe %s: scheduled exit with %d!\n",
+		   probe_name(probe),spfa->exit.retval);
 	}
 	else if (spfa->atype == SPF_ACTION_REPORT) {
 	    ++result_counter;
@@ -930,14 +884,6 @@ struct argp_option spf_argp_opts[] = {
 error_t spf_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     struct spf_argp_state *opts = \
 	(struct spf_argp_state *)target_argp_driver_state(state);
-    struct array_list *argv_list;
-    char *argptr,*argptr2;
-    char *nargptr;
-    char *vargptr;
-    int inesc;
-    int inquote;
-    int quotechar;
-    struct overlay_spec *ospec = NULL;
 
     switch (key) {
     case ARGP_KEY_ARG:
@@ -973,122 +919,6 @@ error_t spf_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case 'C':
 	opts->config_file = arg;
 	break;
-    case __TARGET_OVERLAY:
-	/*
-	 * We need to split the <name_or_id>:<spec> part; then split
-	 * <spec> into an argv.  Simple rules: \ escapes the next char;
-	 * space not in ' or " causes us to end the current argv[i] and
-	 * start the next one.
-	 */
-	argptr = index(arg,':');
-	if (!argptr) {
-	    verror("bad overlay spec!\n");
-	    return EINVAL;
-	}
-
-	ospec = calloc(1,sizeof(*ospec));
-	++opts->ospecs_len;
-	opts->ospecs = 
-	    realloc(opts->ospecs,opts->ospecs_len*sizeof(*opts->ospecs));
-	opts->ospecs[opts->ospecs_len - 1] = ospec;
-
-	argv_list = array_list_create(32);
-	array_list_append(argv_list,"dumptarget_overlay");
-
-	ospec->base_thread_name_or_id = arg;
-	*argptr = '\0';
-	++argptr;
-
-	argptr2 = index(argptr,':');
-	if (argptr2) {
-	    ospec->base_target_id = ospec->base_thread_name_or_id;
-	    ospec->base_thread_name_or_id = argptr;
-	    *argptr2 = '\0';
-	    argptr = ++argptr2;
-	}
-
-	while (*argptr == ' ')
-	    ++argptr;
-
-	inesc = 0;
-	inquote = 0;
-	quotechar = 0;
-	nargptr = argptr;
-	vargptr = argptr;
-	while (*argptr != '\0') {
-	    if (*argptr == '\\') {
-		if (inesc) {
-		    inesc = 0;
-		    *nargptr = '\\';
-		    ++nargptr;
-		}
-		else {
-		    /* Don't copy the escape char. */
-		    inesc = 1;
-		    ++argptr;
-		    continue;
-		}
-	    }
-	    else if (inesc) {
-		inesc = 0;
-		/* Just copy it. */
-		*nargptr = *argptr;
-		++nargptr;
-	    }
-	    else if (inquote && *argptr == quotechar) {
-		/* Ended the quoted sequence; don't copy quotes. */
-		inquote = 0;
-		quotechar = 0;
-		++argptr;
-		continue;
-	    }
-	    else if (*argptr == '\'' || *argptr == '"') {
-		inquote = 1;
-		quotechar = *argptr;
-		++argptr;
-		continue;
-	    }
-	    else if (!inquote && *argptr == ' ') {
-		*nargptr = *argptr = '\0';
-		if (vargptr) {
-		    array_list_append(argv_list,vargptr);
-		    //printf("vargptr (%p) = '%s'\n",vargptr,vargptr);
-		    vargptr = NULL;
-		}
-		vargptr = NULL;
-		nargptr = ++argptr;
-		continue;
-	    }
-	    else {
-		if (!vargptr)
-		    vargptr = nargptr;
-
-		*nargptr = *argptr;
-		++nargptr;
-	    }
-
-	    /* Default increment. */
-	    ++argptr;
-	}
-	if (vargptr) {
-	    *nargptr = '\0';
-	    array_list_append(argv_list,vargptr);
-	    //printf("vargptr (%p) = '%s'\n",vargptr,vargptr);
-	}
-	array_list_append(argv_list,NULL);
-
-	ospec->spec = target_argp_driver_parse(NULL,NULL,
-					       array_list_len(argv_list) - 1,
-					       (char **)argv_list->list,
-					       TARGET_TYPE_PHP | TARGET_TYPE_OS_PROCESS,0);
-	if (!ospec->spec) {
-	    verror("could not parse overlay spec %d!\n",opts->ospecs_len);
-	    array_list_free(argv_list);
-	    return EINVAL;
-	}
-
-	array_list_free(argv_list);
-	break;
 
     default:
 	return ARGP_ERR_UNKNOWN;
@@ -1102,12 +932,8 @@ struct argp spf_argp = {
 };
 
 int main(int argc,char **argv) {
-    struct target_spec *tspec;
-    char targetstr[128];
-    int i,j;
+    int i;
     struct bsymbol *bsymbol;
-    int oid;
-    char *tmp = NULL;
     struct probe *sprobe, *fprobe;
     char *name, *context;
     char *str;
@@ -1115,20 +941,54 @@ int main(int argc,char **argv) {
     struct target_nv_filter *pre_pf, *post_pf;
     char *pre_filter, *post_filter;
     struct target_os_syscall *syscall;
-    tid_t base_tid;
-    struct target *base;
-    struct overlay_spec *ospec;
+
+    struct target_spec *primary_target_spec = NULL;
+    GList *base_target_specs = NULL;
+    GList *overlay_target_specs = NULL;
+    struct target *target;
+    int rc;
+    struct evloop *evloop;
+    GList *t1;
 
     target_init();
     atexit(target_fini);
 
+    /*
+     * We need to handle SIGUSR1, SIGUSR2, and SIGHUP specially so we
+     * can reload our config file as necessary.
+     */
+    sigemptyset(&ignored);
+    sigemptyset(&exitset);
+    sigemptyset(&interrupt);
+
+    sigaddset(&exitset,SIGINT);
+    sigaddset(&exitset,SIGALRM);
+    sigaddset(&exitset,SIGQUIT);
+    sigaddset(&exitset,SIGILL);
+    sigaddset(&exitset,SIGABRT);
+    sigaddset(&exitset,SIGFPE);
+    sigaddset(&exitset,SIGSEGV);
+    sigaddset(&exitset,SIGPIPE);
+    sigaddset(&exitset,SIGTERM);
+    sigaddset(&exitset,SIGBUS);
+    sigaddset(&exitset,SIGXCPU);
+    sigaddset(&exitset,SIGXFSZ);
+
+    sigaddset(&interrupt,SIGUSR1);
+    sigaddset(&interrupt,SIGUSR2);
+    sigaddset(&interrupt,SIGHUP);
+
+    target_install_custom_sighandlers(&ignored,&interrupt,&exitset,
+				      sigh_cleanup_probes);
+
     memset(&opts,0,sizeof(opts));
+    rc = target_argp_driver_parse(&spf_argp,&opts,argc,argv,
+				  TARGET_TYPE_PTRACE 
+				      | TARGET_TYPE_XEN | TARGET_TYPE_GDB,1,
+				  &primary_target_spec,&base_target_specs,
+				  &overlay_target_specs);
 
-    tspec = target_argp_driver_parse(&spf_argp,&opts,argc,argv,
-				     TARGET_TYPE_PTRACE 
-				         | TARGET_TYPE_XEN | TARGET_TYPE_GDB,1);
-
-    if (!tspec) {
+    if (rc) {
 	verror("could not parse target arguments!\n");
 	exit(-1);
     }
@@ -1141,97 +1001,32 @@ int main(int argc,char **argv) {
 	}
     }
 
-    t = target_instantiate(tspec,NULL);
-    if (!t) {
-	verror("could not instantiate target!\n");
-	exit(-1);
-    }
-    target_snprintf(t,targetstr,sizeof(targetstr));
+    evloop = evloop_create(NULL);
 
-    if (target_open(t)) {
-	fprintf(stderr,"could not open %s!\n",targetstr);
-	exit(-4);
+    targets = target_instantiate_and_open(primary_target_spec,
+					  base_target_specs,overlay_target_specs,
+					  evloop,NULL);
+    if (!targets) {
+	verror("could not instantiate and open targets!\n");
+	exit(-1);
     }
 
     /*
-     * Load the overlay targets, if any.
+     * Setup probes from command line or load config file.
      */
-    if (opts.ospecs) {
-	ots = calloc(opts.ospecs_len,sizeof(*ots));
-	otnames = calloc(opts.ospecs_len,sizeof(*otnames));
-    }
-    for (j = 0; j < opts.ospecs_len; ++j) {
-	errno = 0;
-	tmp = NULL;
-	ospec = opts.ospecs[j];
-
-	if (ospec->base_target_id) {
-	    base = target_lookup_target_id(atoi(ospec->base_target_id));
-	    if (!base) {
-		verror("no existing target with id '%s'!\n",
-		       ospec->base_target_id);
-		cleanup();
-		exit(-113);
-	    }
-	}
-	else 
-	    base = t;
-
-	target_snprintf(base,namebuf,sizeof(namebuf));
-	otnames[j] = strdup(namebuf);
-
-	oid = (int)strtol(ospec->base_thread_name_or_id,&tmp,0);
-	if (errno || tmp == ospec->base_thread_name_or_id)
-	    base_tid = 
-		target_lookup_overlay_thread_by_name(base,ospec->base_thread_name_or_id);
-	else
-	    base_tid = target_lookup_overlay_thread_by_id(base,oid);
-	if (base_tid < 0) {
-	    verror("could not find overlay thread '%s' in base target '%s',"
-		   " exiting!\n",
-		   ospec->base_thread_name_or_id,namebuf);
-	    cleanup();
-	    exit(-111);
-	}
-
-	ots[j] = target_instantiate_overlay(base,base_tid,ospec->spec);
-	++ots_len;
-	if (!ots[j]) {
-	    verror("could not instantiate overlay on base '%s' thread '%s'!\n",
-		   namebuf,ospec->base_thread_name_or_id);
-	    cleanup();
-	    exit(-112);
-	}
-
-	if (target_open(ots[j])) {
-	    fprintf(stderr,"could not open overlay on base '%s' thread '%s'!\n",
-		    namebuf,ospec->base_thread_name_or_id);
-	    cleanup();
-	    exit(-114);
-	}
-    }
-
-    signal(SIGINT,sigh);
-    signal(SIGQUIT,sigh);
-    signal(SIGABRT,sigh);
-    signal(SIGSEGV,sigh);
-    signal(SIGPIPE,sigh);
-    signal(SIGALRM,sigh);
-    signal(SIGTERM,sigh);
-
-    signal(SIGHUP,sigr);
-    signal(SIGUSR1,sigr);
-    signal(SIGUSR2,sigr);
-
     sprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
     fprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
 
-    if (opts.use_os_syscall_probes && t->personality == TARGET_PERSONALITY_OS) {
-	if (target_os_syscall_table_load(t))
-	    vwarn("could not load the syscall table; target_os_syscall probes"
-		  " will not be available!\n");
-	else
-	    have_syscall_table = 1;
+    if (opts.use_os_syscall_probes) {
+	v_g_list_foreach(targets,t1,target) {
+	    if (target->personality != TARGET_PERSONALITY_OS)
+		continue;
+
+	    if (target_os_syscall_table_load(target))
+		vwarn("could not load the syscall table for target %s;"
+		      " target_os_syscall probes will not be available!\n",
+		      target->name);
+	}
     }
 
     if (opts.argc > 0) {
@@ -1284,55 +1079,57 @@ int main(int argc,char **argv) {
 		 */
 
 		bsymbol = NULL;
-		if (opts.use_os_syscall_probes && have_syscall_table) {
-		    syscall = target_os_syscall_lookup_name(t,name);
+		v_g_list_foreach(targets,t1,target) {
+		    if (opts.use_os_syscall_probes
+			&& target->personality == TARGET_PERSONALITY_OS)
+			syscall = target_os_syscall_lookup_name(target,name);
+		    else
+			syscall = NULL;
 		    if (syscall) {
 			sprobe = \
-			    target_os_syscall_probe(t,TID_GLOBAL,syscall,
+			    target_os_syscall_probe(target,TID_GLOBAL,syscall,
 						    probe_do_sink_pre_handlers,
 						    probe_do_sink_post_handlers,
 						    NULL);
 			if (!sprobe) {
 			    verror("could not place syscall value probe on %s;"
 				   " aborting!\n",name);
-			    cleanup();
-			    exit(-5);
+			    rc = -5;
+			    goto exit;
 			}
+			else
+			    break;
+		    }
+		    else {
+			bsymbol = target_lookup_sym(target,name,NULL,NULL,
+						    SYMBOL_TYPE_FLAG_NONE);
+			if (!bsymbol)
+			    continue;
+
+			sprobe =
+			    probe_value_symbol(bsymbol->region->space->target,
+					       TID_GLOBAL,bsymbol,
+					       probe_do_sink_pre_handlers,
+					       probe_do_sink_post_handlers,
+					       NULL);
+			if (!sprobe) {
+			    verror("could not place value probe on %s;"
+				   " aborting!\n",name);
+			    rc = -3;
+			    goto exit;
+			}
+			else
+			    break;
 		    }
 		}
 
 		if (!sprobe) {
-		    if (ots) {
-			for (j = ots_len - 1; j >= 0; --j) {
-			    bsymbol = target_lookup_sym(ots[j],name,NULL,NULL,
-							SYMBOL_TYPE_FLAG_NONE);
-			    if (bsymbol)
-				break;
-			}
-		    }
-		    if (!bsymbol) {
-			bsymbol = target_lookup_sym(t,name,NULL,NULL,
-						    SYMBOL_TYPE_FLAG_NONE);
-			if (!bsymbol) {
-			    verror("could not lookup symbol %s; aborting!\n",
-				   name);
-			    cleanup();
-			    exit(-3);
-			}
-		    }
-		    sprobe = probe_value_symbol(bsymbol->region->space->target,
-						TID_GLOBAL,bsymbol,
-						probe_do_sink_pre_handlers,
-						probe_do_sink_post_handlers,NULL);
-		    if (!sprobe) {
-			verror("could not place value probe on %s; aborting!\n",
-			       name);
-			cleanup();
-			exit(-3);
-		    }
+		    verror("could not probe symbol %s; aborting!\n",name);
+		    rc = -3;
+		    goto exit;
 		}
-
-		g_hash_table_insert(sprobes,name,sprobe);
+		else
+		    g_hash_table_insert(sprobes,name,sprobe);
 	    }
 
 	    /* Create either an empty filter probe or parse the filter! */
@@ -1340,8 +1137,8 @@ int main(int argc,char **argv) {
 		pre_pf = target_nv_filter_parse(pre_filter);
 		if (!pre_pf) {
 		    verror("could not parse pre_filter '%s'!\n",pre_filter);
-		    cleanup();
-		    exit(-4);
+		    rc = -4;
+		    goto exit;
 		}
 	    }
 	    else 
@@ -1350,8 +1147,8 @@ int main(int argc,char **argv) {
 		post_pf = target_nv_filter_parse(post_filter);
 		if (!post_pf) {
 		    verror("could not parse post_filter '%s'!\n",post_filter);
-		    cleanup();
-		    exit(-4);
+		    rc = -4;
+		    goto exit;
 		}
 	    }
 	    else 
@@ -1371,8 +1168,8 @@ int main(int argc,char **argv) {
 	/* Try the default config file. */
 	if (access("spf.conf",R_OK)) {
 	    verror("Must supply some symbols to probe!\n");
-	    cleanup();
-	    exit(-5);
+	    rc = -5;
+	    goto exit;
 	}
 	else {
 	    opts.config_file = strdup("spf.conf");
@@ -1381,7 +1178,8 @@ int main(int argc,char **argv) {
 	    if (!config) {
 		verror("could not read default config file %s!\n",
 		       opts.config_file);
-		exit(-11);
+		rc = -11;
+		goto exit;
 	    }
 	}
     }
@@ -1391,100 +1189,136 @@ int main(int argc,char **argv) {
     opts.config_file_fatal = 1;
     if (apply_config_file(config)) {
 	verror("could not install config file %s!\n",opts.config_file);
-	cleanup();
-	exit(-12);
+	rc = -12;
+	goto exit;
     }
     opts.config_file_fatal = oldfatal;
 
     if (g_hash_table_size(sprobes) == 0) {
 	verror("No symbols to probe; exiting!\n");
-	cleanup();
-	exit(-1);
+	rc = -1;
+	goto exit;
     }
 
     /*
-     * The target was paused after instantiation; we have to resume it
+     * The targets were paused after instantiation; we have to resume them
      * now that we've registered probes.
      */
-    target_resume(t);
+    v_g_list_foreach(targets,t1,target) {
+	target_resume(target);
+    }
 
     fprintf(stdout,"Starting Symbol Probe Filtering!\n");
     fflush(stdout);
 
+    fprintf(stdout,"Starting thread watch loop!\n");
+    fflush(stdout);
+
     while (1) {
-	target_status_t tstat = target_monitor(t);
-	if (tstat == TSTATUS_INTERRUPTED) {
+	tid_t tid = 0;
+	struct target *t;
+	target_status_t tstat;
+	char *tname;
+	siginfo_t siginfo;
+
+	rc = target_monitor_evloop(evloop,NULL,&t,&tstat);
+
+	/*
+	 * Did we get interrupted safely?  We need to check if we were
+	 * told to either die, or if we need to reload the config file.
+	 */
+	if (target_monitor_was_interrupted(&siginfo)) {
 	    if (needtodie) {
-		target_pause(t);
-		cleanup_probes();
-		if (needtodie_exitcode == 0)
-		    target_resume(t);
-		cleanup();
-		exit(needtodie_exitcode);
+		rc = 0;
+		goto exit;
 	    }
-	    if (needreload) 
+	    else if (siginfo.si_signo == SIGUSR1
+		     || siginfo.si_signo == SIGUSR2
+		     || siginfo.si_signo == SIGHUP) {
 		reload_config_file();
+	    }
 
-	    target_resume(t);
-	}
-	else if (tstat == TSTATUS_PAUSED) {
-	    fflush(stderr);
-	    fflush(stdout);
-	    vwarn("target %s interrupted at 0x%"PRIxREGVAL"; trying resume!\n",
-		  targetstr,target_read_creg(t,TID_GLOBAL,CREG_IP));
+	    target_monitor_clear_global_interrupt();
 
-	    if (target_resume(t)) {
-		verror("could not resume target\n");
-		cleanup();
-		exit(-16);
+	    v_g_list_foreach(targets,t1,target) {
+		target_resume(target);
 	    }
 	}
-	else if (tstat == TSTATUS_EXITING) {
-	    fflush(stderr);
-	    fflush(stdout);
+	/* Did we experience an error in select() or in evloop? */
+	else if (rc < 0) {
+	    fprintf(stderr,"error in target_monitor_evloop (%d): %s; aborting!\n",
+		    rc,strerror(errno));
+	    rc = -3;
+	    goto exit;
+	}
+	/* Did we experience a significant event on a target? */
+	else if (rc == 0 && evloop_maxsize(evloop) < 0) {
+	    break;
+	}
+	else if (rc == 0) {
+	    tid = target_gettid(t);
+	    tname = target_name(t);
 
-	    fprintf(stdout,"target %s exiting, removing probes safely...\n",
-		    targetstr);
+	    if (tstat == TSTATUS_ERROR) {
+		fprintf(stderr,
+			"Error handling target '%s'; closing and finalizing!\n",
+			tname);
 
-	    cleanup_probes();
-
-	    if (target_resume(t)) {
-		verror("could not resume target!\n");
-		cleanup();
-		exit(-16);
+		target_close(t);
+		target_finalize(t);
+		targets = g_list_remove(targets,t);
 	    }
-	}
-	else if (tstat == TSTATUS_DONE) {
-	    fflush(stderr);
-	    fflush(stdout);
+	    else if (tstat == TSTATUS_DONE) {
+		fprintf(stderr,
+			"Target '%s' finished; finalizing!\n",
+			tname);
 
-	    fprintf(stdout,"target %s exited, cleaning up.\n",targetstr);
+		target_close(t);
+		target_finalize(t);
+		targets = g_list_remove(targets,t);
+	    }
+	    else if (tstat == TSTATUS_EXITING) {
+		fprintf(stderr,"Target '%s' exiting...\n",tname);
+	    }
+	    else if (tstat == TSTATUS_INTERRUPTED) {
+		fprintf(stderr,"Target '%s' interrupted, resuming...\n",tname);
+		if (target_resume(t)) {
+		    fprintf(stderr,"Could not resume target %s tid %"PRIiTID"\n",
+			tname,tid);
 
-	    cleanup();
-	    goto out;
-	}
-	else {
-	    fflush(stderr);
-	    fflush(stdout);
+		    target_close(t);
+		    target_finalize(t);
+		    targets = g_list_remove(targets,t);
+		}
+	    }
+	    else {
+		fprintf(stderr,
+			"Target '%s' tid %d received unexpected status '%s'"
+			" at 0x%"PRIxADDR"; attempting to continue!\n",
+			tname,tid,TSTATUS(tstat),target_read_reg(t,tid,CREG_IP));
+		if (target_resume(t)) {
+		    fprintf(stderr,"Could not resume target %s tid %"PRIiTID"\n",
+			tname,tid);
 
-	    fprintf(stdout,
-		    "target %s interrupted at 0x%"PRIxREGVAL
-		    " -- bad status (%d), exiting\n",
-		    targetstr,target_read_creg(t,TID_GLOBAL,CREG_IP),tstat);
-
-	    goto err;
+		    target_close(t);
+		    target_finalize(t);
+		    targets = g_list_remove(targets,t);
+		}
+	    }
 	}
     }
 
- err:
-    fflush(stderr);
-    fflush(stdout);
-    cleanup();
+    rc = 0;
 
- out:
+ exit:
     fflush(stderr);
     fflush(stdout);
-    exit(0);
+    cleanup_probes();
+    target_default_cleanup();
+    if (rc < 0)
+	exit(rc);
+    else
+	exit(needtodie_exitcode);
 }
 
 void spf_action_free(struct spf_action *spfa) {
@@ -1603,7 +1437,8 @@ void reload_config_file(void) {
     if (!newconfig) {
 	if (opts.config_file_fatal) {
 	    verror("could not reread config file %s!\n",opts.config_file);
-	    cleanup();
+	    cleanup_probes();
+	    target_default_cleanup();
 	    exit(-1);
 	}
 	else {
@@ -1616,7 +1451,6 @@ void reload_config_file(void) {
 	//spf_config_free(config);
 	config = newconfig;
 	newconfig = NULL;
-	needreload = 0;
     }
 }
 
@@ -1643,8 +1477,10 @@ int apply_config_file(struct spf_config *config) {
     gpointer kp,vp;
     struct probe *probe,*sprobe,*fprobe;
     char namebuf[128];
-    int i,j;
+    int i;
     struct target_os_syscall *syscall;
+    GList *t1;
+    struct target *target;
 
     /* First, destroy all the filter probes. */
     g_hash_table_iter_init(&iter,fprobes);
@@ -1664,23 +1500,23 @@ int apply_config_file(struct spf_config *config) {
 
 	/* Create it. */
 	bsymbol = NULL;
-	if (ots) {
-	    for (j = ots_len - 1; j >= 0; --j) {
-		bsymbol = target_lookup_sym(ots[j],spff->symbol,NULL,spff->srcfile,
-					    SYMBOL_TYPE_FLAG_NONE);
-		if (bsymbol)
-		    break;
-	    }
+	v_g_list_foreach(targets,t1,target) {
+	    bsymbol = target_lookup_sym(target,spff->symbol,NULL,spff->srcfile,
+					SYMBOL_TYPE_FLAG_NONE);
+	    if (bsymbol)
+		break;
 	}
+
 	if (!bsymbol) 
-	    bsymbol = target_lookup_sym(t,spff->symbol,NULL,spff->srcfile,
+	    bsymbol = target_lookup_sym(target,spff->symbol,NULL,spff->srcfile,
 					SYMBOL_TYPE_FLAG_NONE);
 
 	if (!bsymbol) {
 	    if (opts.config_file_fatal) {
 		verror("could not lookup symbol %s; aborting!\n",
 		       spff->symbol);
-		cleanup();
+		cleanup_probes();
+		target_default_cleanup();
 		exit(-3);
 	    }
 	    else {
@@ -1691,26 +1527,32 @@ int apply_config_file(struct spf_config *config) {
 	}
 
 	sprobe = NULL;
-	if (have_syscall_table) {
-	    syscall = target_os_syscall_lookup_name(t,spff->symbol);
-	    if (syscall) {
-		sprobe = target_os_syscall_probe(t,TID_GLOBAL,syscall,
-						 probe_do_sink_pre_handlers,
-						 probe_do_sink_post_handlers,
-						 NULL);
-		if (!sprobe) {
-		    if (opts.config_file_fatal) {
-			verror("could not place syscall value probe on %s;"
-			       " aborting!\n",
-			       spff->symbol);
-			cleanup();
-			exit(-3);
-		    }
-		    else {
-			vwarn("could not place syscall value probe on %s;"
-			      " skipping filter!\n",
-			      spff->symbol);
-			continue;
+	if (opts.use_os_syscall_probes) {
+	    v_g_list_foreach(targets,t1,target) {
+		if (target->personality != TARGET_PERSONALITY_OS)
+		    continue;
+
+		syscall = target_os_syscall_lookup_name(target,spff->symbol);
+		if (syscall) {
+		    sprobe = target_os_syscall_probe(target,TID_GLOBAL,syscall,
+						     probe_do_sink_pre_handlers,
+						     probe_do_sink_post_handlers,
+						     NULL);
+		    if (!sprobe) {
+			if (opts.config_file_fatal) {
+			    verror("could not place syscall value probe on %s;"
+				   " aborting!\n",
+				   spff->symbol);
+			    cleanup_probes();
+			    target_default_cleanup();
+			    exit(-3);
+			}
+			else {
+			    vwarn("could not place syscall value probe on %s;"
+				  " skipping filter!\n",
+				  spff->symbol);
+			    continue;
+			}
 		    }
 		}
 	    }
@@ -1725,7 +1567,8 @@ int apply_config_file(struct spf_config *config) {
 		if (opts.config_file_fatal) {
 		    verror("could not place value probe on %s; aborting!\n",
 			   spff->symbol);
-		    cleanup();
+		    cleanup_probes();
+		    target_default_cleanup();
 		    exit(-3);
 		}
 		else {

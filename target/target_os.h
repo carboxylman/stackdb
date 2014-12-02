@@ -109,6 +109,30 @@ int target_os_thread_get_pgd_phys(struct target *target,tid_t tid,ADDR *pgdp);
 int target_os_thread_is_user(struct target *target,tid_t tid);
 tid_t target_os_thread_get_leader(struct target *target,tid_t tid);
 
+/*
+ * These handle the case where the VM catches debug exceptions *for* the
+ * OS, or where it does not -- i.e., where the OS personality has to
+ * emulate exceptions for the OS Process driver.
+ *
+ * We hacked the Xen hypervisor to catch all debug exceptions, whether
+ * they happen in userspace or kernel space (instead of just the kernel
+ * space ones); but if that hack is not available, or if the user is
+ * using a different hypervisor (i.e., QEMU/KVM); then the OS
+ * personality attached to the hypervisor driver must emulate the
+ * exceptions by snatching them away from the OS.  If the personality
+ * can do this, 
+ */
+int target_os_thread_singlestep(struct target *target,tid_t tid,int isbp,
+				struct target *overlay,int force_emulate);
+int target_os_thread_singlestep_end(struct target *target,tid_t tid,
+				    struct target *overlay,int force_emulate);
+result_t target_os_emulate_bp_handler(struct target *target,tid_t tid,
+				      thread_ctxt_t tidctxt,
+				      struct target_memmod *mmod);
+result_t target_os_emulate_ss_handler(struct target *target,tid_t tid,
+				      thread_ctxt_t tidctxt,
+				      struct target_memmod *mmod);
+
 GHashTable *target_os_process_table_get(struct target *target);
 struct target_process *target_os_process_get(struct target *target,tid_t tid);
 
@@ -170,6 +194,12 @@ struct target_os_ops {
     int (*thread_is_user)(struct target *target,struct target_thread *tthread);
     struct target_thread *(*thread_get_leader)(struct target *target,
 					       struct target_thread *tthread);
+
+
+    int (*thread_singlestep)(struct target *target,tid_t tid,int isbp,
+			     struct target *overlay,int force_emulate);
+    int (*thread_singlestep_end)(struct target *target,tid_t tid,
+				 struct target *overlay,int force_emulate);
 
     /*
      * Processes.

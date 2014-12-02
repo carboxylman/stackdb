@@ -71,9 +71,6 @@ os_process_lookup_overlay_thread_by_id(struct target *target,int id);
 static struct target_thread *
 os_process_lookup_overlay_thread_by_name(struct target *target,char *name);
 
-static int os_process_attach_evloop(struct target *target,
-				    struct evloop *evloop);
-static int os_process_detach_evloop(struct target *target);
 static target_status_t os_process_status(struct target *target);
 static int os_process_pause(struct target *target,int nowait);
 static int os_process_resume(struct target *target);
@@ -188,8 +185,8 @@ struct target_ops os_process_ops = {
     .flush_all_threads = os_process_flush_all_threads,
     .thread_snprintf = os_process_thread_snprintf,
 
-    .attach_evloop = os_process_attach_evloop,
-    .detach_evloop = os_process_detach_evloop,
+    .attach_evloop = NULL,
+    .detach_evloop = NULL,
 
     .readreg = os_process_read_reg,
     .writereg = os_process_write_reg,
@@ -236,7 +233,7 @@ static int os_process_init(struct target *target) {
     target->live = base->live;
     target->writeable = base->writeable;
     target->mmapable = base->mmapable;
-    target->no_adjust_bp_ip = base->no_adjust_bp_ip;
+    target->no_adjust_bp_ip = 0;
     /* NB: only native arch supported!  i.e., no 32-bit emu on 64-bit host. */
     target->arch = base->arch;
 
@@ -702,10 +699,6 @@ os_process_lookup_overlay_thread_by_name(struct target *target,char *name) {
     }
 }
 
-#define EF_TF (0x00000100)
-#define EF_IF (0x00000200)
-#define EF_RF (0x00010000)
-
 static target_status_t 
 os_process_handle_overlay_exception(struct target *overlay,
 				    target_exception_flags_t flags,
@@ -740,8 +733,27 @@ os_process_handle_overlay_exception(struct target *overlay,
 			                  g_list_nth_data(overlay->spaces,0));
     }
 
+    if (flags & EXCEPTION_BREAKPOINT) {
+	vdebug(3,LA_TARGET,LF_OSP,"new (breakpoint?) debug event\n");
+
+	dpp = (struct probepoint *)				\
+	    g_hash_table_lookup(overlay->soft_probepoints,
+				(gpointer)(ipval - overlay->arch->breakpoint_instrs_len));
+	if (dpp) {
+	    /* Run the breakpoint handler. */
+	    overlay->ops->handle_break(overlay,tthread,dpp,
+				       (flags & EXCEPTION_SINGLESTEP)
+				       | (flags & EXCEPTION_SINGLESTEP_CMD));
+
+	    OBJSDIRTY(tthread);
+	    vdebug(5,LA_TARGET,LF_OSP,"cleared status debug reg 6\n");
+
+	    goto out_bp_again;
+	}
+    }
+
     /* It will be loaded and valid; so just read regs and handle. */
-    if (flags & EXCEPTION_SINGLESTEP) {
+    if (flags & EXCEPTION_SINGLESTEP || flags & EXCEPTION_SINGLESTEP_CMD) {
 	vdebug(3,LA_TARGET,LF_OSP,"new single step debug event\n");
 
 	if (!tthread->tpc) {
@@ -788,23 +800,8 @@ os_process_handle_overlay_exception(struct target *overlay,
 	*/
 	goto out_ss_again;
     }
-    else {
-	vdebug(3,LA_TARGET,LF_OSP,"new (breakpoint?) debug event\n");
 
-	dpp = (struct probepoint *)				\
-	    g_hash_table_lookup(overlay->soft_probepoints,
-				(gpointer)(ipval - overlay->arch->breakpoint_instrs_len));
-	if (dpp) {
-	    /* Run the breakpoint handler. */
-	    overlay->ops->handle_break(overlay,tthread,dpp,
-				       flags & EXCEPTION_BREAKPOINT_STEP);
-
-	    OBJSDIRTY(tthread);
-	    vdebug(5,LA_TARGET,LF_OSP,"cleared status debug reg 6\n");
-
-	    goto out_bp_again;
-	}
-    }
+    verror("unhandled overlay exception; will return ERROR!\n");
 
  out_err:
     if (again)
@@ -893,15 +890,6 @@ static void os_process_handle_event(struct target *target,
     }
 
     return;
-}
-
-static int os_process_attach_evloop(struct target *target,
-					struct evloop *evloop) {
-    return 0;
-}
-
-static int os_process_detach_evloop(struct target *target) {
-    return 0;
 }
 
 static target_status_t os_process_status(struct target *target) {
@@ -1219,29 +1207,28 @@ os_process_insert_sw_breakpoint(struct target *target,
 	return NULL;
     }
 
-    return _target_insert_sw_breakpoint(target->base,tid,paddr,1);
+    return _target_insert_sw_breakpoint(target->base,tid,paddr,1,0);
 }
-
 static int os_process_remove_sw_breakpoint(struct target *target,tid_t tid,
 					       struct target_memmod *mmod) {
-    return target_remove_sw_breakpoint(target->base,tid,mmod);
+    return _target_remove_sw_breakpoint(target->base,tid,mmod);
 }
 
 static int os_process_enable_sw_breakpoint(struct target *target,tid_t tid,
 					       struct target_memmod *mmod) {
-    return target_enable_sw_breakpoint(target->base,tid,mmod);
+    return target_memmod_set(target->base,tid,mmod);
 }
 
 static int os_process_disable_sw_breakpoint(struct target *target,tid_t tid,
 						struct target_memmod *mmod) {
-    return target_disable_sw_breakpoint(target->base,tid,mmod);
+    return target_memmod_unset(target->base,tid,mmod);
 }
 
 static int os_process_change_sw_breakpoint(struct target *target,tid_t tid,
 					       struct target_memmod *mmod,
 					       unsigned char *code,
 					       unsigned long code_len) {
-    return target_change_sw_breakpoint(target->base,tid,mmod,code,code_len);
+    return target_memmod_set_tmp(target->base,tid,mmod,code,code_len);
 }
 
 static REG os_process_get_unused_debug_reg(struct target *target,tid_t tid) {
@@ -1255,11 +1242,11 @@ int os_process_notify_sw_breakpoint(struct target *target,ADDR addr,
 }
 
 int os_process_singlestep(struct target *target,tid_t tid,int isbp,
-			      struct target *overlay) {
-    return target->base->ops->singlestep(target->base,tid,isbp,target);
+			  struct target *overlay) {
+    return target_os_thread_singlestep(target->base,tid,isbp,target,0);
 }
 
 int os_process_singlestep_end(struct target *target,tid_t tid,
-				  struct target *overlay) {
-    return target->base->ops->singlestep_end(target->base,tid,target);
+			      struct target *overlay) {
+    return target_os_thread_singlestep_end(target->base,tid,target,0);
 }

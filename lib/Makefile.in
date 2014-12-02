@@ -32,16 +32,9 @@ CFLAGS += $(GLIB_CFLAGS)
 
 LDFLAGS += $(GLIB_LDFLAGS)
 
-HEADERS := $(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
-	$(TOP_SRCDIR)/include/log.h $(TOP_SRCDIR)/include/clfit.h \
-	$(TOP_SRCDIR)/include/waitpipe.h $(TOP_SRCDIR)/include/evloop.h \
-	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/output.h \
-	$(TOP_SRCDIR)/lib/debugpred.h $(TOP_SRCDIR)/include/arch.h \
-	$(TOP_SRCDIR)/include/arch_x86.h $(TOP_SRCDIR)/include/arch_x86_64.h \
-	$(TOP_SRCDIR)/include/regcache.h
-
 OBJECTS := ref.lo log.lo clfit.lo waitpipe.lo evloop.lo monitor.lo \
 	arch.lo arch_x86.lo arch_x86_64.lo regcache.lo
+DEPENDENCIES := $(OBJECTS:%.lo=%.d)
 LIBRARIES := libvmilib.la libloadall.la libloadallforever.la libloadallpagebypage.la
 
 INST_INC = debugpred.h
@@ -57,8 +50,8 @@ all:	$(LIBRARIES) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
-.c.lo:	$(HEADERS)
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+# Don't fail on missing .d files; there won't be any on the first run.
+-include $(DEPENDENCIES) 
 
 libvmilib.la: $(OBJECTS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS) -rpath $(INSTALL_LIBDIR) ${LDFLAGS}
@@ -92,6 +85,7 @@ clean: clean-subdirs
 		log.lo libvmilib.lo loadall.lo loadallforever.lo libloadallpagebypage.lo
 	$(RM) -f $(LIBRARIES) log.o libvmilib.* libvmilib.* loadall*
 	$(RM) -rf .libs
+	$(RM) -f $(DEPENDENCIES)
 
 distclean: distclean-subdirs
 

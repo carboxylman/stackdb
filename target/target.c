@@ -22,6 +22,7 @@
 #include <assert.h>
 #include <glib.h>
 #include <dlfcn.h>
+#include <signal.h>
 #include "glib_wrapper.h"
 #include "arch.h"
 #include "regcache.h"
@@ -117,6 +118,210 @@ void target_fini(void) {
     init_done = 0;
 }
 
+void target_default_cleanup() {
+    static int cleaning = 0;
+
+    struct target *target;
+    GList *targets,*t1;
+
+    if (cleaning)
+	return;
+    cleaning = 1;
+
+    if (target_id_tab)
+	targets = g_hash_table_get_values(target_id_tab);
+    else
+	targets = NULL;
+
+    /* Pause them all. */
+    v_g_list_foreach(targets,t1,target) {
+	target_pause(target);
+    }
+
+    /* Close and finalize them all; there is no turning back. */
+    v_g_list_foreach(targets,t1,target) {
+	if (target_monitor_handling_exception(target))
+	    target_monitor_schedule_interrupt(target);
+	else {
+	    target_close(target);
+	    target_finalize(target);
+	}
+    }
+
+    if (targets)
+	g_list_free(targets);
+}
+
+static sigset_t user_ignored,user_interrupt,user_exit;
+static void (*user_sighandler)(int signo,siginfo_t *siginfo,void *x);
+static int __target_global_interrupt = 0;
+static siginfo_t __target_monitor_last_siginfo;
+static struct sigaction __target_default_sigaction = {
+    .sa_sigaction = target_default_sighandler,
+    .sa_flags = SA_SIGINFO,
+};
+static struct sigaction __target_default_sigaction_ign = {
+    .sa_handler = SIG_IGN,
+};
+
+void target_default_sighandler(int signo,siginfo_t *siginfo,void *x) {
+    static int handling = 0;
+    GHashTableIter iter;
+    gpointer vp;
+    struct target *target;
+
+    if (handling)
+	return;
+    else
+	handling = 1;
+
+    if (siginfo)
+	__target_monitor_last_siginfo = *siginfo;
+    else {
+	memset(&__target_monitor_last_siginfo,0,
+	       sizeof(__target_monitor_last_siginfo));
+	__target_monitor_last_siginfo.si_signo = signo;
+    }
+
+    if (user_sighandler)
+	user_sighandler(signo,siginfo,x);
+
+    if (sigismember(&user_interrupt,signo)) {
+	/* Set the global interrupt bit so we know what to do. */
+	__target_global_interrupt = 1;
+
+	/*
+	 * If a driver's exception handler is in crit sec, tell it to
+	 * stay paused when it finishes!
+	 */
+	g_hash_table_iter_init(&iter,target_id_tab);
+	while (g_hash_table_iter_next(&iter,NULL,&vp)) {
+	    target = (struct target *)vp;
+
+	    if (target_monitor_handling_exception(target))
+		target_monitor_schedule_interrupt(target);
+	    else
+		target_pause(target);
+	}
+    }
+    else {
+	/* Need to pause, then cleanup, if the base and any overlays are
+	   not in monitor_handling -- otherwise, have to schedule death
+	   interrupt and cleanup then. */
+	target_default_cleanup();
+	exit(1);
+    }
+
+    sigaction(signo,&__target_default_sigaction,NULL);
+    handling = 0;
+}
+
+int target_monitor_was_interrupted(siginfo_t *last_siginfo) {
+    if (__target_global_interrupt) {
+	if (last_siginfo)
+	    *last_siginfo = __target_monitor_last_siginfo;
+    }
+
+    return __target_global_interrupt;
+}
+
+void target_monitor_clear_global_interrupt(void) {
+    __target_global_interrupt = 0;
+}
+
+int target_install_default_sighandlers
+    (void (*sighandler)(int signo,siginfo_t *siginfo,void *x)) {
+
+    sigset_t ignored,interrupt,exit;
+
+    sigemptyset(&ignored);
+    sigemptyset(&exit);
+    sigemptyset(&interrupt);
+
+    sigaddset(&exit,SIGHUP);
+    sigaddset(&exit,SIGINT);
+    sigaddset(&exit,SIGQUIT);
+    sigaddset(&exit,SIGILL);
+    sigaddset(&exit,SIGABRT);
+    sigaddset(&exit,SIGFPE);
+    sigaddset(&exit,SIGSEGV);
+    sigaddset(&exit,SIGPIPE);
+    sigaddset(&exit,SIGTERM);
+    sigaddset(&exit,SIGBUS);
+    sigaddset(&exit,SIGXCPU);
+    sigaddset(&exit,SIGXFSZ);
+
+    sigaddset(&ignored,SIGUSR1);
+    sigaddset(&ignored,SIGUSR2);
+    sigaddset(&ignored,SIGALRM);
+
+    return target_install_custom_sighandlers(&ignored,&interrupt,&exit,
+					     sighandler);
+}
+
+int target_install_custom_sighandlers
+    (sigset_t *ignored,sigset_t *interrupt,sigset_t *exit,
+     void (*sighandler)(int signo,siginfo_t *siginfo,void *x)) {
+
+    int i;
+
+    /*
+     * Waitpipe needs SIGCHLD; just skip it and error.  Documented.
+     */
+    if ((ignored && sigismember(ignored,SIGCHLD))
+	|| (exit && sigismember(exit,SIGCHLD))) {
+	verror("cannot specify SIGCHLD in any mask");
+	errno = EINVAL;
+	return -1;
+    }
+
+    if (ignored)
+	user_ignored = *ignored;
+    else
+	sigemptyset(&user_ignored);
+    if (interrupt)
+	user_interrupt = *interrupt;
+    else
+	sigemptyset(&user_interrupt);
+    if (exit)
+	user_exit = *exit;
+    else
+	sigemptyset(&user_exit);
+
+    user_sighandler = sighandler;
+
+    for (i = 1; i < 32; ++i) {
+	if ((i == SIGKILL || i == SIGSTOP)
+	    && (sigismember(&user_ignored,i) || sigismember(&user_interrupt,i)
+		|| sigismember(&user_exit,i))) {
+	    vwarn("cannot catch, block, nor ignore SIGKILL nor SIGSTOP; ignoring!\n");
+	    continue;
+	}
+
+	if (sigismember(&user_ignored,i))
+	    sigaction(i,&__target_default_sigaction_ign,NULL);
+	else if (sigismember(&user_interrupt,i) || sigismember(&user_exit,i))
+	    sigaction(i,&__target_default_sigaction,NULL);
+    }
+
+    return 0;
+}
+
+int target_monitor_handling_exception(struct target *target) {
+    return target->monitorhandling;
+}
+
+void target_monitor_schedule_global_interrupt(void) {
+    __target_global_interrupt = 1;
+}
+
+int target_monitor_schedule_interrupt(struct target *target) {
+    if (!target->monitorhandling)
+	return -1;
+    target->needmonitorinterrupt = 1;
+    return 0;
+}
+
 struct target *target_lookup_target_id(int id) {
     if (!target_id_tab)
 	return NULL;
@@ -147,39 +352,55 @@ struct target *target_lookup_target_id(int id) {
  **/
 error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state);
 
+#define TARGET_ARGP_BASE            0x333331
+#define TARGET_ARGP_OVERLAY         0x333332
 #define TARGET_ARGP_PERSONALITY     0x333333
 #define TARGET_ARGP_PERSONALITY_LIB 0x333334
 #define TARGET_ARGP_START_PAUSED    0x333335
 
-struct argp_option target_argp_opts[] = {
-    { "debug",'d',"LEVEL",0,"Set/increase the debugging level.",-3 },
-    { "log-flags",'l',"FLAG,FLAG,...",0,"Set the debugging flags",-3 },
-    { "warn",'w',"LEVEL",0,"Set/increase the warning level.",-3 },
-    { "target-type",'t',"TYPENAME",0,
-      "Forcibly set the target type (ptrace"
 #ifdef ENABLE_XENSUPPORT
-      ",xen"
+#define __XEN_ARGP_TYPE ",xen"
+#else
+#define __XEN_ARGP_TYPE
 #endif
-      ",gdb,os-process,php).",-3 },
-    { "personality",TARGET_ARGP_PERSONALITY,"PERSONALITY",0,
-      "Forcibly set the target personality (linux,process,php).",-3 },
-    { "personality-lib",TARGET_ARGP_PERSONALITY_LIB,"PERSONALITY_LIB_FILENAME",0,
-      "Specify a shared library where the personality specified by --personality should be loaded from.",-3 },
-    { "start-paused",TARGET_ARGP_START_PAUSED,0,0,"Leave target paused after launch.",-3 },
-    { "stay-paused",'P',0,0,"Keep target paused at detach.",-3 },
-    { "soft-breakpoints",'s',0,0,"Force software breakpoints.",-3 },
-    { "debugfile-load-opts",'F',"LOAD-OPTS",0,"Add a set of debugfile load options.",-3 },
-    { "breakpoint-mode",'L',"STRICT-LEVEL",0,"Set/increase the breakpoint mode level.",-3 },
-    { "target-id",'i',"ID",0,"Specify a numeric ID for the target.",0 },
-    { "in-file",'I',"FILE",0,"Deliver contents of FILE to target on stdin (if avail).",-4 },
-    { "out-file",'O',"FILE",0,"Log stdout (if avail) to FILE.",-4 },
-    { "err-file",'E',"FILE",0,"Log stderr (if avail) to FILE.",-4 },
-    { "kill-on-close",'k',NULL,0,"Destroy target on close (SIGKILL).",-4 },
-    { "debugfile-root-prefix",'R',"DIR",0,
-      "Set an alternate root prefix for debuginfo and binfile resolution.",0 },
-    { "active-probing",'a',"FLAG,FLAG,...",0,
-      "A list of active probing flags to enable (disabled by default)"
-      " (thread_entry thread_exit memory other)",0 },
+
+#define TARGET_ARGP_CORE_OPTS \
+    { "debug",'d',"LEVEL",0,"Set/increase the debugging level.",-3 }, \
+    { "log-flags",'l',"FLAG,FLAG,...",0,"Set the debugging flags",-3 }, \
+    { "warn",'w',"LEVEL",0,"Set/increase the warning level.",-3 }, \
+    { "target-type",'t',"TYPENAME",0, \
+      "Forcibly set the target type (ptrace" __XEN_ARGP_TYPE ",gdb,os-process,php).",-3 }, \
+    { "personality",TARGET_ARGP_PERSONALITY,"PERSONALITY",0, \
+      "Forcibly set the target personality (linux,process,php).",-3 }, \
+    { "personality-lib",TARGET_ARGP_PERSONALITY_LIB,"PERSONALITY_LIB_FILENAME",0, \
+      "Specify a shared library where the personality specified by --personality should be loaded from.",-3 }, \
+    { "start-paused",TARGET_ARGP_START_PAUSED,0,0,"Leave target paused after launch.",-3 }, \
+    { "stay-paused",'P',0,0,"Keep target paused at detach.",-3 }, \
+    { "soft-breakpoints",'s',0,0,"Force software breakpoints.",-3 }, \
+    { "debugfile-load-opts",'F',"LOAD-OPTS",0,"Add a set of debugfile load options.",-3 }, \
+    { "breakpoint-mode",'L',"STRICT-LEVEL",0,"Set/increase the breakpoint mode level.",-3 }, \
+    { "target-id",'i',"ID",0,"Specify a numeric ID for the target.",0 }, \
+    { "in-file",'I',"FILE",0,"Deliver contents of FILE to target on stdin (if avail).",-4 }, \
+    { "out-file",'O',"FILE",0,"Log stdout (if avail) to FILE.",-4 }, \
+    { "err-file",'E',"FILE",0,"Log stderr (if avail) to FILE.",-4 }, \
+    { "kill-on-close",'k',NULL,0,"Destroy target on close (SIGKILL).",-4 }, \
+    { "debugfile-root-prefix",'R',"DIR",0, \
+      "Set an alternate root prefix for debuginfo and binfile resolution.",0 }, \
+    { "active-probing",'a',"FLAG,FLAG,...",0, \
+      "A list of active probing flags to enable (disabled by default)" \
+      " (thread_entry thread_exit memory other)",0 }
+
+struct argp_option target_argp_opts[] = {
+    TARGET_ARGP_CORE_OPTS,
+    { "base",TARGET_ARGP_BASE,"TARGET_OPTIONS",0,
+      "Specify an entire base target in a single argument.  Any standard target option other than --base and --overlay may be used.",-3 },
+    { "overlay",TARGET_ARGP_OVERLAY,"OVERLAY_PREFIX:TARGET_OPTIONS",0,
+      "Specify an entire overlay target in a single argument.  Your argument must be of the form [<base_target_id>:]<thread_name_or_id>:TARGET_OPTIONS",-3 },
+    { 0,0,0,0,0,0 }
+};
+
+struct argp_option target_argp_opts_only_one[] = {
+    TARGET_ARGP_CORE_OPTS,
     { 0,0,0,0,0,0 }
 };
 
@@ -487,11 +708,89 @@ void *target_argp_driver_state(struct argp_state *state) {
 	    state->input)->driver_state;
 }
 
-struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
-					     void *driver_state,
-					     int argc,char **argv,
-					     target_type_t target_types,
-					     int filter_quoted) {
+static int __str2argvlist(char *argptr,struct array_list *argv_list) {
+    int inesc,inquote;
+    char quotechar;
+    char *nargptr,*vargptr;
+
+    while (*argptr == ' ')
+	++argptr;
+
+    inesc = 0;
+    inquote = 0;
+    quotechar = 0;
+    nargptr = argptr;
+    vargptr = argptr;
+    while (*argptr != '\0') {
+	if (*argptr == '\\') {
+	    if (inesc) {
+		inesc = 0;
+		*nargptr = '\\';
+		++nargptr;
+	    }
+	    else {
+		/* Don't copy the escape char. */
+		inesc = 1;
+		++argptr;
+		continue;
+	    }
+	}
+	else if (inesc) {
+	    inesc = 0;
+	    /* Just copy it. */
+	    *nargptr = *argptr;
+	    ++nargptr;
+	}
+	else if (inquote && *argptr == quotechar) {
+	    /* Ended the quoted sequence; don't copy quotes. */
+	    inquote = 0;
+	    quotechar = 0;
+	    ++argptr;
+	    continue;
+	}
+	else if (*argptr == '\'' || *argptr == '"') {
+	    inquote = 1;
+	    quotechar = *argptr;
+	    ++argptr;
+	    continue;
+	}
+	else if (!inquote && *argptr == ' ') {
+	    *nargptr = *argptr = '\0';
+	    if (vargptr) {
+		array_list_append(argv_list,vargptr);
+		//printf("vargptr (%p) = '%s'\n",vargptr,vargptr);
+		vargptr = NULL;
+	    }
+	    vargptr = NULL;
+	    nargptr = ++argptr;
+	    continue;
+	}
+	else {
+	    if (!vargptr)
+		vargptr = nargptr;
+
+	    *nargptr = *argptr;
+	    ++nargptr;
+	}
+
+	/* Default increment. */
+	++argptr;
+    }
+    if (vargptr) {
+	*nargptr = '\0';
+	array_list_append(argv_list,vargptr);
+	//printf("vargptr (%p) = '%s'\n",vargptr,vargptr);
+    }
+    array_list_append(argv_list,NULL);
+
+    return 0;
+}
+
+struct target_spec *target_argp_driver_parse_one(struct argp *driver_parser,
+						 void *driver_state,
+						 int argc,char **argv,
+						 target_type_t target_types,
+						 int filter_quoted) {
     error_t retval;
     int i;
     struct target_argp_parser_state tstate;
@@ -505,7 +804,7 @@ struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
      * has no arguments.
      */
     struct argp target_argp = { 
-	target_argp_opts,target_argp_parse_opt,
+	target_argp_opts_only_one,target_argp_parse_opt,
 	NULL,NULL,target_argp_children,NULL,NULL
     };
     /*
@@ -526,6 +825,8 @@ struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
 
     tstate.driver_state = driver_state;
     tstate.spec = target_build_spec(TARGET_TYPE_NONE,TARGET_MODE_NONE);
+    tstate.base_target_specs = NULL;
+    tstate.overlay_target_specs = NULL;
 
     if (filter_quoted) {
 	for (i = 0; i < argc; ++i) {
@@ -589,9 +890,155 @@ struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
 	if (tstate.spec)
 	    free(tstate.spec);
 	tstate.spec = NULL;
+
+	return NULL;
     }
 
     return tstate.spec;
+}
+
+int target_argp_driver_parse(struct argp *driver_parser,void *driver_state,
+			     int argc,char **argv,
+			     target_type_t target_types,int filter_quoted,
+			     struct target_spec **primary_target_spec,
+			     GList **base_target_specs,
+			     GList **overlay_target_specs) {
+    error_t retval;
+    int i;
+    GList *tmp;
+    struct target_spec *tspec2;
+    struct target_argp_parser_state tstate;
+    /*
+     * These are our subparsers.  They are optional, so we have to build
+     * them manually.
+     */
+    struct argp_child target_argp_children[4];
+    /*
+     * This is the "main" target arg parser, to be used if the caller
+     * has no arguments.
+     */
+    struct argp target_argp = { 
+	target_argp_opts,target_argp_parse_opt,
+	NULL,NULL,target_argp_children,NULL,NULL
+    };
+    /*
+     * This is the main child target arg parser, to be used if the
+     * caller has its own arguments.
+     */
+    struct argp_child target_argp_child[] = {
+	{ &target_argp,0,"Generic Target Options",0 },
+	{ 0,0,0,0 },
+    };
+
+    if (!target_types) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    memset(&tstate,0,sizeof(tstate));
+
+    tstate.driver_state = driver_state;
+    tstate.spec = target_build_spec(TARGET_TYPE_NONE,TARGET_MODE_NONE);
+    tstate.base_target_specs = base_target_specs;
+    tstate.overlay_target_specs = overlay_target_specs;
+
+    if (filter_quoted) {
+	for (i = 0; i < argc; ++i) {
+	    if (strncmp("--",argv[i],2) == 0 && argv[i][2] == '\0') {
+		argv[i] = NULL;
+		if (++i < argc) {
+		    tstate.quoted_start = i;
+		    tstate.quoted_argc = argc - i;
+		    tstate.quoted_argv = &argv[i];
+		}
+		argc = i - 1;
+		break;
+	    }
+	}
+    }
+
+    tstate.num_children = 0;
+    if (target_types & TARGET_TYPE_PTRACE) {
+	target_argp_children[tstate.num_children].argp = &linux_userproc_argp;
+	target_argp_children[tstate.num_children].flags = 0;
+	target_argp_children[tstate.num_children].header = linux_userproc_argp_header;
+	target_argp_children[tstate.num_children].group = 0;
+	++tstate.num_children;
+    }
+#ifdef ENABLE_XENSUPPORT
+    if (target_types & TARGET_TYPE_XEN) {
+	target_argp_children[tstate.num_children].argp = &xen_vm_argp;
+	target_argp_children[tstate.num_children].flags = 0;
+	target_argp_children[tstate.num_children].header = xen_vm_argp_header;
+	target_argp_children[tstate.num_children].group = 0;
+	++tstate.num_children;
+    }
+#endif
+    if (target_types & TARGET_TYPE_GDB) {
+	target_argp_children[tstate.num_children].argp = &gdb_argp;
+	target_argp_children[tstate.num_children].flags = 0;
+	target_argp_children[tstate.num_children].header = gdb_argp_header;
+	target_argp_children[tstate.num_children].group = 0;
+	++tstate.num_children;
+    }
+
+    target_argp_children[tstate.num_children].argp = NULL;
+    target_argp_children[tstate.num_children].flags = 0;
+    target_argp_children[tstate.num_children].header = NULL;
+    target_argp_children[tstate.num_children].group = 0;
+
+    if (driver_parser) {
+	driver_parser->children = target_argp_child;
+
+	retval = argp_parse(driver_parser,argc,argv,0,NULL,&tstate);
+
+	driver_parser->children = NULL;
+    }
+    else {
+	retval = argp_parse(&target_argp,argc,argv,0,NULL,&tstate);
+    }
+
+    if (tstate.spec && !primary_target_spec) {
+	verror("primary target specification supplied, but not allowed!\n");
+	errno = EINVAL;
+	retval = -1;
+    }
+
+    if (retval) {
+	if (base_target_specs && *base_target_specs) {
+	    v_g_list_foreach(*base_target_specs,tmp,tspec2) {
+		if (tspec2->backend_spec)
+		    free(tspec2->backend_spec);
+		free(tspec2);
+	    }
+	    g_list_free(*base_target_specs);
+	    *base_target_specs = NULL;
+	}
+
+	if (overlay_target_specs && *overlay_target_specs) {
+	    v_g_list_foreach(*overlay_target_specs,tmp,tspec2) {
+		if (tspec2->backend_spec)
+		    free(tspec2->backend_spec);
+		free(tspec2);
+	    }
+	    g_list_free(*overlay_target_specs);
+	    *overlay_target_specs = NULL;
+	}
+
+	if (tstate.spec && tstate.spec->backend_spec)
+	    free(tstate.spec->backend_spec);
+	if (tstate.spec)
+	    free(tstate.spec);
+	tstate.spec = NULL;
+
+	return retval;
+    }
+    else {
+	if (tstate.spec)
+	    *primary_target_spec = tstate.spec;
+
+	return 0;
+    }
 }
 
 void target_driver_argp_init_children(struct argp_state *state) {
@@ -609,6 +1056,11 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     char *saveptr;
     char *token;
     int shf;
+    struct array_list *argv_list;
+    char *argptr,*argptr2;
+    char *base_thread_name_or_id;
+    int base_target_id = -1;
+    struct target_spec *ospec,*bspec;
 
     if (tstate)
 	spec = tstate->spec;
@@ -628,9 +1080,16 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	return 0;
     case ARGP_KEY_FINI:
 	/*
-	 * Check for at least *something*.
+	 * Check for at least *something*.  But if they specified --base
+	 * at least once, allow the "default" target to be NULL.
 	 */
-	if (spec && spec->target_type == TARGET_TYPE_NONE) {
+	if (spec && spec->target_type == TARGET_TYPE_NONE
+	    && tstate->base_target_specs && *(tstate->base_target_specs)
+	    && g_list_length(*(tstate->base_target_specs))) {
+	    target_free_spec(tstate->spec);
+	    tstate->spec = NULL;
+	}
+	else if (spec && spec->target_type == TARGET_TYPE_NONE) {
 	    verror("you must specify at least one kind of target!\n");
 	    return EINVAL;
 	}
@@ -817,6 +1276,104 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 		return EINVAL;
 	    }
 	}
+	break;
+    case TARGET_ARGP_BASE:
+	if (!tstate->base_target_specs) {
+	    verror("program does not support extra base target specs!\n");
+	    return EINVAL;
+	}
+
+	argcopy = strdup(arg);
+
+	argv_list = array_list_create(32);
+	array_list_append(argv_list,"target_argp_base_parse_one");
+
+	__str2argvlist(argcopy,argv_list);
+
+	bspec = target_argp_driver_parse_one(NULL,NULL,
+					     array_list_len(argv_list) - 1,
+					     (char **)argv_list->list,
+					     TARGET_TYPE_MASK_BASE,0);
+	if (!bspec) {
+	    verror("could not parse base spec %d!\n",
+		   g_list_length(*tstate->base_target_specs));
+	    free(argcopy);
+	    array_list_free(argv_list);
+	    return EINVAL;
+	}
+
+	bspec->spec_was_base = 1;
+
+	*tstate->base_target_specs =
+	    g_list_append(*tstate->base_target_specs,bspec);
+
+	free(argcopy);
+	array_list_free(argv_list);
+	break;
+    case TARGET_ARGP_OVERLAY:
+	if (!tstate->overlay_target_specs) {
+	    verror("program does not support extra overlay target specs!\n");
+	    return EINVAL;
+	}
+
+	/*
+	 * We need to split the <name_or_id>:<spec> part; then split
+	 * <spec> into an argv.  Simple rules: \ escapes the next char;
+	 * space not in ' or " causes us to end the current argv[i] and
+	 * start the next one.
+	 */
+	argcopy = strdup(arg);
+	argptr = index(argcopy,':');
+	if (!argptr) {
+	    verror("bad overlay spec!\n");
+	    return EINVAL;
+	}
+
+	argv_list = array_list_create(32);
+	array_list_append(argv_list,"target_argp_overlay_parse_one");
+
+	base_thread_name_or_id = argcopy;
+	*argptr = '\0';
+	++argptr;
+
+	argptr2 = index(argptr,':');
+	if (argptr2) {
+	    base_target_id = atoi(base_thread_name_or_id);
+	    base_thread_name_or_id = argptr;
+	    *argptr2 = '\0';
+	    argptr = ++argptr2;
+	}
+
+	__str2argvlist(argptr,argv_list);
+
+	ospec = target_argp_driver_parse_one(NULL,NULL,
+					     array_list_len(argv_list) - 1,
+					     (char **)argv_list->list,
+					     TARGET_TYPE_MASK_OVERLAY,0);
+	if (!ospec) {
+	    verror("could not parse overlay spec %d!\n",
+		   g_list_length(*tstate->overlay_target_specs));
+	    free(argcopy);
+	    array_list_free(argv_list);
+	    return EINVAL;
+	}
+
+	ospec->base_target_id = base_target_id;
+	if (isdigit(*base_thread_name_or_id)) {
+	    ospec->base_thread_id = atoi(base_thread_name_or_id);
+	    ospec->base_thread_name = NULL;
+	}
+	else {
+	    ospec->base_thread_id = -1;
+	    ospec->base_thread_name = strdup(base_thread_name_or_id);
+	}
+	ospec->spec_was_overlay = 1;
+
+	*tstate->overlay_target_specs =
+	    g_list_append(*tstate->overlay_target_specs,ospec);
+
+	free(argcopy);
+	array_list_free(argv_list);
 	break;
 
     default:
@@ -4149,130 +4706,6 @@ int target_detach_action(struct target *target,struct action *action) {
     return 0;
 }
 
-result_t target_memmod_emulate_bp_handler(struct target *target,tid_t tid,
-					  struct target_memmod *mmod) {
-    struct target_thread *tthread;
-    REGVAL ipval;
-
-    tthread = target_lookup_thread(target,tid);
-    if (!tthread) {
-	verror("tid %"PRIiTID" does not exist!\n",tid);
-	errno = ESRCH;
-	return RESULT_ERROR;
-    }
-
-    if (tthread->emulating_debug_mmod) {
-	verror("tid %"PRIiTID" already is emulating a memmod"
-	       " at 0x%"PRIxADDR"; cannot do another one!\n",
-	       tid,tthread->emulating_debug_mmod->addr);
-	errno = EBUSY;
-	return RESULT_ERROR;
-    }
-
-    tthread->emulating_debug_mmod = mmod;
-
-    /*
-     * If we're in BPMODE_STRICT, we have to pause all the other
-     * threads.
-     */
-    if (target->spec->bpmode == THREAD_BPMODE_STRICT) {
-	if (target_pause(target)) {
-	    vwarn("could not pause the target for blocking thread"
-		  " %"PRIiTID"!\n",tthread->tid);
-	    return RESULT_ERROR;
-	}
-	target->blocking_thread = tthread;
-    }
-
-    errno = 0;
-    ipval = target_read_reg(target,tid,target->ipregno);
-    if (!ipval && errno) {
-	verror("could not read IP in tid %"PRIiTID"!\n",tid);
-	return RESULT_ERROR;
-    }
-
-    /* Disable the memmod. */
-    if (target_memmod_unset(target,tid,mmod)) {
-	verror("could not disable breakpoint before singlestep;"
-	       " assuming breakpoint is left in place and"
-	       " skipping single step, but badness will ensue!");
-	goto errout;
-    }
-
-    /* Enable singlestep. */
-    if (target_singlestep(target,tid,1)) {
-	verror("could not singlestep tid %"PRIiTID"!\n",tid);
-	goto errout;
-    }
-
-    /* Reset ip. */
-    ipval -= target->arch->breakpoint_instrs_len; //target_memmod_length(target,mmod);
-    if (target_write_reg(target,tid,target->ipregno,ipval)) {
-	verror("could not write IP!\n");
-	goto errout;
-    }
-
-    /* Temporarily add this thread to the mmod. */
-    array_list_append(mmod->threads,tthread);
-
-    return RESULT_SUCCESS;
-
- errout:
-    target_singlestep_end(target,tid);
-    if (target->blocking_thread == tthread)
-	target->blocking_thread = NULL;
-    tthread->emulating_debug_mmod = NULL;
-
-    return RESULT_ERROR;
-}
-
-result_t target_memmod_emulate_ss_handler(struct target *target,tid_t tid,
-					  struct target_memmod *mmod) {
-    struct target_thread *tthread;
-
-    tthread = target_lookup_thread(target,tid);
-    if (!tthread) {
-	verror("tid %"PRIiTID" does not exist!\n",tid);
-	errno = ESRCH;
-	return RESULT_ERROR;
-    }
-
-    if (tthread->emulating_debug_mmod 
-	&& tthread->emulating_debug_mmod != mmod) {
-	verror("tid %"PRIiTID" already is emulating a memmod"
-	       " at 0x%"PRIxADDR"; cannot do another one!\n",
-	       tid,tthread->emulating_debug_mmod->addr);
-	errno = EBUSY;
-	return RESULT_ERROR;
-    }
-    else if (!tthread->emulating_debug_mmod)
-	vwarn("not set to emulate a debug mmod; trying anyway!\n");
-
-    /* Disable singlestep. */
-    target_singlestep_end(target,tid);
-
-    /* Reenable the memmod. */
-    target_memmod_set(target,tid,mmod);
-
-    /* Remove this thread from the memmod's list. */
-    array_list_remove_item(mmod->threads,tthread);
-
-    if (target->spec->bpmode == THREAD_BPMODE_STRICT) {
-	if (target->blocking_thread == tthread)
-	    target->blocking_thread = NULL;
-    }
-
-    if (tthread->emulating_debug_mmod == mmod)
-	tthread->emulating_debug_mmod = NULL;
-    else if (tthread->emulating_debug_mmod) {
-	verror("tid %"PRIiTID" already is emulating a memmod"
-	       " at 0x%"PRIxADDR"; cannot clear it!\n",
-	       tid,tthread->emulating_debug_mmod->addr);
-    }
-
-    return RESULT_SUCCESS;
-}
-
 unsigned long target_memmod_length(struct target *target,
 				   struct target_memmod *mmod) {
     switch (mmod->state) {
@@ -4293,7 +4726,7 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
 					   ADDR addr,int is_phys,
 					   target_memmod_type_t mmt,
 					   unsigned char *code,
-					   unsigned int code_len) {
+					   unsigned int code_len,int nowrite) {
     struct target_memmod *mmod;
     unsigned char *ibuf = NULL;
     unsigned int ibuf_len;
@@ -4315,6 +4748,7 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
     mmod->threads = array_list_create(1);
     mmod->addr = addr;
     mmod->is_phys = is_phys;
+    mmod->no_write = nowrite;
 
     if (code) {
 	/*
@@ -4352,7 +4786,9 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
 	mmod->mod_len = code_len;
 	memcpy(mmod->mod,code,mmod->mod_len);
 
-	if (is_phys)
+	if (nowrite)
+	    rc = mmod->mod_len;
+	else if (is_phys)
 	    rc = target_write_physaddr(target,addr,mmod->mod_len,mmod->mod);
 	else
 	    rc = target_write_addr(target,addr,mmod->mod_len,mmod->mod);
@@ -4377,10 +4813,10 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
 
     if (code) {
 	vdebug(5,LA_TARGET,LF_TARGET,
-	       "created memmod at 0x%"PRIxADDR" (is_phys=%d) tid %"PRIiTID";"
+	       "created memmod at 0x%"PRIxADDR" (is_phys=%d,no_write=%d) tid %"PRIiTID";"
 	       " inserted new bytes (orig mem: %02hhx %02hhx %02hhx %02hhx"
 	       " %02hhx %02hhx %02hhx %02hhx)\n",
-	       mmod->addr,is_phys,tid,
+	       mmod->addr,is_phys,nowrite,tid,
 	       (int)ibuf[0],(int)ibuf[1],(int)ibuf[2],(int)ibuf[3],
 	       (int)ibuf[4],(int)ibuf[5],(int)ibuf[6],(int)ibuf[7]);
     }
@@ -4394,6 +4830,11 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
 	free(ibuf);
 
     return mmod;
+}
+
+void target_memmod_set_writeable(struct target *target,
+				 struct target_memmod *mmod,int writeable) {
+    mmod->no_write = !writeable;
 }
 
 struct target_memmod *target_memmod_lookup(struct target *target,tid_t tid,
@@ -4497,7 +4938,7 @@ int target_memmod_free(struct target *target,tid_t tid,
 	if (mmod->mod)
 	    free(mmod->mod);
 
-	if (mmod->orig) {
+	if (!mmod->no_write && mmod->orig) {
 	    rc = writer(target,addr,mmod->orig_len,mmod->orig);
 	    if (rc != mmod->orig_len) {
 		verror("could not restore orig memory at 0x%"PRIxADDR";"
@@ -4507,7 +4948,7 @@ int target_memmod_free(struct target *target,tid_t tid,
 	}
 
 	vdebug(5,LA_TARGET,LF_TARGET,
-	       "released memmod 0x%"PRIxADDR" (is_phys=%d) tid %"PRIiTID"\n",
+	       "freed memmod 0x%"PRIxADDR" (is_phys=%d) tid %"PRIiTID"\n",
 	       mmod->addr,mmod->is_phys,tid);
 
 	array_list_free(mmod->threads);
@@ -4558,7 +4999,10 @@ int target_memmod_set(struct target *target,tid_t tid,
 	mmod->owner = NULL;
 	return 0;
     case MMS_ORIG:
-	rc = writer(target,addr,mmod->mod_len,mmod->mod);
+	if (mmod->no_write)
+	    rc = mmod->mod_len;
+	else
+	    rc = writer(target,addr,mmod->mod_len,mmod->mod);
 	if (rc != mmod->mod_len) {
 	    verror("could not insert subst memory at 0x%"PRIxADDR"!\n",addr);
 	    return -1;
@@ -4576,7 +5020,10 @@ int target_memmod_set(struct target *target,tid_t tid,
 	    mmod->tmp = NULL;
 	    mmod->tmp_len = 0;
 	}
-	rc = writer(target,addr,mmod->mod_len,mmod->mod);
+	if (mmod->no_write)
+	    rc = mmod->mod_len;
+	else
+	    rc = writer(target,addr,mmod->mod_len,mmod->mod);
 	if (rc != mmod->mod_len) {
 	    verror("could not insert subst memory at 0x%"PRIxADDR"!\n",addr);
 	    return -1;
@@ -4608,9 +5055,6 @@ int target_memmod_unset(struct target *target,tid_t tid,
     else
 	writer = target_write_addr;
 
-    if (target->ops->disable_sw_breakpoint)
-	return target->ops->disable_sw_breakpoint(target,tid,mmod);
-
     /*
      * Default implementation: disable it if necessary; swap orig bytes
      * into place, if state is not already ORIG.
@@ -4636,7 +5080,10 @@ int target_memmod_unset(struct target *target,tid_t tid,
 	mmod->owner = tthread;
 	return 0;
     case MMS_SUBST:
-	rc = writer(target,addr,mmod->orig_len,mmod->orig);
+	if (mmod->no_write)
+	    rc = mmod->mod_len;
+	else
+	    rc = writer(target,addr,mmod->orig_len,mmod->orig);
 	if (rc != mmod->orig_len) {
 	    verror("could not restore orig memory at 0x%"PRIxADDR"!\n",addr);
 	    return -1;
@@ -4654,7 +5101,10 @@ int target_memmod_unset(struct target *target,tid_t tid,
 	    mmod->tmp = NULL;
 	    mmod->tmp_len = 0;
 	}
-	rc = writer(target,addr,mmod->orig_len,mmod->orig);
+	if (mmod->no_write)
+	    rc = mmod->mod_len;
+	else
+	    rc = writer(target,addr,mmod->orig_len,mmod->orig);
 	if (rc != mmod->orig_len) {
 	    verror("could not restore orig memory at 0x%"PRIxADDR"!\n",addr);
 	    return -1;
@@ -4770,7 +5220,10 @@ int target_memmod_set_tmp(struct target *target,tid_t tid,
 	return -1;
     }
 
-    rc = writer(target,addr,new_len,new);
+    if (mmod->no_write)
+	rc = mmod->mod_len;
+    else
+	rc = writer(target,addr,new_len,new);
     if (rc != new_len) {
 	verror("could not write tmp memory at 0x%"PRIxADDR"!\n",addr);
 	free(new);
@@ -5848,6 +6301,22 @@ int target_regcache_readreg_ifdirty(struct target *target,
 	return 0;
     else
 	return regcache_read_reg_ifdirty(tthread->regcaches[tctxt],reg,regval);
+}
+
+int target_regcache_isdirty(struct target *target,
+			    struct target_thread *tthread,
+			    thread_ctxt_t tctxt) {
+    if (tctxt > target->max_thread_ctxt) {
+	verror("target %d only has max thread ctxt %d (%d specified)!\n",
+	       target->id,target->max_thread_ctxt,tctxt);
+	errno = EINVAL;
+	return 0;
+    }
+
+    if (!tthread->regcaches[tctxt])
+	return 0;
+    else
+	return regcache_isdirty(tthread->regcaches[tctxt]);
 }
 
 int target_regcache_isdirty_reg(struct target *target,

@@ -35,6 +35,7 @@
 #include <string.h>
 #include <inttypes.h>
 #include <signal.h>
+#include <glib.h>
 
 #include "target_linux_userproc.h"
 #ifdef ENABLE_XENSUPPORT
@@ -85,6 +86,308 @@ struct target *target_instantiate(struct target_spec *spec,
     }
 
     errno = EINVAL;
+    return NULL;
+}
+
+GList *target_instantiate_and_open(struct target_spec *primary_target_spec,
+				   GList *base_target_specs,
+				   GList *overlay_target_specs,
+				   struct evloop *evloop,
+				   GList **error_specs) {
+    struct target *primary_target = NULL,*target = NULL,*base_target;
+    struct target_spec *spec;
+    int i;
+    GList *tmp;
+    GList *lcopy = NULL;
+    GList *retval = NULL;
+
+    i = 0;
+
+    /*
+     * Instantiate the primary target first; then the base targets;
+     * then the overlay targets.  If an overlay target doesn't have a
+     * base target id, then we assume and try the primary target created
+     * from the primary target spec; otherwise we fail.
+     */
+
+    if (primary_target_spec) {
+	primary_target = target_instantiate(primary_target_spec,evloop);
+	if (!primary_target) {
+	    if (error_specs) {
+		vwarn("could not instantiate primary target; skipping!\n");
+		*error_specs = g_list_append(*error_specs,primary_target_spec);
+	    }
+	    else {
+		verror("could not instantiate primary target; aborting\n!");
+		goto errout;
+	    }
+	}
+	else {
+	    vdebug(5,LA_TARGET,LF_TARGET,"instantiated primary target\n");
+	}
+    }
+
+    if (base_target_specs) {
+	lcopy = g_list_copy(base_target_specs);
+	v_g_list_foreach(lcopy,tmp,spec) {
+	    ++i;
+	    target = target_instantiate(spec,evloop);
+
+	    if (target) {
+		target->spec = spec;
+	    }
+	    else if (error_specs) {
+		vwarn("could not instantiate target spec %d\n",i);
+		*error_specs = g_list_append(*error_specs,spec);
+	    }
+	    else {
+		verror("could not instantiate target spec %d\n",i);
+		goto errout;
+	    }
+
+	    if (!target_open(target)) {
+		retval = g_list_append(retval,target);
+	    }
+	    else if (error_specs) {
+		vwarn("could not instantiate target spec %d\n",i);
+		target_close(target);
+		target_finalize(target);
+		*error_specs = g_list_append(*error_specs,spec);
+	    }
+	    else {
+		verror("could not instantiate target spec %d\n",i);
+		target_close(target);
+		target_finalize(target);
+		target = NULL;
+		goto errout;
+	    }
+	}
+	g_list_free(lcopy);
+	lcopy = NULL;
+    }
+
+    if (overlay_target_specs) {
+	lcopy = g_list_copy(overlay_target_specs);
+	v_g_list_foreach(lcopy,tmp,spec) {
+	    ++i;
+	    if (spec->base_target_id <= 0)
+		base_target = primary_target;
+	    else
+		base_target = target_lookup_target_id(spec->base_target_id);
+
+	    if (!base_target) {
+		if (!error_specs) {
+		    verror("could not instantiate overlay target spec %d;"
+			   " no base target with id %d\n",
+			   i,spec->base_target_id);
+		    goto errout;
+		}
+		else {
+		    vwarn("could not instantiate overlay target spec %d;"
+			  " no base target with id %d\n",
+			  i,spec->base_target_id);
+		    *error_specs = g_list_append(*error_specs,spec);
+		    continue;
+		}
+	    }
+
+	    if (spec->base_thread_name) {
+		spec->base_thread_id =
+		    target_lookup_overlay_thread_by_name(base_target,
+							 spec->base_thread_name);
+		if (spec->base_thread_id < 0) {
+		    if (!error_specs) {
+			verror("could not instantiate overlay target spec %d;"
+			       " no base target thread named %s\n",
+			       i,spec->base_thread_name);
+			goto errout;
+		    }
+		    else {
+			vwarn("could not instantiate overlay target spec %d;"
+			      " no base target thread named %s\n",
+			      i,spec->base_thread_name);
+			*error_specs = g_list_append(*error_specs,spec);
+		    }
+		}
+	    }
+
+	    target = target_instantiate_overlay(base_target,
+						spec->base_thread_id,spec);
+	    if (target) {
+		target->spec = spec;
+		retval = g_list_append(retval,target);
+	    }
+	    else if (!error_specs) {
+		verror("could not instantiate overlay target spec %d"
+		       " on base thread %d\n",
+		       i,spec->base_thread_id);
+		goto errout;
+	    }
+	    else {
+		vwarn("could not instantiate overlay target spec %d"
+		      " on base thread %d\n",
+		      i,spec->base_thread_id);
+		*error_specs = g_list_append(*error_specs,spec);
+	    }
+
+	    if (!target_open(target)) {
+		retval = g_list_append(retval,target);
+	    }
+	    else if (error_specs) {
+		vwarn("could not instantiate target spec %d\n",i);
+		target_close(target);
+		target_finalize(target);
+		*error_specs = g_list_append(*error_specs,spec);
+	    }
+	    else {
+		verror("could not instantiate target spec %d\n",i);
+		target_close(target);
+		target_finalize(target);
+		target = NULL;
+		goto errout;
+	    }
+	}
+	g_list_free(lcopy);
+	lcopy = NULL;
+    }
+
+    return retval;
+
+ errout:
+    if (lcopy) {
+	g_list_free(lcopy);
+	lcopy = NULL;
+    }
+    if (retval) {
+	retval = g_list_reverse(retval);
+	v_g_list_foreach(retval,tmp,target) {
+	    target_finalize(target);
+	}
+	g_list_free(retval);
+    }
+    return NULL;
+}
+
+GList *target_instantiate_and_open_list(GList *target_specs,
+					struct evloop *evloop,
+					GList **error_specs) {
+    struct target *target = NULL;
+    struct target_spec *spec;
+    int i;
+    GList *tmp,*tmp2;
+    GList *lcopy;
+    GList *retval = NULL;
+    int progress,last_progress;
+    struct target *base_target;
+    tid_t base_thread_id;
+
+    lcopy = g_list_copy(target_specs);
+
+    /*
+     * Instantiate all the base targets first, removing them as we go;
+     * then instantiate the overlay targets if there is a matching
+     * target, or if any target will accept them.
+     */
+    i = 0;
+    /* Force at least two trips through the loop before we start giving
+     * up on lookups.
+     */
+    progress = 1;
+    while (1) {
+	last_progress = progress;
+	progress = 0;
+	v_g_list_foreach_safe(lcopy,tmp,tmp2,spec) {
+	    if (spec->target_type == TARGET_TYPE_PTRACE) {
+		target = linux_userproc_instantiate(spec,evloop);
+	    }
+#ifdef ENABLE_XENSUPPORT
+	    else if (spec->target_type == TARGET_TYPE_XEN) {
+		target = xen_vm_instantiate(spec,evloop);
+	    }
+#endif
+	    else if (spec->target_type == TARGET_TYPE_GDB) {
+		target = gdb_instantiate(spec,evloop);
+	    }
+	    else {
+		base_target = target_lookup_target_id(spec->base_target_id);
+
+		if (!base_target && !last_progress) {
+		    if (!error_specs) {
+			verror("could not lookup base target id %d for"
+			       " overlay target spec\n",spec->base_target_id);
+			goto errout;
+		    }
+		    else {
+			vwarn("could not lookup base target id %d for"
+			       " target spec; skipping\n",spec->base_target_id);
+			v_g_list_foreach_remove(lcopy,tmp,tmp2);
+			*error_specs = g_list_append(*error_specs,spec);
+			continue;
+		    }
+		}
+		else if (!base_target) {
+		    /* Try again until there is no progress */
+		    continue;
+		}
+
+		if (!spec->base_thread_name)
+		    base_thread_id = spec->base_thread_id;
+		else {
+		    base_thread_id =
+			target_lookup_overlay_thread_by_name(base_target,
+							     spec->base_thread_name);
+		    if (base_thread_id < 0) {
+			if (!error_specs) {
+			    verror("could not lookup base target thread name %s"
+				   " for overlay target spec\n",
+				   spec->base_thread_name);
+			    goto errout;
+			}
+			else {
+			    vwarn("could not lookup base target thread name %s"
+				  " for overlay target spec; skipping\n",
+				  spec->base_thread_name);
+			    v_g_list_foreach_remove(lcopy,tmp,tmp2);
+			    *error_specs = g_list_append(*error_specs,spec);
+			    continue;
+			}
+		    }
+		}
+
+		target = target_instantiate_overlay(base_target,base_thread_id,
+						    spec);
+	    }
+	}
+
+	if (target) {
+	    ++progress;
+	    target->spec = spec;
+	    retval = g_list_append(retval,target);
+	}
+	else if (error_specs) {
+	    vwarn("could not instantiate target spec %d\n",i);
+	    *error_specs = g_list_append(*error_specs,spec);
+	}
+	else {
+	    vwarn("could not instantiate target spec %d\n",i);
+	    goto errout;
+	}
+
+		v_g_list_foreach_remove(lcopy,tmp,tmp2);
+    }
+
+    g_list_free(lcopy);
+    return retval;
+
+ errout:
+    g_list_free(lcopy);
+    if (retval) {
+	retval = g_list_reverse(retval);
+	v_g_list_foreach(retval,tmp,target) {
+	    target_finalize(target);
+	}
+	g_list_free(retval);
+    }
     return NULL;
 }
 
@@ -530,19 +833,130 @@ target_status_t target_monitor(struct target *target) {
 	       target->name,TSTATUS(target->status));
 	return TSTATUS_ERROR;
     }
+    target_monitor_clear_global_interrupt();
     vdebug(8,LA_TARGET,LF_TARGET,"monitoring target(%s)\n",target->name);
     return target->ops->monitor(target);
 }
 
-int target_is_monitor_handling(struct target *target) {
-    return target->monitorhandling;
-}
+int target_monitor_evloop(struct evloop *evloop,struct timeval *timeout,
+			  struct target **target,target_status_t *status) {
+    struct evloop_fdinfo *fdinfo;
+    int hrc;
+    int fdtype;
+    int rc = 0;
+    int nfds;
+    struct timeval tv;
+    struct target *t;
 
-int target_monitor_schedule_interrupt(struct target *target) {
-    if (!target->monitorhandling)
-	return -1;
-    target->needmonitorinterrupt = 1;
-    return 0;
+    target_monitor_clear_global_interrupt();
+
+    if (timeout)
+	tv = *timeout;
+
+    while (evloop_maxsize(evloop) > -1) {
+	if (target)
+	    *target = NULL;
+	if (status)
+	    *status = TSTATUS_UNKNOWN;
+	fdinfo = NULL;
+	hrc = 0;
+	fdtype = -1;
+
+	vdebug(9,LA_TARGET,LF_TARGET,"monitoring evloop with up to %d FDs\n",
+	       evloop_maxsize(evloop));
+
+	/* Always reinit the timeout on new pass */
+	if (timeout)
+	    *timeout = tv;
+
+	rc = evloop_handleone(evloop,EVLOOP_RETONINT,timeout,
+			      &fdinfo,&fdtype,&hrc);
+
+	if (rc < 0) {
+	    if (errno == EINTR) {
+		/*
+		 * Did our default sighandler flag a signal as needing
+		 * handling from the user?  If so, return; else keep
+		 * going.
+		 */
+		if (target_monitor_was_interrupted(NULL))
+		    break;
+		else
+		    continue;
+	    }
+	    else if (errno == EBADF || errno == EINVAL || errno == ENOMEM
+		     || errno == ENOENT || errno == EBADSLT || errno == ENOTSUP) {
+		vdebug(9,LA_TARGET,LA_TARGET,"evloop_handlone: '%s'\n",
+		       strerror(errno));
+	    }
+	    else {
+		vdebug(9,LA_TARGET,LA_TARGET,
+		       "evloop_handlone: unexpected error '%s' (%d)\n",
+		       strerror(errno),errno);
+	    }
+	    break;
+	}
+	else if (rc == 0) {
+	    if (fdinfo) {
+		/*
+		 * Check this target and see if its status is one we
+		 * want to punt to the user to notify/handle.
+		 */
+		if (fdtype == EVLOOP_FDTYPE_R)
+		    t = (struct target *)fdinfo->rhstate;
+		else if (fdtype == EVLOOP_FDTYPE_W)
+		    t = (struct target *)fdinfo->whstate;
+		else if (fdtype == EVLOOP_FDTYPE_X)
+		    t = (struct target *)fdinfo->xhstate;
+		else
+		    t = NULL;
+
+		if (t) {
+		    if (t->status == TSTATUS_RUNNING
+			|| t->status == TSTATUS_PAUSED)
+			continue;
+		    else
+			break;
+		}
+		else
+		    continue;
+	    }
+	    else if ((nfds = evloop_maxsize(evloop) < 0))
+		/* Nothing left. */
+		break;
+	    else if (nfds) {
+		/* Something left; keep going. */
+		continue;
+	    }
+	    else {
+		verror("evloop_handleone returned 0 but still FDs to handle!\n");
+		errno = EINVAL;
+		rc = -1;
+		break;
+	    }
+	}
+	else {
+	    verror("evloop_handleone returned unexpected code '%d'; aborting!\n",
+		   rc);
+	    rc = -1;
+	    break;
+	}
+    }
+
+    if (target) {
+	if (fdtype == EVLOOP_FDTYPE_R)
+	    *target = (struct target *)fdinfo->rhstate;
+	else if (fdtype == EVLOOP_FDTYPE_W)
+	    *target = (struct target *)fdinfo->whstate;
+	else if (fdtype == EVLOOP_FDTYPE_X)
+	    *target = (struct target *)fdinfo->xhstate;
+	else
+	    *target = NULL;
+    }
+    if (status && *target)
+	*status = (*target)->status;
+
+    return rc;
 }
 
 target_status_t target_poll(struct target *target,struct timeval *tv,
@@ -1196,7 +1610,7 @@ struct action *target_lookup_action(struct target *target,int action_id) {
 
 struct target_memmod *_target_insert_sw_breakpoint(struct target *target,
 						   tid_t tid,ADDR addr,
-						   int is_phys) {
+						   int is_phys,int nowrite) {
     struct target_memmod *mmod;
     struct target_thread *tthread;
 
@@ -1233,7 +1647,7 @@ struct target_memmod *_target_insert_sw_breakpoint(struct target *target,
     else {
 	mmod = target_memmod_create(target,tid,addr,is_phys,MMT_BP,
 				    target->arch->breakpoint_instrs,
-				    target->arch->breakpoint_instrs_len);
+				    target->arch->breakpoint_instrs_len,nowrite);
 	if (!mmod) {
 	    verror("could not create memmod for tid %"PRIiTID" at 0x%"PRIxADDR"!\n",
 		   tid,addr);
@@ -1253,16 +1667,13 @@ struct target_memmod *target_insert_sw_breakpoint(struct target *target,
 	return target->ops->insert_sw_breakpoint(target,tid,addr);
     else 
 	/* Just default to sw breakpoints on virt addrs. */
-	return _target_insert_sw_breakpoint(target,tid,addr,0);
+	return _target_insert_sw_breakpoint(target,tid,addr,0,0);
 }
 
-int target_remove_sw_breakpoint(struct target *target,tid_t tid,
-				struct target_memmod *mmod) {
+int _target_remove_sw_breakpoint(struct target *target,tid_t tid,
+				 struct target_memmod *mmod) {
     int retval;
     ADDR addr;
-
-    if (target->ops->remove_sw_breakpoint)
-	return target->ops->remove_sw_breakpoint(target,tid,mmod);
 
     addr = mmod->addr;
     retval = target_memmod_release(target,tid,mmod);
@@ -1281,20 +1692,44 @@ int target_remove_sw_breakpoint(struct target *target,tid_t tid,
     return 0;
 }
 
+int target_remove_sw_breakpoint(struct target *target,tid_t tid,
+				struct target_memmod *mmod) {
+    if (target->ops->remove_sw_breakpoint)
+	return target->ops->remove_sw_breakpoint(target,tid,mmod);
+    else
+	return _target_remove_sw_breakpoint(target,tid,mmod);
+}
+
+int _target_enable_sw_breakpoint(struct target *target,tid_t tid,
+				 struct target_memmod *mmod) {
+    return target_memmod_set(target,tid,mmod);
+}
+
 int target_enable_sw_breakpoint(struct target *target,tid_t tid,
 				struct target_memmod *mmod) {
     if (target->ops->enable_sw_breakpoint)
 	return target->ops->enable_sw_breakpoint(target,tid,mmod);
 
-    return target_memmod_set(target,tid,mmod);
+    return _target_enable_sw_breakpoint(target,tid,mmod);
+}
+
+int _target_disable_sw_breakpoint(struct target *target,tid_t tid,
+				  struct target_memmod *mmod) {
+    return target_memmod_unset(target,tid,mmod);
 }
 
 int target_disable_sw_breakpoint(struct target *target,tid_t tid,
 				 struct target_memmod *mmod) {
     if (target->ops->disable_sw_breakpoint)
 	return target->ops->disable_sw_breakpoint(target,tid,mmod);
+    else
+	return _target_disable_sw_breakpoint(target,tid,mmod);
+}
 
-    return target_memmod_unset(target,tid,mmod);
+int _target_change_sw_breakpoint(struct target *target,tid_t tid,
+				struct target_memmod *mmod,
+				unsigned char *code,unsigned long code_len) {
+    return target_memmod_set_tmp(target,tid,mmod,code,code_len);
 }
 
 int target_change_sw_breakpoint(struct target *target,tid_t tid,
@@ -1302,8 +1737,21 @@ int target_change_sw_breakpoint(struct target *target,tid_t tid,
 				unsigned char *code,unsigned long code_len) {
     if (target->ops->change_sw_breakpoint)
 	return target->ops->change_sw_breakpoint(target,tid,mmod,code,code_len);
+    else
+	return _target_change_sw_breakpoint(target,tid,mmod,code,code_len);
+}
 
-    return target_memmod_set_tmp(target,tid,mmod,code,code_len);
+int _target_unchange_sw_breakpoint(struct target *target,tid_t tid,
+				   struct target_memmod *mmod) {
+    return target_memmod_set(target,tid,mmod);
+}
+
+int target_unchange_sw_breakpoint(struct target *target,tid_t tid,
+				  struct target_memmod *mmod) {
+    if (target->ops->unchange_sw_breakpoint)
+	return target->ops->unchange_sw_breakpoint(target,tid,mmod);
+    else
+	return _target_unchange_sw_breakpoint(target,tid,mmod);
 }
 
 REG target_get_unused_debug_reg(struct target *target,tid_t tid) {

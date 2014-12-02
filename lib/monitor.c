@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -2277,6 +2277,7 @@ int monitor_run(struct monitor *monitor) {
     struct monitor *_monitor;
     int found = 1;
     struct evloop_fdinfo *fdinfo = NULL;
+    int fdtype;
     int hrc;
     int errno_save = 0;
 
@@ -2317,7 +2318,7 @@ int monitor_run(struct monitor *monitor) {
 	 * with the main monitor mutex held.  This is going to be tricky
 	 * to fix...
 	 */
-	rc = evloop_handleone(monitor->evloop,NULL,&fdinfo,&hrc);
+	rc = evloop_handleone(monitor->evloop,0,NULL,&fdinfo,&fdtype,&hrc);
 
 	pthread_mutex_lock(&monitor_mutex);
 	pthread_mutex_lock(&monitor->mutex);

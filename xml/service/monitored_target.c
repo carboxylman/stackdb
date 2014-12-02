@@ -32,7 +32,7 @@ static void cleanup(void) {
 
     if (target) {
 	target_close(target);
-	target_free(target);
+	target_finalize(target);
 	target = NULL;
     }
 
@@ -73,8 +73,9 @@ int main(int argc,char **argv) {
     vmi_add_log_area_flags(LA_XML,LF_ALL);
     vmi_add_log_area_flags(LA_USER,LF_ALL);
 
-    tspec = target_argp_driver_parse(NULL,NULL,argc,argv,
-				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN,1);
+    tspec = target_argp_driver_parse_one(NULL,NULL,argc,argv,
+					 TARGET_TYPE_PTRACE | TARGET_TYPE_XEN
+					     | TARGET_TYPE_GDB,1);
     if (!tspec) {
 	verror("could not parse a target specification from arguments!\n");
 	monitor_destroy(monitor);

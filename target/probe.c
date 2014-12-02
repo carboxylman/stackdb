@@ -3635,9 +3635,14 @@ static int __remove_action(struct target *target,struct probepoint *probepoint,
 
     if (action->type == ACTION_RETURN || action->type == ACTION_CUSTOMCODE) {
 	if (probepoint->style == PROBEPOINT_SW) {
+	    if (target_unchange_sw_breakpoint(target,probepoint->thread->tid,
+					      probepoint->mmod)) {
+		verror("could not remove action code at the breakpoint;"
+		       " badness will probably ensue!\n");
+	    }
 	    if (target_enable_sw_breakpoint(target,probepoint->thread->tid,
 					    probepoint->mmod)) {
-		verror("could not remove action code by restoring the breakpoint;"
+		verror("could not reenable the breakpoint;"
 		       " badness will probably ensue!\n");
 		return -1;
 	    }
@@ -3761,7 +3766,7 @@ static int __insert_action(struct target *target,struct target_thread *tthread,
 	if (!probepoint->mmod) {
 	    probepoint->mmod = target_memmod_create(target,probepoint->thread->tid,
 						    probepoint->addr,0,MMT_CODE,
-						    buf,buflen);
+						    buf,buflen,0);
 	    if (!probepoint->mmod) {
 		verror("could not create memmod for HW breakpoint code"
 		       " at 0x%"PRIxADDR"!\n",probepoint->addr);

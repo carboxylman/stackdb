@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2012, 2013 The University of Utah
+## Copyright (c) 2012, 2013, 2014 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -48,10 +48,8 @@ ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
 
-HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
-	$(TOP_SRCDIR)/tools/bts/bts.h
-
 OBJECTS := io.lo symbol.lo 
+DEPENDENCIES := $(OBJECTS:%.lo=%.d)
 
 LIBRARIES := 
 
@@ -73,25 +71,25 @@ all:	$(LIBRARIES) $(PROGRAMS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
-.c.lo:	$(HEADERS)
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+# Don't fail on missing .d files; there won't be any on the first run.
+-include $(DEPENDENCIES)
 
-bts_extract: $(HEADERS) $(OBJECTS) bts_extract.lo $(STATICLIBS)
+bts_extract: $(OBJECTS) bts_extract.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(OBJECTS) $(STATICLIBS) $(LDFLAGS)
 
-bts_dump: $(HEADERS) $(OBJECTS) bts_dump.lo $(STATICLIBS)
+bts_dump: $(OBJECTS) bts_dump.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(OBJECTS) $(STATICLIBS) $(LDFLAGS)
 
-bts_trace: $(HEADERS) $(OBJECTS) bts_trace.lo $(STATICLIBS)
+bts_trace: $(OBJECTS) bts_trace.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(OBJECTS) $(STATICLIBS) $(LDFLAGS)
 
 replay.o: $(TOP_SRCDIR)/xentt/replay.c
 	$(CC) -c -o replay.o $(CFLAGS) $<
 
-trace_task: $(HEADERS) $(STATICLIBS) replay.o trace_task.lo
+trace_task: $(STATICLIBS) replay.o trace_task.lo
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) replay.o $(OBJECTS) $(STATICLIBS) $(LDFLAGS)
 
@@ -103,6 +101,7 @@ clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(PROGRAMS) $(addsuffix .lo,$(PROGRAMS))
 	$(RM) -f replay.o
 	$(RM) -rf .libs
+	$(RM) -f $(DEPENDENCIES)
 
 distclean: distclean-subdirs
 

@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2013 The University of Utah
+## Copyright (c) 2013, 2014 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -96,6 +96,30 @@ ANALYSIS_LIBS = CustomURIResolver.class URLWSDLLocator.class ResourceSchemaGener
 
 PROGRAMS = DebuginfoTest.class TargetTest.class 
 
+##
+## This whole thing is tricky to parallelize, probably because the Axis
+## interface/stub generation generates both server stubs and client listener
+## stubs -- and to do that, they generate .java source files in the same build
+## dir, so the build waits until both are generated -- I think!  It's been
+## years...
+##
+## (It does help, to the tune of 21s in parallel vs 44s single-thread, with
+## 8 parallel jobs, on a quad-core 3.4GHz machine.)
+##
+## XXX: comment this out if your build exhibits weird failures, I guess!
+##
+#.NOTPARALLEL:
+
+##
+## Hack up some dependencies so we can parallelize the build!
+##
+target-extra/build/$(PACKAGE)/SimpleTargetListener.class: target/src/$(PACKAGE)/TargetListenerSkeleton.java target/build/lib/target.jar
+target-extra/build/$(PACKAGE)/ResourceSchemaGenerator.class: target-extra/build/$(PACKAGE)/CustomURIResolver.class
+target-extra/build/$(PACKAGE)/SimpleServiceServer.class: target-extra/build/$(PACKAGE)/SimpleService.class target-extra/build/$(PACKAGE)/ResourceSchemaGenerator.class
+analysis-extra/build/$(PACKAGE)/SimpleAnalysisListener.class: analysis/src/$(PACKAGE)/AnalysisListenerSkeleton.java analysis/build/lib/analysis.jar
+analysis-extra/build/$(PACKAGE)/ResourceSchemaGenerator.class: analysis-extra/build/$(PACKAGE)/CustomURIResolver.class
+analysis-extra/build/$(PACKAGE)/SimpleServiceServer.class: analysis-extra/build/$(PACKAGE)/SimpleService.class analysis-extra/build/$(PACKAGE)/ResourceSchemaGenerator.class
+
 all:	run.sh run-db.sh $(PROGRAMS) $(JARS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
@@ -160,12 +184,18 @@ target/src/$(PACKAGE)/TargetListenerSkeleton.java: $(OBJDIR)/xml/service/targetL
 		${AXIS2_HOME}/bin/wsdl2java.sh -d $(AXIS2_DB) $(AXIS2_DB_OPTS) \
 		-o target -ns2p $(NS)=vmi1 -p $(PACKAGE) -or -ss -uri $<
 
-target/src/$(PACKAGE)/TargetStub.java: $(OBJDIR)/xml/service/target.wsdl.test
+##
+## NB: the first "dependency" forces the listener skeletons to be built before
+## (and in series with!) the server stubs -- because they all get *compiled*
+## into a single package, I think.
+##
+target/src/$(PACKAGE)/TargetStub.java: target/src/$(PACKAGE)/TargetListenerSkeleton.java $(OBJDIR)/xml/service/target.wsdl.test
 	mkdir -p target
 	rm -f target/build.xml
 	JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) \
 		${AXIS2_HOME}/bin/wsdl2java.sh -d $(AXIS2_DB) $(AXIS2_DB_OPTS) \
-		 -o target -ns2p $(NS)=vmi1 -p $(PACKAGE) -or -u -uri $<
+		 -o target -ns2p $(NS)=vmi1 -p $(PACKAGE) -or -u -uri \
+		$(OBJDIR)/xml/service/target.wsdl.test
 
 analysis/src/$(PACKAGE)/AnalysisListenerSkeleton.java: $(OBJDIR)/xml/service/analysisListener.wsdl.test
 	mkdir -p analysis
@@ -174,12 +204,18 @@ analysis/src/$(PACKAGE)/AnalysisListenerSkeleton.java: $(OBJDIR)/xml/service/ana
 		${AXIS2_HOME}/bin/wsdl2java.sh -d $(AXIS2_DB) $(AXIS2_DB_OPTS) \
 		-o analysis -ns2p $(NS)=vmi1 -p $(PACKAGE) -or -ss -uri $<
 
-analysis/src/$(PACKAGE)/AnalysisStub.java: $(OBJDIR)/xml/service/analysis.wsdl.test
+##
+## NB: the first "dependency" forces the listener skeletons to be built before
+## (and in series with!) the server stubs -- because they all get *compiled*
+## into a single package, I think.
+##
+analysis/src/$(PACKAGE)/AnalysisStub.java: analysis/src/$(PACKAGE)/AnalysisListenerSkeleton.java $(OBJDIR)/xml/service/analysis.wsdl.test
 	mkdir -p analysis
 	rm -f analysis/build.xml
 	JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) \
 		${AXIS2_HOME}/bin/wsdl2java.sh -d $(AXIS2_DB) $(AXIS2_DB_OPTS) \
-		 -o analysis -ns2p $(NS)=vmi1 -p $(PACKAGE) -or -u -uri $<
+		 -o analysis -ns2p $(NS)=vmi1 -p $(PACKAGE) -or -u -uri \
+		$(OBJDIR)/xml/service/analysis.wsdl.test
 
 debuginfo/build/lib/debuginfo.aar: debuginfo/src/$(PACKAGE)/DebuginfoStub.java
 	(JAVA_HOME=$(JAVA_HOME) CLASSPATH=$(BUILD_CLASSPATH) \

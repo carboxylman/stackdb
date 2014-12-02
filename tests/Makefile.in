@@ -48,16 +48,6 @@ ifeq ($(ENABLE_DISTORM),"1")
 endif
 LDFLAGS += -lpthread
 
-HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
-	$(TOP_SRCDIR)/target/target.h $(TOP_SRCDIR)/target/target_api.h \
-	$(TOP_SRCDIR)/target/probe.h $(TOP_SRCDIR)/target/probe_api.h \
-	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
-	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
-	$(TOP_SRCDIR)/include/waitpipe.h $(TOP_SRCDIR)/include/evloop.h \
-	$(TOP_SRCDIR)/include/monitor.h \
-	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h \
-	$(TOP_SRCDIR)/include/regcache.h $(TOP_SRCDIR)/include/arch.h
-
 LIBRARIES := libvmitest.la
 
 OBJECTS := monitor_dummy.lo
@@ -73,6 +63,7 @@ else
     ASSISTANTS += regval_x86
 endif
 TESTOBJECTS += $(addsuffix .lo,$(ASSISTANTS))
+DEPENDENCIES := $(OBJECTS:%.lo=%.d) $(TESTOBJECTS:%.lo=%.d)
 
 STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.la $(OBJDIR)/lib/libvmilib.la
 #	 $(OBJDIR)/target/libtarget.la
@@ -90,8 +81,8 @@ all:	$(LIBRARIES) $(ASSISTANTS) $(TESTOBJECTS) $(TESTS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
-.c.lo:	$(HEADERS) $(STATICLIBS)
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+# Don't fail on missing .d files; there won't be any on the first run.
+-include $(DEPENDENCIES)
 
 libvmitest.la:	$(HEADERS) $(OBJECTS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS)
@@ -110,47 +101,47 @@ threads.leader.exit: threads.leader.exit.lo
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		-pthread
 
-clrange: $(HEADERS) $(LIBRARIES) clrange.lo $(STATICLIBS)
+clrange: $(LIBRARIES) clrange.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-clrangesimple: $(HEADERS) $(LIBRARIES) clrangesimple.lo $(STATICLIBS)
+clrangesimple: $(LIBRARIES) clrangesimple.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-clmatch: $(HEADERS) $(LIBRARIES) clmatch.lo $(STATICLIBS)
+clmatch: $(LIBRARIES) clmatch.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-clmatchone: $(HEADERS) $(LIBRARIES) clmatchone.lo $(STATICLIBS)
+clmatchone: $(LIBRARIES) clmatchone.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-evloop_waitpipe: $(HEADERS) $(LIBRARIES) evloop_waitpipe.lo $(STATICLIBS)
+evloop_waitpipe: $(LIBRARIES) evloop_waitpipe.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-monitor_threads: $(HEADERS) $(LIBRARIES) monitor_threads.lo $(STATICLIBS)
+monitor_threads: $(LIBRARIES) monitor_threads.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-monitor_processes: $(HEADERS) $(LIBRARIES) monitor_processes.lo $(STATICLIBS)
+monitor_processes: $(LIBRARIES) monitor_processes.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-monitored_dummy_child: $(HEADERS) $(LIBRARIES) monitored_dummy_child.lo $(STATICLIBS)
+monitored_dummy_child: $(LIBRARIES) monitored_dummy_child.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-regcache: $(HEADERS) $(LIBRARIES) regcache.lo $(STATICLIBS)
+regcache: $(LIBRARIES) regcache.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-regval_x86: $(HEADERS) $(LIBRARIES) regval_x86.lo $(STATICLIBS)
+regval_x86: $(LIBRARIES) regval_x86.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-regval_x86_64: $(HEADERS) $(LIBRARIES) regval_x86_64.lo $(STATICLIBS)
+regval_x86_64: $(LIBRARIES) regval_x86_64.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
@@ -169,6 +160,7 @@ install: def-install install-subdirs
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(LIBRARIES) $(ASSISTANTS) $(TESTS) $(TESTOBJECTS) 
 	$(RM) -rf .libs
+	$(RM) -f $(DEPENDENCIES)
 
 distclean: distclean-subdirs
 

@@ -47,30 +47,17 @@ struct probe *cfi_probe = NULL;
 
 static int result_counter = 0;
 
-target_status_t cleanup() {
-    target_status_t retval = TSTATUS_DONE;
-
+void cleanup_probes(void) {
+    if (target)
+	target_pause(target);
     if (cfi_probe) {
 	probe_free(cfi_probe,1);
 	cfi_probe = NULL;
     }
-    if (otarget) {
-	target_close(otarget);
-	target_finalize(otarget);
-	otarget = NULL;
-    }
-    if (target) {
-	retval = target_close(target);
-	target_finalize(target);
-	target = NULL;
-    }
-
-    return retval;
 }
 
-void sigh(int signo) {
-    cleanup();
-    exit(0);
+void sigh_cleanup_probes(int signo,siginfo_t *siginfo,void *x) {
+    cleanup_probes();
 }
 
 result_t cfi_handler(struct probe *probe,tid_t tid,void *data,
@@ -303,7 +290,7 @@ error_t cc_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	}
 	array_list_append(argv_list,NULL);
 
-	opts->overlay_spec = target_argp_driver_parse(NULL,NULL,
+	opts->overlay_spec = target_argp_driver_parse_one(NULL,NULL,
 						      array_list_len(argv_list) - 1,
 						      (char **)argv_list->list,
 						      TARGET_TYPE_OS_PROCESS,0);
@@ -345,12 +332,14 @@ int main(int argc,char **argv) {
     target_init();
     atexit(target_fini);
 
+    target_install_default_sighandlers(sigh_cleanup_probes);
+
     memset(&opts,0,sizeof(opts));
     opts.mode = CFI_DYNAMIC;
 
-    tspec = target_argp_driver_parse(&cc_argp,&opts,argc,argv,
-				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN
-				         | TARGET_TYPE_GDB,1);
+    tspec = target_argp_driver_parse_one(&cc_argp,&opts,argc,argv,
+					 TARGET_TYPE_PTRACE | TARGET_TYPE_XEN
+				             | TARGET_TYPE_GDB,1);
 
     if (!tspec) {
 	verror("could not parse target arguments!\n");
@@ -384,20 +373,23 @@ int main(int argc,char **argv) {
 	if (otid < 0) {
 	    verror("could not find overlay thread '%s', exiting!\n",
 		   opts.overlay_name_or_id);
-	    cleanup();
+	    cleanup_probes();
+	    target_default_cleanup();
 	    exit(-111);
 	}
 	otarget = target_instantiate_overlay(target,otid,opts.overlay_spec);
 	if (!otarget) {
 	    verror("could not instantiate overlay target '%s'!\n",
 		   opts.overlay_name_or_id);
-	    cleanup();
+	    cleanup_probes();
+	    target_default_cleanup();
 	    exit(-112);
 	}
 
 	if (target_open(otarget)) {
 	    fprintf(stderr,"could not open overlay target!\n");
-	    cleanup();
+	    cleanup_probes();
+	    target_default_cleanup();
 	    exit(-114);
 	}
 
@@ -417,7 +409,8 @@ int main(int argc,char **argv) {
 		if (endptr == opts.argv[i]) {
 		    fprintf(stderr,"Could not convert %s to address!\n",
 			    opts.argv[i]);
-		    cleanup();
+		    cleanup_probes();
+		    target_default_cleanup();
 		    exit(-3);
 		}
 		/*
@@ -445,7 +438,8 @@ int main(int argc,char **argv) {
 	    if (!function) {
 		verror("could not lookup symbol __libc_start_main;"
 		       " aborting!\n");
-		cleanup();
+		cleanup_probes();
+		target_default_cleanup();
 		exit(-3);
 	    }
 	    else
@@ -455,25 +449,14 @@ int main(int argc,char **argv) {
 	    array_list_append(root_function_list,function);
     }
 
-    signal(SIGHUP,sigh);
-    signal(SIGINT,sigh);
-    signal(SIGQUIT,sigh);
-    signal(SIGABRT,sigh);
-    signal(SIGKILL,sigh);
-    signal(SIGSEGV,sigh);
-    signal(SIGPIPE,sigh);
-    signal(SIGALRM,sigh);
-    signal(SIGTERM,sigh);
-    signal(SIGUSR1,sigh);
-    signal(SIGUSR2,sigh);
-
     /* Install probes... */
     cfi_probe = probe_cfi(rtarget,TID_GLOBAL,opts.mode,opts.flags,
 			  root_function_list,root_addr_list,
 			  cfi_handler,cfi_handler,NULL);
     if (!cfi_probe) {
 	verror("could not instantiate the CFI meta-probe; aborting!\n");
-	cleanup();
+	cleanup_probes();
+	target_default_cleanup();
 	exit(-4);
     }
 
@@ -496,7 +479,8 @@ int main(int argc,char **argv) {
 
 	    if (target_resume(target)) {
 		verror("could not resume target\n");
-		tstat = cleanup();
+		cleanup_probes();
+		target_default_cleanup();
 		exit(-16);
 	    }
 	}
@@ -518,7 +502,8 @@ int main(int argc,char **argv) {
 
 	    if (target_resume(target)) {
 		verror("could not resume target!\n");
-		tstat = cleanup();
+		cleanup_probes();
+		target_default_cleanup();
 		exit(-16);
 	    }
 	}
@@ -537,7 +522,8 @@ int main(int argc,char **argv) {
 
 	    fprintf(stdout,"target %s exited, cleaning up.\n",targetstr);
 
-	    tstat = cleanup();
+	    cleanup_probes();
+	    target_default_cleanup();
 	    goto out;
 	}
 	else {
@@ -568,7 +554,8 @@ int main(int argc,char **argv) {
  err:
     fflush(stderr);
     fflush(stdout);
-    tstat = cleanup();
+    cleanup_probes();
+    target_default_cleanup();
 
  out:
     fflush(stderr);

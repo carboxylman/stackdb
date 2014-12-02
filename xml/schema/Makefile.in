@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2013 The University of Utah
+## Copyright (c) 2013, 2014 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -72,21 +72,15 @@ ifeq ($(ENABLE_LIBVMI),"1")
 	STATICLIBS += $(LIBVMI)/lib/libvmi.a
 endif
 
-HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h $(TOP_SRCDIR)/dwdebug/dwdebug_priv.h \
-	   $(SRCDIR)/debuginfo_xml.h \
-	   $(TOP_SRCDIR)/target/target_api.h $(TOP_SRCDIR)/target/target_api.h \
-	   $(SRCDIR)/target_xml.h \
-	   $(TOP_SRCDIR)/analysis/analysis.h $(SRCDIR)/analysis_xml.h \
-	   $(SRCDIR)/../util.h
-
 OBJECTS-COMMON-LIB := common_xml_moduleC.lo common_xml.lo xsdcC.lo
 #envC.lo
-OBJECTS-DEBUGINFO-LIB := debuginfo_xml.lo debuginfo_xml_moduleC.lo
-OBJECTS-TARGET-LIB := target_xml.lo target_xml_moduleC.lo
-OBJECTS-ANALYSIS-LIB := analysis_xml.lo analysis_xml_moduleC.lo
+OBJECTS-DEBUGINFO-LIB := debuginfo_xml_moduleC.lo debuginfo_xml.lo
+OBJECTS-TARGET-LIB := target_xml_moduleC.lo target_xml.lo
+OBJECTS-ANALYSIS-LIB := analysis_xml_moduleC.lo analysis_xml.lo
 
 OBJECTS := $(OBJECTS-COMMON-LIB) $(OBJECTS-DEBUGINFO-LIB) $(OBJECTS-TARGET-LIB) \
 	   $(OBJECTS-ANALYSIS-LIB)
+DEPENDENCIES := $(OBJECTS:%.lo=%.d)
 
 LIBRARIES := libcommon_xml.la libdebuginfo_xml.la libtarget_xml.la \
 	     libanalysis_xml.la
@@ -101,6 +95,9 @@ RM=rm -f
 all:	$(PROGRAMS) $(LIBRARIES) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
+
+# Don't fail on missing .d files; there won't be any on the first run.
+-include $(DEPENDENCIES)
 
 #env.h: $(SRCDIR)/xsdc.gsm.h
 ##	echo '#import "xsdc.gsm.h"' > env.h
@@ -117,11 +114,11 @@ xsdcH.h: $(SRCDIR)/xsdc.gsm.h
 
 xsdcC.lo: xsdcH.h
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} -DWITH_NOGLOBAL ${CFLAGS} \
-		-c $(@:.lo=).c
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $(@:.lo=).c
 
 #envC.lo: envH.h
 #	@$(LIBTOOL) --tag=CC --mode=compile ${CC} -DWITH_NOGLOBAL ${CFLAGS} \
-#		-c $(@:.lo=).c
+#		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $(@:.lo=).c
 
 #
 # The following rule needs this first, so special case it.  Common is common, 
@@ -151,30 +148,34 @@ common_xml.gsm.h: $(SRCDIR)/common.xsd xsdcH.h
 	@echo -n ""
 
 %_xml_moduleC.lo: %_xml_moduleC.c
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
 common_xml.lo: $(SRCDIR)/common_xml.c $(SRCDIR)/common_xml.h common_xml.gsm.h
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
 %_xml.lo: $(SRCDIR)/%_xml.c $(SRCDIR)/%_xml.h %_xml_moduleH.h
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
 
 %.nsmap.lo: %.wsdl
-	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $(@:.lo=).c 
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $(@:.lo=).c
 
-libcommon_xml.la: $(HEADERS) $(OBJECTS-COMMON-LIB)
+libcommon_xml.la: $(OBJECTS-COMMON-LIB)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-COMMON-LIB) \
 		-rpath $(INSTALL_LIBDIR) -static ${LDFLAGS}
 
-libdebuginfo_xml.la: $(HEADERS) $(OBJECTS-DEBUGINFO-LIB)
+libdebuginfo_xml.la: $(OBJECTS-DEBUGINFO-LIB)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-DEBUGINFO-LIB) \
 		-rpath $(INSTALL_LIBDIR) -static ${LDFLAGS}
 
-libtarget_xml.la: $(HEADERS) $(OBJECTS-TARGET-LIB)
+libtarget_xml.la: $(OBJECTS-TARGET-LIB)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-TARGET-LIB) \
 		-rpath $(INSTALL_LIBDIR) -static ${LDFLAGS}
 
-libanalysis_xml.la: $(HEADERS) $(OBJECTS-ANALYSIS-LIB)
+libanalysis_xml.la: $(OBJECTS-ANALYSIS-LIB)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-ANALYSIS-LIB) \
 		-rpath $(INSTALL_LIBDIR) -static ${LDFLAGS}
 
@@ -205,6 +206,7 @@ clean: clean-common clean-debuginfo clean-target clean-analysis clean-libs clean
 	$(RM) *.nsmap #*.xsd
 	$(RM) RECV.log TEST.log
 	rm -rf .libs
+	$(RM) -f $(DEPENDENCIES)
 
 distclean: distclean-subdirs
 
