@@ -1,0 +1,20 @@
+In this example, we first run a client-server pair to play pingpong,
+then we monitor their pingpng valuable. 
+
+The c_pingpong reprensents client pingpong.
+The s_pingpong reprensents server pingpong. 
+
+Each of the client and server does the same thing: 
+	receive a value, 
+	add one to the value, 	
+	send the added value back. 
+
+Compile it:
+	make -f Makefile.example
+Run it:
+	1. In the first terminal: 
+      $ ./server
+    2. In the second terminal: 
+	  $ ./client
+    3. In the third terminal: 
+	  $ sudo ./multi-overlay vm3 server:84:s_pingpong client:49:c_pingpong
