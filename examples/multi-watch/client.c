@@ -48,7 +48,7 @@ int main(int argc, char *argv[]) {
         while (1) {
             recv(sockfd, recv_buffer, 32, 0);
             sleep(1);
-            printf("client received s_pingpong == %d\n", recv_buffer);
+            printf("client received s_pingpong == %s\n", recv_buffer);
             c_pingpong = atoi(recv_buffer) + 1;
             sleep(4);
 

@@ -376,7 +376,7 @@ void extract_args(int argc, char **argv, struct tgt_sym *pid2sym) {
     int i;
     char **argv_tmp;
 
-    argv_tmp = (char**) malloc(1024);
+    argv_tmp = (char**) malloc(sizeof(char*) * argc);
     for (i = 0; i < argc; i++){
         argv_tmp[i] = (char*) malloc(32);
         strcpy(argv_tmp[i],argv[i]);
