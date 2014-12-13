@@ -124,6 +124,7 @@ GList *target_instantiate_and_open(struct target_spec *primary_target_spec,
 	}
 	else {
 	    vdebug(5,LA_TARGET,LF_TARGET,"instantiated primary target\n");
+	    retval = g_list_append(retval,target);
 	}
     }
 
