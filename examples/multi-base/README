@@ -1,0 +1,32 @@
+In this example, we first run two VMs.
+On VM1, we run the server program. On VM2, we run the client program.
+Then the client-server pair start to play pingpong between two VMS.
+Now we monitor their pingpng valuables. 
+
+rserver reprensents remote pingpong server.
+lclient reprensents local pingpong client.
+The vm3_s_pingpong reprensents rserver pingpong.
+The vm9_r_pingpong reprensents lclient pingpong. 
+
+Each of the client and server does the same thing: 
+	receive a value, 
+	add one to the value, 	
+	send the added value back. 
+
+Compile it:
+	make -f Makefile.example
+Run it:
+	1. In the first VM: 
+      $ ./rserver
+    2. In the second VM: 
+	  $ ./lclient
+    3. In the host machine:
+      $ sudo ./multi-base \
+         --base '-t xen -m vm3 -i 10 \
+           -K /opt/debuginfo/vm3/usr/lib/debug/boot/vmlinux-2.6.32-67-server' \
+         --overlay '10:rserver:-t os-process -i 100 -R /opt/debuginfo/vm3' \
+         --base '-t xen -m vm9 -i 20 \
+           -K /opt/debuginfo/vm9/usr/lib/debug/boot/vmlinux-2.6.32-70-server' \
+         --overlay '20:lclient:-t os-process -i 201 -R /opt/debuginfo/vm9' \
+         100:rserver.c:84:vm3_s_pingpong \
+         201:lclient.c:53:vm9_c_pingpong 
