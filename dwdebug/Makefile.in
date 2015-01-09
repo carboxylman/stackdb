@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
+## Copyright (c) 2011, 2012, 2013, 2014, 2015 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -47,7 +47,7 @@ else
 SWIGLIBS := 
 endif
 
-PROGRAMS := dumpdebuginfo
+PROGRAMS := dumpdebuginfo debugserver
 
 INST_INC = dwdebug.h binfile.h memory-access.h
 INST_LIB = $(LIBRARIES) $(SWIGLIBS)
@@ -87,6 +87,22 @@ dumpdebuginfo: $(LIBRARIES) dumpdebuginfo.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
+DLMFLAGS = -D MORECORE=shm_morecore -D MORECORE_CONTIGUOUS=1 -D HAVE_MMAP=0 -D HAVE_MREMAP=0 -D DEFAULT_GRANULARITY=16*1024*1024 -D DEFAULT_TRIM_THRESHOLD=8*1024*1024 -D MSPACES=1 -D USE_DL_PREFIX
+# -D ONLY_MSPACES 
+#DLMFLAGS = -D USE_DL_PREFIX -D MSPACES
+
+dlmalloc.lo: dlmalloc.c
+	$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} ${DLMFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
+
+debugserver.lo: debugserver.c
+	$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} ${DLMFLAGS} \
+		-MD -MP -MT $@ -MF ${@:.lo=.d} -c $<
+
+debugserver: $(LIBRARIES) debugserver.lo dlmalloc.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) ${DLMFLAGS} $(LIBRARIES) $(STATICLIBS) dlmalloc.lo $(LDFLAGS) -lrt
+
 dwdebug.pc: $(SRCDIR)/Makefile.in $(TOP_SRCDIR)/Makeconf.in \
 	   $(TOP_SRCDIR)/Makefile.in
 	echo "prefix=$(INSTALL_TOPDIR)" > $@
@@ -105,7 +121,7 @@ install: def-install install-subdirs
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(LIBRARIES) $(SWIGLIBS)
 	@$(LIBTOOL) --mode=clean rm -f $(PROGRAMS)
-	rm -f dumpdebuginfo* .libs/dwdebug_wrap* dwdebug_wrap* dwdebug.py
+	rm -f dumpdebuginfo* debugserver* .libs/dwdebug_wrap* dwdebug_wrap* dwdebug.py
 	$(RM) -rf .libs
 	$(RM) -f $(DEPENDENCIES)
 
