@@ -123,8 +123,23 @@ GList *target_instantiate_and_open(struct target_spec *primary_target_spec,
 	    }
 	}
 	else {
-	    vdebug(5,LA_TARGET,LF_TARGET,"instantiated primary target\n");
-	    retval = g_list_append(retval,primary_target);
+	    if (!target_open(primary_target)) {
+		vdebug(5,LA_TARGET,LF_TARGET,"instantiated primary target\n");
+		retval = g_list_append(retval,primary_target);
+	    }
+	    else if (error_specs) {
+		vwarn("could not open primary target spec %d\n",i);
+		target_close(primary_target);
+		target_finalize(primary_target);
+		*error_specs = g_list_append(*error_specs,spec);
+	    }
+	    else {
+		verror("could not open primary target spec %d\n",i);
+		target_close(primary_target);
+		target_finalize(primary_target);
+		primary_target = NULL;
+		goto errout;
+	    }
 	}
     }
 
