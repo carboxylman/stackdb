@@ -121,7 +121,7 @@ install: def-install install-subdirs
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(LIBRARIES) $(SWIGLIBS)
 	@$(LIBTOOL) --mode=clean rm -f $(PROGRAMS)
-	rm -f dumpdebuginfo* debugserver* .libs/dwdebug_wrap* dwdebug_wrap* dwdebug.py
+	rm -f dumpdebuginfo* debugserver* .libs/dwdebug_wrap* dwdebug_wrap* dwdebug.py dlmalloc*
 	$(RM) -rf .libs
 	$(RM) -f $(DEPENDENCIES)
 
