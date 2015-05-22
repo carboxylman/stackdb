@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2014 The University of Utah
+ * Copyright (c) 2013, 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -221,7 +221,7 @@ void print_thread_context(FILE *stream,struct target *target,tid_t tid,
 			  char *overlay_debuginfo_prefix,char *sep,char *kvsep,
 			  char *tprefix,char *tsep) {
     struct target_thread *tthread;
-    char buf[4096];
+    char buf[8192];
     struct array_list *tids;
     int i,j;
     int rc;
@@ -360,7 +360,7 @@ void spf_backtrace(struct target *t,tid_t ctid,char *tiddesc,
     struct target_thread *tthread;
     char *endptr = NULL;
     int rc;
-    char buf[4096];
+    char buf[8192];
     struct target *overlay;
     struct array_list *otl;
     struct target_spec *ospec;
@@ -559,7 +559,10 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		 struct probe *trigger,struct probe *base) {
     GHashTableIter iter;
     gpointer kp,vp;
-    char vstrbuf[1024];
+    char vstrbuf_static[1024];
+    char *vstrbuf = NULL;
+    char *vstrbuf_dynamic = NULL;
+    int vstrbuf_dynamic_size = 0;
     struct value *v;
     GHashTable *vt;
     struct bsymbol *bsymbol;
@@ -704,7 +707,17 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 			fprintf(stdout,",");
 		    v = (struct value *)vp;
 		    if (v) {
-			rc = value_snprintf(v,vstrbuf,sizeof(vstrbuf));
+			rc = value_snprintf(v,vstrbuf_static,
+					    sizeof(vstrbuf_static));
+			vstrbuf = vstrbuf_static;
+			if (rc >= (int)sizeof(vstrbuf_static)) {
+			    vstrbuf_dynamic_size = rc + 1;
+			    vstrbuf_dynamic = malloc(vstrbuf_dynamic_size);
+			    rc = value_snprintf(v,vstrbuf_dynamic,
+						vstrbuf_dynamic_size);
+			    vstrbuf = vstrbuf_dynamic;
+			}
+
 			if (rc > 0) {
 			    int unprintable = 0;
 			    for (j = 0; vstrbuf[j] != '\0'; ++j) {
@@ -730,6 +743,12 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 			}
 			else
 			    fprintf(stdout,"%s=?",(char *)kp);
+
+			if (vstrbuf_dynamic) {
+			    free(vstrbuf_dynamic);
+			    vstrbuf_dynamic = NULL;
+			    vstrbuf_dynamic_size = 0;
+			}
 		    }
 		    else
 			fprintf(stdout,"%s=?",(char *)kp);
@@ -771,11 +790,27 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 			fprintf(stdout,",");
 		    v = (struct value *)vp;
 		    if (v) {
-			rc = value_snprintf(v,vstrbuf,sizeof(vstrbuf));
+			rc = value_snprintf(v,vstrbuf_static,
+					    sizeof(vstrbuf_static));
+			vstrbuf = vstrbuf_static;
+			if (rc >= (int)sizeof(vstrbuf_static)) {
+			    vstrbuf_dynamic_size = rc + 1;
+			    vstrbuf_dynamic = malloc(vstrbuf_dynamic_size);
+			    rc = value_snprintf(v,vstrbuf_dynamic,
+						vstrbuf_dynamic_size);
+			    vstrbuf = vstrbuf_dynamic;
+			}
+
 			if (rc > 0)
 			    fprintf(stdout,"%s = %s",(char *)kp,vstrbuf);
 			else
 			    fprintf(stdout,"%s = ?",(char *)kp);
+
+			if (vstrbuf_dynamic) {
+			    free(vstrbuf_dynamic);
+			    vstrbuf_dynamic = NULL;
+			    vstrbuf_dynamic_size = 0;
+			}
 		    }
 		    else
 			fprintf(stdout,"%s = ?",(char *)kp);
@@ -794,11 +829,27 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		    v = (struct value *) \
 			g_hash_table_lookup(vt,PROBE_VALUE_NAME_RETURN);
 		    if (v) {
-			rc = value_snprintf(v,vstrbuf,sizeof(vstrbuf));
+			rc = value_snprintf(v,vstrbuf_static,
+					    sizeof(vstrbuf_static));
+			vstrbuf = vstrbuf_static;
+			if (rc >= (int)sizeof(vstrbuf_static)) {
+			    vstrbuf_dynamic_size = rc + 1;
+			    vstrbuf_dynamic = malloc(vstrbuf_dynamic_size);
+			    rc = value_snprintf(v,vstrbuf_dynamic,
+						vstrbuf_dynamic_size);
+			    vstrbuf = vstrbuf_dynamic;
+			}
+
 			if (rc > 0)
-			    fprintf(stdout," = %s",vstrbuf);
+			    fprintf(stdout," = %s",vstrbuf_static);
 			else
 			    fprintf(stdout," = ?");
+
+			if (vstrbuf_dynamic) {
+			    free(vstrbuf_dynamic);
+			    vstrbuf_dynamic = NULL;
+			    vstrbuf_dynamic_size = 0;
+			}
 		    }
 		}
 	    }

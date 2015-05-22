@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -5427,6 +5427,8 @@ int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
     struct target_location_ctxt_frame *tlctxtf;
     int i,j,k;
     int rc = 0;
+    int vrc;
+    int tmpsiz;
     int retval;
     REG ipreg;
     REGVAL ipval;
@@ -5436,7 +5438,9 @@ int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
     struct lsymbol *lsymbol = NULL;
     struct bsymbol *bsymbol = NULL;
     struct value *v;
-    char vbuf[1024];
+    char *vbuf = NULL;
+    char vbuf_static[1024];
+    char *vbuf_dynamic = NULL;
     GSList *args;
     GSList *gsltmp;
     struct symbol *argsym;
@@ -5562,16 +5566,31 @@ int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
 		else
 		    v = NULL;
 
-		vbuf[0] = '\0';
+		vbuf = vbuf_static;
+		vbuf_static[0] = '\0';
 		if (v) {
-		    if (value_snprintf(v,vbuf,sizeof(vbuf)) < 0) {
+		    vrc = value_snprintf(v,vbuf_static,sizeof(vbuf_static));
+		    if (vrc < 0) {
 			vwarnopt(5,LA_TARGET,LF_TARGET,"<value_snprintf error>");
 
-			snprintf(vbuf,sizeof(vbuf),"0x");
-			for (k = 0; k < v->bufsiz && k < (int)sizeof(vbuf); ++k) {
-			    snprintf(vbuf + 2 + 2 * k,sizeof(vbuf) - 2 - 2 * k,
+			tmpsiz = 2 + v->bufsiz * 2 + 1;
+			if (tmpsiz < (int)sizeof(vbuf_static))
+			    vbuf = vbuf_static;
+			else {
+			    vbuf_dynamic = malloc(tmpsiz);
+			    vbuf = vbuf_dynamic;
+			}
+
+			snprintf(vbuf,tmpsiz,"0x");
+			for (k = 0; k < v->bufsiz && k < tmpsiz; ++k) {
+			    snprintf(vbuf + 2 + 2 * k,tmpsiz - 2 - 2 * k,
 				     "%02hhx",v->buf[k]);
 			}
+		    }
+		    else if (vrc >= (int)sizeof(vbuf_static)) {
+			vbuf_dynamic = malloc(vrc + 1);
+			vbuf = vbuf_dynamic;
+			vrc = value_snprintf(v,vbuf_dynamic,vrc + 1);
 		    }
 		    value_free(v);
 		}
@@ -5583,6 +5602,12 @@ int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
 		    retval = snprintf(buf + rc,((buflen - rc) > 0) ? buflen - rc : 0,"%s=%s",name,vbuf);
 		else
 		    retval = snprintf(buf + rc,((buflen - rc) > 0) ? buflen - rc : 0,"%s",vbuf);
+		if (vbuf_dynamic) {
+		    free(vbuf_dynamic);
+		    vbuf_dynamic = NULL;
+		    tmpsiz = 0;
+		    vbuf = NULL;
+		}
 		if (retval < 0) {
 		    vwarnopt(3,LA_TARGET,LF_TARGET,"snprintf(arg %d): %s\n",
 			     i,strerror(errno));
