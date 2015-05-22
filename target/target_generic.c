@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -73,7 +73,7 @@ unsigned char *target_generic_fd_read(int fd,
 	    else if (read_until_null 
 		     && (len = strnlen((const char *)lbuf,rc)) < rc) {
 		/* we've found a NUL-term string */
-		if (!realloc(lbuf,len + 1)) {
+		if (!(lbuf = (void *)realloc(lbuf,len + 1))) {
 		    free(lbuf);
 		    verror("realloc: %s\n",strerror(errno));
 		    return NULL;
@@ -82,7 +82,7 @@ unsigned char *target_generic_fd_read(int fd,
 	    }
 	    else if (read_until_null && rc == bufsiz) {
 		/* expand our buffer via realloc, or malloc. */
-		if (!realloc(lbuf,bufsiz + bufinc)) {
+		if (!(lbuf = (void *)realloc(lbuf,bufsiz + bufinc))) {
 		    tbuf = malloc(bufsiz + bufinc);
 		    if (!tbuf) {
 			/* we can't recover from this! */
@@ -93,8 +93,8 @@ unsigned char *target_generic_fd_read(int fd,
 		    memcpy(tbuf,lbuf,bufsiz);
 		    free(lbuf);
 		    lbuf = tbuf;
-		    bufsiz += bufinc;
 		}
+		bufsiz += bufinc;
 	    }
 	    else if (!read_until_null && rc == bufsiz) {
 		/* we're done! */
