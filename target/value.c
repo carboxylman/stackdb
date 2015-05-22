@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -597,10 +597,27 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 
     nrc = 0;
 
+    if ((buf == NULL && buflen != 0) || (buf != NULL && buflen == 0)) {
+	verror("programming bug: buf/buflen must both be NULL, or non-NULL!\n");
+	errno = EINVAL;
+	return -1;
+    }
+
+    /*
+     * NB: little macro to make sure we can support value_snprintf with
+     * NULL buf and 0 buflen just for sizing purposes.  All calls to
+     * snprintf must go through this.
+     */
+#define Lsnprintf(...)							\
+    snprintf((buf != NULL) ? buf + nrc : NULL,(buflen != 0) ? buflen - nrc : 0,	\
+	     ## __VA_ARGS__)
+
 #define VSBP(msg)							\
     do {								\
 	int _trc = 0;							\
-	_trc = snprintf(buf,buflen - nrc,"<"msg"::");			\
+	_trc = snprintf((buf != NULL) ? buf + nrc : NULL,		\
+			(buflen != 0) ? buflen - nrc : 0,		\
+			"<"msg"::");					\
 	if (_trc < 0)							\
 	    return -1;							\
 	nrc += _trc;							\
@@ -621,7 +638,9 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 #define VSBPA(msg,...)							\
     do {								\
 	int _trc = 0;							\
-	_trc = snprintf(buf,buflen - nrc,"<"msg"::", ## __VA_ARGS__);	\
+	_trc = snprintf((buf != NULL) ? buf + nrc : NULL,		\
+			(buflen != 0) ? buflen - nrc : 0,		\
+			"<"msg"::", ## __VA_ARGS__);			\
 	if (_trc < 0)							\
 	    return -1;							\
 	nrc += _trc;							\
@@ -653,7 +672,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	    VSBP("BINARY_STRING");
 	}
 	else
-	    nrc = snprintf(buf,buflen,"\"%s\"",value->buf);
+	    nrc = Lsnprintf("\"%s\"",value->buf);
 	goto out;
     }
 
@@ -668,57 +687,57 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	encoding_t enc = SYMBOLX_ENCODING_V(datatype);
 	if (enc == ENCODING_ADDRESS) {
 	    if (tbytesize == 1) 
-		nrc = snprintf(buf,buflen,"%"PRIx8,v_u8(value));
+		nrc = Lsnprintf("%"PRIx8,v_u8(value));
 	    else if (tbytesize == 2) 
-		nrc = snprintf(buf,buflen,"%"PRIx16,v_u16(value));
+		nrc = Lsnprintf("%"PRIx16,v_u16(value));
 	    else if (tbytesize == 4) 
-		nrc = snprintf(buf,buflen,"%"PRIx32,v_u32(value));
+		nrc = Lsnprintf("%"PRIx32,v_u32(value));
 	    else if (tbytesize == 8) 
-		nrc = snprintf(buf,buflen,"%"PRIx64,v_u64(value));
+		nrc = Lsnprintf("%"PRIx64,v_u64(value));
 	    else
 		VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else if (enc == ENCODING_BOOLEAN
 	    || enc == ENCODING_UNSIGNED) {
 	    if (tbytesize == 1) 
-		nrc = snprintf(buf,buflen,"%"PRIu8,v_u8(value));
+		nrc = Lsnprintf("%"PRIu8,v_u8(value));
 	    else if (tbytesize == 2) 
-		nrc = snprintf(buf,buflen,"%"PRIu16,v_u16(value));
+		nrc = Lsnprintf("%"PRIu16,v_u16(value));
 	    else if (tbytesize == 4) 
-		nrc = snprintf(buf,buflen,"%"PRIu32,v_u32(value));
+		nrc = Lsnprintf("%"PRIu32,v_u32(value));
 	    else if (tbytesize == 8) 
-		nrc = snprintf(buf,buflen,"%"PRIu64,v_u64(value));
+		nrc = Lsnprintf("%"PRIu64,v_u64(value));
 	    else
 		VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else if (enc == ENCODING_SIGNED) {
 	    if (tbytesize == 1) 
-		nrc = snprintf(buf,buflen,"%"PRIi8,v_i8(value));
+		nrc = Lsnprintf("%"PRIi8,v_i8(value));
 	    else if (tbytesize == 2) 
-		nrc = snprintf(buf,buflen,"%"PRIi16,v_i16(value));
+		nrc = Lsnprintf("%"PRIi16,v_i16(value));
 	    else if (tbytesize == 4) 
-		nrc = snprintf(buf,buflen,"%"PRIi32,v_i32(value));
+		nrc = Lsnprintf("%"PRIi32,v_i32(value));
 	    else if (tbytesize == 8) 
-		nrc = snprintf(buf,buflen,"%"PRIi64,v_i64(value));
+		nrc = Lsnprintf("%"PRIi64,v_i64(value));
 	    else
 		VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else if (enc == ENCODING_FLOAT) {
 	    if (tbytesize == 4) 
-		nrc = snprintf(buf,buflen,"%f",(double)v_f(value));
+		nrc = Lsnprintf("%f",(double)v_f(value));
 	    else if (tbytesize == 8) 
-		nrc = snprintf(buf,buflen,"%f",v_d(value));
+		nrc = Lsnprintf("%f",v_d(value));
 	    else if (tbytesize == 16) 
-		nrc = snprintf(buf,buflen,"%Lf",v_dd(value));
+		nrc = Lsnprintf("%Lf",v_dd(value));
 	    else
 		VSBPA("UNSUP_ENC_%d",enc);
 	}
 	else if (enc == ENCODING_SIGNED_CHAR
 		 || enc == ENCODING_UNSIGNED_CHAR) {
 	    if (tbytesize == 1) 
-		nrc = snprintf(buf,buflen,"%c",(int)v_c(value));
+		nrc = Lsnprintf("%c",(int)v_c(value));
 	    else if (tbytesize == 2) 
-		nrc = snprintf(buf,buflen,"%lc",(wint_t)v_wc(value));
+		nrc = Lsnprintf("%lc",(wint_t)v_wc(value));
 	    else
 		VSBPA("UNSUP_ENC_%d",enc);
 	}
@@ -749,9 +768,9 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	break;
     case DATATYPE_PTR:
 	if (tbytesize == 4)
-	    nrc = snprintf(buf,buflen,"0x%"PRIx32,v_u32(value));
+	    nrc = Lsnprintf("0x%"PRIx32,v_u32(value));
 	else if (tbytesize == 8)
-	    nrc = snprintf(buf,buflen,"0x%"PRIx64,v_u64(value));
+	    nrc = Lsnprintf("0x%"PRIx64,v_u64(value));
 	else 
 	    VSBP("UNSUP_PTR");
 	break;
@@ -762,7 +781,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	int llen;
 
 	if (!subranges) {
-	    nrc = snprintf(buf,buflen,"[ ]");
+	    nrc = Lsnprintf("[ ]");
 	    break;
 	}
 
@@ -775,7 +794,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	 * if AUTO_STRING.
 	 */
 	if (llen == 1 && symbol_type_is_char(datatype2)) {
-	    nrc = snprintf(buf,buflen,"\"%.*s\"",subrange_first,value->buf);
+	    nrc = Lsnprintf("\"%.*s\"",subrange_first,value->buf);
 	    break;
 	}
 
@@ -784,7 +803,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	indicies = malloc(sizeof(int)*llen);
 	for (i = 0; i < llen; ++i) {
 	    indicies[i] = 0;
-	    nrc += snprintf(buf + nrc,buflen - nrc,"[ ");
+	    nrc += Lsnprintf("[ ");
 	}
 	fake_value.bufsiz = symbol_get_bytesize(datatype2);
 	fake_value.buf = value->buf;
@@ -792,8 +811,8 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
     again:
 	while (1) { /* fake_value.buf < (value->buf + value->bufsiz)) {
 		       */
-	    nrc += value_snprintf(&fake_value,buf + nrc,buflen - nrc);
-	    nrc += snprintf(buf + nrc,buflen - nrc,", ");
+	    nrc += value_snprintf(&fake_value,(buf != NULL) ? buf + nrc : NULL,(buflen != 0) ? buflen - nrc : 0);
+	    nrc += Lsnprintf(", ");
 
 	    /* calc current offset */
 	    fake_value.buf += symbol_get_bytesize(datatype2);
@@ -804,7 +823,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 		subrange = (int)(uintptr_t)g_slist_nth_data(subranges,j);
 
 		if (indicies[j] >= subrange) {
-		    nrc += snprintf(buf + nrc,buflen - nrc," ],");
+		    nrc += Lsnprintf(" ],");
 		    if (j == 0)
 			/* Break to outer loop and the main termination */
 			break;
@@ -819,7 +838,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 		break;
 
 	    for ( ; j < llen; ++j)
-		nrc += snprintf(buf + nrc,buflen - nrc," [ ");
+		nrc += Lsnprintf(" [ ");
 	}
 	free(indicies);
 
@@ -827,18 +846,17 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
     case DATATYPE_STRUCT:
     case DATATYPE_UNION:
     case DATATYPE_CLASS:
-	nrc = snprintf(buf,buflen,"{");
+	nrc = Lsnprintf("{");
 	gsltmp = NULL;
 	v_g_slist_foreach(SYMBOLX_MEMBERS(datatype),gsltmp,tmpsym) {
 	    if (symbol_get_name(tmpsym))
-		nrc += snprintf(buf + nrc,buflen - nrc,
-				" .%s = ",symbol_get_name(tmpsym));
+		nrc += Lsnprintf(" .%s = ",symbol_get_name(tmpsym));
 	    else
-		nrc += snprintf(buf + nrc,buflen - nrc," ");
+		nrc += Lsnprintf(" ");
 	    memset(&tloc,0,sizeof(tloc));
 	    ltrc = symbol_resolve_location(tmpsym,NULL,&tloc);
 	    if (ltrc != LOCTYPE_MEMBER_OFFSET) {
-		nrc += snprintf(buf + nrc,buflen - nrc,"?,");
+		nrc += Lsnprintf("?,");
 	    }
 	    else {
 		offset = LOCATION_OFFSET(&tloc);
@@ -846,12 +864,12 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 		fake_value.type = symbol_get_datatype(tmpsym);
 		fake_value.lsymbol = NULL;
 		fake_value.bufsiz = symbol_get_bytesize(fake_value.type);
-		nrc += value_snprintf(&fake_value,buf + nrc,buflen - nrc);
-		nrc += snprintf(buf + nrc,buflen - nrc,",");
+		nrc += value_snprintf(&fake_value,(buf != NULL) ? buf + nrc : NULL,(buflen != 0) ? buflen - nrc : 0);
+		nrc += Lsnprintf(",");
 	    }
 	    location_internal_free(&tloc);
 	}
-	nrc += snprintf(buf + nrc,buflen - nrc," }");
+	nrc += Lsnprintf(" }");
 	break;
     case DATATYPE_ENUM:
 	found = 0;
@@ -863,14 +881,13 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 		continue;
 	    if (strncmp((char *)constval,value->buf,
 			symbol_type_full_bytesize(datatype)) == 0) {
-		nrc += snprintf(buf + nrc,buflen - nrc,
-				"%s",symbol_get_name(tmpsym));
+		nrc += Lsnprintf("%s",symbol_get_name(tmpsym));
 		found = 1;
 		break;
 	    }
 	}
 	if (!found)
-	    nrc += snprintf(buf + nrc,buflen - nrc,"%"PRIuNUM" (0x%"PRIxNUM")",
+	    nrc += Lsnprintf("%"PRIuNUM" (0x%"PRIxNUM")",
 			    v_unum(value),v_unum(value));
 	break;
     case DATATYPE_CONST:
@@ -886,7 +903,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	VSBPA("UNSUP_FUNCTION_%s",symbol_get_name(datatype));
 	break;
     case DATATYPE_VOID:
-	nrc = snprintf(buf,buflen,"NULL");
+	nrc = Lsnprintf("NULL");
 	break;
     default:
 	nrc = 0;
