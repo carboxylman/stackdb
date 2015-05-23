@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013, 2014 The University of Utah
+ * Copyright (c) 2012, 2013, 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -2008,6 +2008,7 @@ int monitor_spawn(struct monitor *monitor,char *filename,
     char cwd[PATH_MAX];
     int i;
     char **sptr;
+    sigset_t set;
 
     if (monitor->type != MONITOR_TYPE_PROCESS) {
 	verror("cannot handle a non-MONITOR_TYPE_PROCESS!\n");
@@ -2128,6 +2129,10 @@ int monitor_spawn(struct monitor *monitor,char *filename,
 		vdebugc(3,LA_LIB,LF_MONITOR,"])\n");
 	    }
 	}
+
+	/* Make sure to reset the signal mask; some of our users mask things. */
+	sigprocmask(0,NULL,&set);
+	sigprocmask(SIG_UNBLOCK,(const sigset_t *)&set,NULL);
 
 	setsid();
 
