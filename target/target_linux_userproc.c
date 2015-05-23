@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -3181,8 +3181,8 @@ static int linux_userproc_resume(struct target *target) {
 	    }
 	}
 
-	vdebug(8,LA_TARGET,LF_LUP,"ptrace restart pid %d tid %"PRIiTID" succeeded\n",
-	       lstate->pid,tthread->tid);
+	vdebug(8,LA_TARGET,LF_LUP,"ptrace restart pid %d tid %"PRIiTID" succeeded (sig %d)\n",
+	       lstate->pid,tthread->tid,tstate->last_signo);
 	target_thread_set_status(tthread,THREAD_STATUS_RUNNING);
 
 	tstate->last_signo = -1;
