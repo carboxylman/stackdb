@@ -1,6 +1,6 @@
 ## -*- mode: Autoconf -*-
 ##
-## Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
+## Copyright (c) 2011, 2012, 2013, 2014, 2015 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -715,9 +715,9 @@ if test "${ENABLE_JAVA}" = "1"; then
         fi
     else
         #
-        # Check /usr/local/apache-ant* and /opt/apache-ant*
+        # Check /usr/local/apache-ant* and /opt/apache-ant* and /usr
         #
-	for ant in /usr/local/apache-ant* /opt/apache-ant*; do
+	for ant in /usr/local/apache-ant* /opt/apache-ant* /usr; do
 	   if test -x "$ant/bin/ant"; then
 	       ANT_HOME="$ant"
                break
