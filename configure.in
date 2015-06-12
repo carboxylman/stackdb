@@ -509,77 +509,109 @@ AC_SUBST(ENABLE_LIBVIRT)
 #
 # Check for gsoap
 #
-AC_ARG_ENABLE(soap,
-	      AS_HELP_STRING([--disable-soap],
-                             [Disable SOAP XML services and clients]),
-	      [if test "x$enableval" = "xno"; then \
-	           ENABLE_SOAP=0; \
-	       else \
-	           ENABLE_SOAP=1; \
-	       fi],
-	      [ENABLE_SOAP=1])
-AC_SUBST(ENABLE_SOAP)
+GSOAP=
+SOAPCPP2=
+WSDL2H=
+ENABLE_SOAP=0
+AC_ARG_WITH([gsoap],
+            AS_HELP_STRING([--with-gsoap=DIRECTORY],
+                           [Enable SOAP XML services (using gsoap in DIRECTORY)]),
+            [],[with_gsoap=check])
 
-if test "${ENABLE_SOAP}" = "1"; then
-    GSOAP=/usr
-    AC_ARG_WITH([gsoap],
-      AS_HELP_STRING([--with-gsoap=DIRECTORY],
-        [find gsoap install in DIRECTORY]),
-      [GSOAP="$with_gsoap"])
-    if test ! "$GSOAP" = "/usr" ; then
-        old_PATH="$PATH"
-        export PATH="${GSOAP}/bin:$PATH"
-	GSOAPDIR=$GSOAP
+if test "x$with_gsoap" = "xno"; then
+    ENABLE_SOAP=0; GSOAP=
+else
+    if test "x$with_gsoap" = "xyes" -o "x$with_gsoap" = "xcheck"; then
+        mydir=""
     else
+        mydir="$with_gsoap"
+        old_CPPFLAGS="${CPPFLAGS}"
+        old_LDLP=$LD_LIBRARY_PATH
+        old_LDFLAGS=$LDFLAGS
         old_PATH="$PATH"
-	GSOAPDIR=""
+        export PATH="${mydir}/bin:$PATH"
+        GSOAPDIR="$mydir"
     fi
+
+    foundit=1
+    if test "x$with_gsoap" = "xcheck"; then myfatal=0; else myfatal=1; fi
+
     AC_PATH_PROG(SOAPCPP2, soapcpp2)
     if test -z "$SOAPCPP2" ; then
-        AC_MSG_ERROR([no acceptable soapcpp2 found in \$PATH])
+        foundit=0
+        if test $myfatal -eq 1; then
+            AC_MSG_ERROR([no acceptable soapcpp2 found in \$PATH])
+        fi
+    else
+        foundit=`expr $foundit \* 1`
     fi
     # infer the gsoap dir if it wasn't set, for includes, etc.  It might not be 
     # /usr, like we assumed, if it was elsewhere in the $PATH.
     if test -z "$GSOAPDIR" ; then
-       GSOAPDIR=`echo $SOAPCPP2 | sed -e 's/\/bin\/soapcpp2//'`
-       GSOAP=$GSOAPDIR
+        GSOAPDIR=`echo $SOAPCPP2 | sed -e 's/\/bin\/soapcpp2//'`
     fi
     AC_PATH_PROG(WSDL2H, wsdl2h)
     if test -z "$WSDL2H" ; then
-        AC_MSG_ERROR([no acceptable wsdl2h found in \$PATH])
+        foundit=0
+        if test $myfatal -eq 1; then
+            AC_MSG_ERROR([no acceptable wsdl2h found in \$PATH])
+        fi
+    else
+        foundit=`expr $foundit \* 1`
     fi
     #
     # Check for our patched version of gsoap; error if not!
     #
     $WSDL2H -h 2>&1 | grep -q '^\-M.*'
     if test "$?" != "0"; then
-        AC_MSG_ERROR([you must install our patched GSOAP; see README!])
+        foundit=0
+        if test $myfatal -eq 1; then
+            AC_MSG_ERROR([you must install our patched GSOAP; see README!])
+        fi
+    else
+        foundit=`expr $foundit \* 1`
     fi
-    export PATH="${old_PATH}"
-    AC_SUBST(GSOAP)
-    AC_SUBST(SOAPCPP2)
-    AC_SUBST(WSDL2H)
-    #
-    # Grab gsoap version number -- I suck
-    #
-    V_GSOAP_VERSION=`${SOAPCPP2} -v 2>&1 | grep 'soapcpp2 release' | sed -e 's/\(.* release \)\(.*\)/\2/'`
-    AC_DEFINE_UNQUOTED(V_GSOAP_VERSION,${V_GSOAP_VERSION})
-    AC_SUBST(V_GSOAP_VERSION)
-    V_GSOAP_VERSION_MAJOR=`echo "${V_GSOAP_VERSION}" | cut -d . -f 1`
-    AC_DEFINE_UNQUOTED(V_GSOAP_VERSION_MAJOR,${V_GSOAP_VERSION_MAJOR})
-    AC_SUBST(V_GSOAP_VERSION_MAJOR)
-    V_GSOAP_VERSION_MINOR=`echo "${V_GSOAP_VERSION}" | cut -d . -f 2`
-    AC_DEFINE_UNQUOTED(V_GSOAP_VERSION_MINOR,${V_GSOAP_VERSION_MINOR})
-    AC_SUBST(V_GSOAP_VERSION_MINOR)
-    V_GSOAP_VERSION_PATCH=`echo "${V_GSOAP_VERSION}" | cut -d . -f 3`
-    AC_DEFINE_UNQUOTED(V_GSOAP_VERSION_PATCH,${V_GSOAP_VERSION_PATCH})
-    AC_SUBST(V_GSOAP_VERSION_PATCH)
 
-    #
-    # Tell everybody.
-    #
-    AC_DEFINE([ENABLE_SOAP],[1])
-    AC_SUBST(ENABLE_SOAP)
+    if test -n "$mydir"; then
+        CPPFLAGS="${old_CPPFLAGS}"
+        LD_LIBRARY_PATH="$old_LDLP"
+        LDFLAGS="$old_LDFLAGS"
+        PATH="$old_PATH"
+        export PATH="${old_PATH}"
+    fi
+
+    if test $foundit -eq 1; then
+        GSOAP="$GSOAPDIR"
+        ENABLE_SOAP=1
+
+        #
+        # Tell everybody.
+        #
+        AC_DEFINE([ENABLE_SOAP],[1])
+
+        #
+        # Grab gsoap version number -- I suck
+        #
+        V_GSOAP_VERSION=`${SOAPCPP2} -v 2>&1 | grep 'soapcpp2 release' | sed -e 's/\(.* release \)\(.*\)/\2/'`
+        AC_DEFINE_UNQUOTED(V_GSOAP_VERSION,${V_GSOAP_VERSION})
+        AC_SUBST(V_GSOAP_VERSION)
+        V_GSOAP_VERSION_MAJOR=`echo "${V_GSOAP_VERSION}" | cut -d . -f 1`
+        AC_DEFINE_UNQUOTED(V_GSOAP_VERSION_MAJOR,${V_GSOAP_VERSION_MAJOR})
+        AC_SUBST(V_GSOAP_VERSION_MAJOR)
+        V_GSOAP_VERSION_MINOR=`echo "${V_GSOAP_VERSION}" | cut -d . -f 2`
+        AC_DEFINE_UNQUOTED(V_GSOAP_VERSION_MINOR,${V_GSOAP_VERSION_MINOR})
+        AC_SUBST(V_GSOAP_VERSION_MINOR)
+        V_GSOAP_VERSION_PATCH=`echo "${V_GSOAP_VERSION}" | cut -d . -f 3`
+        AC_DEFINE_UNQUOTED(V_GSOAP_VERSION_PATCH,${V_GSOAP_VERSION_PATCH})
+        AC_SUBST(V_GSOAP_VERSION_PATCH)
+    else
+        GSOAP=
+        ENABLE_SOAP=0
+    fi
+AC_SUBST(GSOAP)
+AC_SUBST(SOAPCPP2)
+AC_SUBST(WSDL2H)
+AC_SUBST(ENABLE_SOAP)
 fi
 
 #
