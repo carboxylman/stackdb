@@ -326,14 +326,14 @@ AC_SUBST(JUDY)
 #    --enable-libvmi	  will enable VMI via libvmi
 #    --enable-xenaccess   will enable VMI via xenaccess
 #
-ENABLE_XENSUPPORT=0
+ENABLE_XENSUPPORT=1
 ENABLE_XENACCESS=0
 ENABLE_LIBVMI=0
 ENABLE_XENACCESS_DEBUG=0
 
 AC_ARG_ENABLE(xenaccess,
-	      AS_HELP_STRING([--disable-xenaccess],
-                             [Disable xenaccess support]),
+	      AS_HELP_STRING([--enable-xenaccess],
+                             [Enable xenaccess support]),
 	      [if test "x$enableval" = "xno"; then \
 	           ENABLE_XENACCESS=0; \
 	       else \
@@ -387,19 +387,34 @@ AC_ARG_ENABLE(xen,
 	      [if test "x$enableval" = "xno"; then \
 	           ENABLE_XENSUPPORT=0; \
 	       else \
-	           ENABLE_XENSUPPORT=1; \
-	       fi])
+	           ENABLE_XENSUPPORT=1; MAYBE_XENSUPPORT=0; \
+	       fi],[MAYBE_XENSUPPORT=1; ENABLE_XENSUPPORT=1])
 if test "$ENABLE_XENSUPPORT" = "1"; then 
-     AC_CHECK_HEADERS([xenctrl.h],
-		      [],
-		      [AC_MSG_ERROR("Cannot find xenctrl.h; install libxc-devel!")])
-     AC_CHECK_HEADERS([xs.h],
-		      [],
-		      [AC_MSG_ERROR("Cannot find xs.h; install libxenstore-devel!")])
-     AC_CHECK_HEADERS([xen/xen.h],
-		      [],
-		      [AC_MSG_ERROR("Cannot find xen/xen.h; install libxen-devel!")])
-     AC_DEFINE([ENABLE_XENSUPPORT],[1])
+    foundit=1
+    AC_CHECK_HEADERS([xenctrl.h],[foundit=`expr $foundit \* 1`],
+                     [if test $MAYBE_XENSUPPORT -eq 0; then \
+		          AC_MSG_ERROR("Cannot find xenctrl.h!"); \
+		      else \
+		          foundit=0; \
+                      fi])
+    AC_CHECK_HEADERS([xs.h],[foundit=`expr $foundit \* 1`],
+                     [if test $MAYBE_XENSUPPORT -eq 0; then \
+		          AC_MSG_ERROR("Cannot find xenctrl.h!"); \
+		      else \
+		          foundit=0; \
+                      fi])
+    AC_CHECK_HEADERS([xen/xen.h],[foundit=`expr $foundit \* 1`],
+                     [if test $MAYBE_XENSUPPORT -eq 0; then \
+		          AC_MSG_ERROR("Cannot find xenctrl.h!"); \
+		      else \
+		          foundit=0; \
+                      fi])
+    if test $foundit -eq 1; then
+        AC_DEFINE([ENABLE_XENSUPPORT],[1])
+    else
+        ENABLE_XENSUPPORT=0
+        #AC_DEFINE([ENABLE_XENSUPPORT],[0])
+    fi
 fi
 AC_SUBST(XENSUPPORT)
 AC_SUBST(ENABLE_XENSUPPORT)
