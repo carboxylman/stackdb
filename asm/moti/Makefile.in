@@ -33,10 +33,10 @@ ENABLE_A3 := "@ENABLE_ASM_A3@"
 
 CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
 	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug
-ifneq ($(CLIPS),""))
+ifneq ($(CLIPS),"")
 	CFLAGS += -I$(CLIPS)/include
 endif
-ifneq ($(CLIPSSRC),""))
+ifneq ($(CLIPSSRC),"")
 	CFLAGS += -I$(CLIPSSRC)
 endif
 CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
