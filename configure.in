@@ -178,42 +178,60 @@ AC_SUBST(GLIB)
 #
 # Check distorm.
 #
-DISTORM=/usr/local
-ENABLE_DISTORM=1
-AC_ARG_ENABLE(distorm,
-	      AS_HELP_STRING([--disable-distorm],
-                             [Disable distorm support]),
-	      [if test "x$enableval" = "xno"; then \
-	           ENABLE_DISTORM=0; \
-	       else \
-	           ENABLE_DISTORM=1; \
-	       fi],
-	      [ENABLE_DISTORM=1])
-if test "$ENABLE_DISTORM" = "1"; then 
-    AC_ARG_WITH([distorm],
-      AS_HELP_STRING([--with-distorm=DIRECTORY],
-        [find distorm install in DIRECTORY]),
-        [DISTORM="$with_distorm"])
-    OLD_CPPFLAGS="${CPPFLAGS}"
-    CPPFLAGS="${CPPFLAGS} -I${DISTORM}/include"
-    AC_CHECK_HEADERS([distorm.h],
-		     [],
-		     [AC_MSG_ERROR("Cannot find distorm.h in ${DISTORM}/include")])
-    AC_CHECK_HEADERS([mnemonics.h],
-		     [],
-		     [AC_MSG_ERROR("Cannot find mnemonics.h in ${DISTORM}/include; make sure you installed distorm's mnemonics.h as noted in the README!")])
-    CPPFLAGS="${OLD_CPPFLAGS}"
-
+DISTORM=
+ENABLE_DISTORM=0
+AC_ARG_WITH(distorm,
+	    AS_HELP_STRING([--with-distorm=<DIRECTORY>],
+			   [Support x86 disassembly with distorm]),
+	    [],[with_distorm=check])
+if test "x$with_distorm" = "xno"; then
+    ENABLE_DISTORM=0; DISTORM="";
+else
+    old_CPPFLAGS="${CPPFLAGS}"
     old_LDLP=$LD_LIBRARY_PATH
-    LD_LIBRARY_PATH="$DISTORM/lib:$LD_LIBRARY_PATH"
-    ld_LDFL=$LDFLAGS
-    LDFLAGS="-L$DISTORM/lib $LDFLAGS"
-    AC_CHECK_LIB(distorm3,distorm_decompose64,
-   	 [ENABLE_DISTORM=1],
-   	 [AC_MSG_WARN([Your distorm does not have distorm_decompose; disabling])],
-	 [-ldistorm3])
+    old_LDFLAGS=$LDFLAGS
+
+    if test "x$with_distorm" = "xyes" -o "x$with_distorm" = "xcheck"; then
+        mydir=""
+    else
+        mydir=$with_distorm
+    	CPPFLAGS="-I${mydir}/include ${old_CPPFLAGS}"
+        LD_LIBRARY_PATH="$mydir/lib:$old_LDLP"
+        LDFLAGS="-L$mydir/lib $old_LDFLAGS"
+    fi
+
+    if test "x$with_distorm" = "xcheck"; then myfatal=0; else myfatal=1; fi
+
+    #AC_MSG_NOTICE([checking for distorm in $mydir...])
+    foundit=1
+    AC_CHECK_HEADERS([distorm.h],[foundit=`expr $foundit \* 1`],
+                     [if test $myfatal -eq 1; then \
+		          AC_MSG_ERROR("Cannot find distorm.h!"); \
+		      else \
+		          foundit=0; \
+                      fi])
+    AC_CHECK_HEADERS([mnemonics.h],[foundit=`expr $foundit \* 1`],
+                     [if test $myfatal -eq 1; then \
+		          AC_MSG_ERROR("Cannot find mnemonics.h!"); \
+		      else \
+		          foundit=0; \
+                      fi])
+    AC_CHECK_LIB(distorm3,distorm_decompose64,[foundit=`expr $foundit \* 1`],
+                 [if test $myfatal -eq 1; then \
+		      AC_MSG_ERROR("Cannot find mnemonics.h!"); \
+		  else \
+		      foundit=0; \
+                  fi],[-ldistorm3])
+
+    if test $foundit -eq 1; then
+	# Success!
+	DISTORM=$mydir
+	ENABLE_DISTORM=1
+    fi
+
+    CPPFLAGS="${old_CPPFLAGS}"
     LD_LIBRARY_PATH="$old_LDLP"
-    LDFLAGS="$old_LDFL"
+    LDFLAGS="$old_LDFLAGS"
 fi
 AC_SUBST(DISTORM)
 AC_SUBST(ENABLE_DISTORM)
