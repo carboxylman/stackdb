@@ -773,11 +773,8 @@ if test "${ENABLE_JAVA}" = "1"; then
                  AS_HELP_STRING([--with-ant=DIRECTORY],
                                 [find ant install in DIRECTORY]),
                  [ANT_HOME="$with_ant"])
-    if test -d "${ANT_HOME}" ; then
-	if ! test -x "${ANT_HOME}/bin/ant" ; then
-	    AC_MSG_ERROR([no ant found in ${ANT_HOME}/bin])
-        fi
-    else
+    if test ! -d "${ANT_HOME}" \
+	    -o ! -x "${ANT_HOME}/bin/ant" ; then
         #
         # Check /usr/local/apache-ant* and /opt/apache-ant* and /usr
         #
@@ -787,11 +784,16 @@ if test "${ENABLE_JAVA}" = "1"; then
                break
            fi
         done
-	if test -z "${ANT_HOME}"; then
-	    AC_MSG_ERROR("Cannot find ant install in /usr/local or /opt!")
-        fi
     fi
-    ANT="${ANT_HOME}/bin/ant"
+    if test -n "$with_ant" -a -z "${ANT_HOME}"; then
+        AC_MSG_ERROR("Cannot find ant install!")
+    fi
+    if test -n "$ANT_HOME"; then
+        ANT="${ANT_HOME}/bin/ant"
+	AC_MSG_NOTICE("found ant as $ANT")
+    else
+        ANT=""
+    fi
     AC_SUBST(ANT)
 
     #
