@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2012-2014 The University of Utah
+## Copyright (c) 2012-2015 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -27,12 +27,18 @@ SUBDIRS =
 
 include $(OBJDIR)/Makeconf
 
+CLIPS := "@CLIPS@"
 CLIPSSRC := "@CLIPSSRC@"
 ENABLE_A3 := "@ENABLE_ASM_A3@"
 
 CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
-	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug \
-	-I$(CLIPSSRC)
+	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug
+ifneq ($(CLIPS),""))
+	CFLAGS += -I$(CLIPS)/include
+endif
+ifneq ($(CLIPSSRC),""))
+	CFLAGS += -I$(CLIPSSRC)
+endif
 CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
 ifeq ($(ENABLE_XENACCESS),"1")
 	CFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS) -D ENABLE_XENSUPPORT
@@ -48,17 +54,26 @@ ifeq ($(ENABLE_DISTORM),"1")
 endif
 
 LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS)
+ifeq ($(ENABLE_XENSUPPORT),"1")
+	LDFLAGS += -lxenctrl -lxenstore -lc
+endif
 ifeq ($(ENABLE_XENACCESS),"1")
-	LDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)
+	LDFLAGS += -L$(XENACCESS_LIBDIR)
 endif
 ifeq ($(ENABLE_LIBVMI),"1")
-	LDFLAGS += -lxenctrl -lxenstore -lc -L$(LIBVMI)/lib -lvmi
+	LDFLAGS += -L$(LIBVMI)/lib -lvmi
 endif
 ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
 
-LDFLAGS += -L$(CLIPSSRC) -lclips -lm -lrt
+ifneq ($(CLIPS),"")
+	LDFLAGS += -L$(CLIPS)/lib
+endif
+ifneq ($(CLIPSSRC),"")
+	LDFLAGS += -L$(CLIPSSRC)
+endif
+LDFLAGS += -lclips -lm -lrt -lclips -lm -lrt
 
 OBJECTS := policy_engine.lo
 DEPENDENCIES := $(OBJECTS:%.lo=%.d)

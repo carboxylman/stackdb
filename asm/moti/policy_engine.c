@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -64,7 +64,6 @@
 #include "dwdebug.h"
 #include "target_api.h"
 #include "target.h"
-#include "target_xen_vm.h"
 #include "probe_api.h"
 #include "probe.h"
 #include "alist.h"
@@ -74,7 +73,11 @@
 #endif
 #include "policy_engine.h"
 #include "repair_engine.h"
+#ifdef HAVE_CLIPSSRC
 #include "clips.h"
+#else
+#include <clips/clips.h>
+#endif
 
 struct target *target = NULL;
 char base_fact_file[100];
@@ -577,7 +580,8 @@ int main( int argc, char** argv) {
     opts.recovery_rules_file = "recovery_constructs.cls";
     opts.wait_time = 120;
     
-    tspec = target_argp_driver_parse_one(&pe_argp,&opts,argc,argv,TARGET_TYPE_XEN,1);
+    tspec = target_argp_driver_parse_one(&pe_argp,&opts,argc,argv,
+					 TARGET_TYPE_XEN | TARGET_TYPE_GDB,1);
     if (!tspec) {
 	fprintf(stderr,"ERROR: Could not parse target arguments!\n");
 	exit(-1);
