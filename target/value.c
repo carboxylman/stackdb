@@ -661,6 +661,8 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	return -1;
     }
 
+    memset(&fake_value,0,sizeof(fake_value));
+
     /*
      * NB: little macro to make sure we can support value_snprintf with
      * NULL buf and 0 buflen just for sizing purposes.  All calls to
@@ -920,7 +922,6 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 		offset = LOCATION_OFFSET(&tloc);
 		fake_value.buf = value->buf + offset;
 		fake_value.type = symbol_get_datatype(tmpsym);
-		fake_value.lsymbol = NULL;
 		fake_value.bufsiz = symbol_get_bytesize(fake_value.type);
 		nrc += value_snprintf(&fake_value,(buf != NULL) ? buf + nrc : NULL,(buflen != 0) ? buflen - nrc : 0);
 		nrc += Lsnprintf(",");
@@ -992,6 +993,8 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	fprintf(ud->stream,"\"%s\"",value->buf);
 	goto out;
     }
+
+    memset(&fake_value,0,sizeof(fake_value));
 
     if (datatype)
 	datatype = symbol_type_skip_qualifiers(datatype);
@@ -1178,7 +1181,6 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 		offset = LOCATION_OFFSET(&tloc);
 		fake_value.buf = value->buf + offset;
 		fake_value.type = symbol_get_datatype(tmpsym);
-		fake_value.lsymbol = NULL;
 		fake_value.bufsiz = symbol_get_bytesize(fake_value.type);
 		__value_dump(&fake_value,ud);
 		fputs(",",ud->stream);
