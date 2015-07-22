@@ -221,12 +221,12 @@ struct value *value_clone(struct value *in) {
     return out;
 }
 
-struct value *value_reload_as_type(struct value *in,struct bsymbol *type,
+struct value *value_reload_as_type(struct value *in,struct symbol *type,
 				   int force) {
     struct value *out;
     int bytesize;
 
-    bytesize = symbol_get_bytesize(bsymbol_get_symbol(type));
+    bytesize = symbol_get_bytesize(type);
 
     if (!force) {
 	if (bytesize < 1) {
@@ -248,7 +248,7 @@ struct value *value_reload_as_type(struct value *in,struct bsymbol *type,
     if (!out)
 	return NULL;
 
-    out->type = bsymbol_get_symbol(type);
+    out->type = type;
     RHOLD(out->type,out);
     if (in->lsymbol) {
 	out->lsymbol = in->lsymbol;

@@ -1620,7 +1620,7 @@ void value_dump_simple(struct value *value,struct dump_info *ud);
  * than the old one; generally, loading a larger value from memory could
  * be unsafe.
  */
-struct value *value_reload_as_type(struct value *value,struct bsymbol *type,
+struct value *value_reload_as_type(struct value *value,struct symbol *type,
 				   int force);
 /*
  * Refreshes @value if necessary.  If @value is a child of another
