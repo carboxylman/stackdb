@@ -652,6 +652,9 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
     loctype_t ltrc;
     struct location tloc;
     int unprintable;
+    target_decoder_t decoder;
+    void *decoder_data = NULL;
+    struct target *target = NULL;
 
     nrc = 0;
 
@@ -741,6 +744,19 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 
     datatype = symbol_type_skip_qualifiers(datatype);
     tbytesize = symbol_get_bytesize(datatype);
+
+    /* Check with type decoders. */
+    if (value->thread)
+	target = value->thread->target;
+    if (target
+	&& target_decoder_lookup(target,value,&decoder,&decoder_data) == 0) {
+	int _trc = decoder(target,decoder_data,value,buf + nrc,buflen - nrc);
+	if (_trc > -1) {
+	    /* It worked, just return. */
+	    nrc = _trc;
+	    goto out;
+	}
+    }
 
     switch (datatype->datatype_code) {
     case DATATYPE_BASE:;
@@ -987,6 +1003,11 @@ void __value_dump(struct value *value,struct dump_info *ud) {
     GSList *gsltmp;
     loctype_t ltrc;
     struct location tloc;
+    target_decoder_t decoder;
+    void *decoder_data = NULL;
+    struct target *target = NULL;
+    char *decstrbuf = NULL;
+    int decstrbuflen = 0;
 
     /* Handle AUTO_STRING specially. */
     if (value->isstring) {
@@ -999,6 +1020,39 @@ void __value_dump(struct value *value,struct dump_info *ud) {
     if (datatype)
 	datatype = symbol_type_skip_qualifiers(datatype);
     tbytesize = symbol_get_bytesize(datatype);
+
+    /* Check with type decoders. */
+    if (value->thread)
+	target = value->thread->target;
+    if (target
+	&& target_decoder_lookup(target,value,&decoder,&decoder_data) == 0) {
+	decstrbuflen = 4096;
+	decstrbuf = (char *)malloc(decstrbuflen);
+	int _trc = decoder(target,decoder_data,value,decstrbuf,decstrbuflen);
+	if (_trc > -1) {
+	    if (_trc < decstrbuflen) {
+		/* It worked, just dump the string. */
+		fputs(decstrbuf,ud->stream);
+		free(decstrbuf);
+		goto out;
+	    }
+	    else {
+		free(decstrbuf);
+		decstrbuflen = _trc + 1;
+		decstrbuf = (char *)malloc(decstrbuflen);
+		decoder(target,decoder_data,value,decstrbuf,decstrbuflen);
+		/* Assume it worked the second time on bigger buf; dump */
+		fputs(decstrbuf,ud->stream);
+		free(decstrbuf);
+		goto out;
+	    }
+	}
+	else {
+	    /* Just do the normal thing. */
+	    free(decstrbuf);
+	    decstrbuflen = 0;
+	}
+    }
 
     switch (datatype->datatype_code) {
     case DATATYPE_BASE:;

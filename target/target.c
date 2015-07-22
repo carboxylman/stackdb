@@ -46,6 +46,7 @@
  ** Globals.
  **/
 extern void os_linux_generic_register(void);
+extern void os_linux_generic_decoder_lib_register(void);
 
 /*
  * A simple global target ID counter.  Callers of target_instantiate or
@@ -63,6 +64,7 @@ static int init_done = 0;
 
 static GHashTable *target_id_tab = NULL;
 static GHashTable *target_personality_tab = NULL;
+static GHashTable *target_decoder_lib_tab = NULL;
 
 void target_init(void) {
     if (init_done)
@@ -74,9 +76,14 @@ void target_init(void) {
 					  NULL,NULL);
     target_personality_tab = g_hash_table_new_full(g_str_hash,g_str_equal,
 						   NULL,NULL);
+    target_decoder_lib_tab = g_hash_table_new_full(g_str_hash,g_str_equal,
+						   NULL,NULL);
 
     /* Register the default personalities. */
     os_linux_generic_register();
+
+    /* Register the default decoder libs */
+    os_linux_generic_decoder_lib_register();
 
     init_done = 1;
 }
@@ -1630,6 +1637,7 @@ REFCNT target_free(struct target *target,int force) {
     REFCNT trefcnt;
     REFCNT retval;
     GList *t1,*t2;
+    struct target_decoder_binding *tdb;
 
     assert(target);
 
@@ -1760,6 +1768,15 @@ REFCNT target_free(struct target *target,int force) {
     target->global_thread = NULL;
     target->current_thread = NULL;
 
+    /* Dump the decoder bindings before the debugfiles. */
+    list = g_hash_table_get_values(target->decoders);
+    v_g_list_foreach(list,t1,tdb) {
+	target_decoder_binding_free(tdb);
+    }
+    g_list_free(list);
+    g_hash_table_destroy(target->decoders);
+    target->decoders = NULL;
+
     /* Unload the debugfiles we might hold, if we can */
     v_g_list_foreach_safe(target->spaces,t1,t2,space) {
 	RPUT(space,addrspace,target,trefcnt);
@@ -1876,6 +1893,8 @@ struct target *target_create(char *type,struct target_spec *spec) {
 
     retval->ops = ops;
     retval->spec = spec;
+
+    retval->decoders = g_hash_table_new_full(g_str_hash,g_str_equal,NULL,NULL);
 
     retval->infd = retval->outfd = retval->errfd = -1;
 
@@ -6088,6 +6107,228 @@ int target_personality_attach(struct target *target,
 
 	return 0;
     }
+}
+
+/**
+ ** Decoder stuff.
+ **/
+int target_decoder_lib_load(char *filename) {
+    unsigned int current_size;
+    void *lib;
+
+    current_size = g_hash_table_size(target_decoder_lib_tab);
+
+    /*
+     * NB: we want subsequent libraries to be able to reuse symbols from
+     * this library if necessary... "overloading".
+     */
+    lib = dlopen(filename,RTLD_NOW | RTLD_GLOBAL);
+    if (!lib) {
+	verror("could not load '%s': %s (%s)\n",
+	       filename,dlerror(),strerror(errno));
+	return -1;
+    }
+
+    /* Don't make this fatal, for now... */
+    if (g_hash_table_size(target_decoder_lib_tab) == current_size) {
+	vwarn("loaded library %s, but it did not add itself to the"
+	      " decoder_lib table!  Duplicate decoder_lib ID?\n",filename);
+    }
+
+    return 0;
+}
+
+int target_decoder_lib_register(struct target_decoder_lib *lib) {
+    if (g_hash_table_lookup(target_decoder_lib_tab,(gpointer)lib->name)) {
+	verror("Decoder_Lib %s already registered; cannot register.\n",lib->name);
+	errno = EALREADY;
+	return -1;
+    }
+
+    g_hash_table_insert(target_decoder_lib_tab,(gpointer)lib->name,(gpointer)lib);
+    return 0;
+}
+
+int target_decoder_lib_bind(struct target *target,char *decoder_lib,
+			    char *decoder_lib_lib) {
+    struct target_decoder_lib *lib;
+    struct target_decoder_binding *tdb;
+    char *buf;
+    int bufsiz;
+
+    if (!target_decoder_lib_tab) {
+	verror("Target library improperly initialized -- call target_init!\n");
+	errno = EINVAL;
+	return -1;
+    }
+
+    /*
+     * If this is specified, try to load it first!
+     */
+    if (decoder_lib_lib) {
+	if (target_decoder_lib_load(decoder_lib_lib)) {
+	    vwarn("failed to load library '%s'; will try to find"
+		  " decoder_lib '%s' elsewhere!\n",decoder_lib_lib,decoder_lib);
+	}
+    }
+
+    lib = (struct target_decoder_lib *) \
+	g_hash_table_lookup(target_decoder_lib_tab,(gpointer)decoder_lib);
+    if (lib)
+	goto libinit;
+    else if (decoder_lib_lib) {
+	vwarn("could not find decoder_lib '%s' after trying to load"
+	      " decoder_lib library '%s'\n",decoder_lib,decoder_lib_lib);
+    }
+
+    /*
+     * Try to load it from a shared lib.  The shared lib must either
+     * provide _init() (or better yet, a routine with
+     * __attribute__((constructor)) ); and this routine must register
+     * the decoder_lib library with the target library.
+     *
+     * Try several strings.  Just <decoder_lib>.so;
+     * stackdb_<decoder_lib>.so; vmi_<decoder_lib>.so .
+     */
+    bufsiz = strlen(decoder_lib) + strlen(".so") + strlen("stackdb") + 1;
+    buf = malloc(bufsiz);
+    snprintf(buf,bufsiz,"%s.so",decoder_lib);
+    if (target_decoder_lib_load(buf) == 0) {
+	if ((lib = (struct target_decoder_lib *) \
+	     g_hash_table_lookup(target_decoder_lib_tab,(gpointer)decoder_lib))) {
+	    free(buf);
+	    goto libinit;
+	}
+	else {
+	    vwarn("loaded library '%s', but it did not provide decoder_lib '%s'!\n",
+		  buf,decoder_lib);
+	}
+    }
+
+    snprintf(buf,bufsiz,"stackdb_%s.so",decoder_lib);
+    if (target_decoder_lib_load(buf) == 0) {
+	if ((lib = (struct target_decoder_lib *) \
+	     g_hash_table_lookup(target_decoder_lib_tab,(gpointer)decoder_lib))) {
+	    free(buf);
+	    goto libinit;
+	}
+	else {
+	    vwarn("loaded library '%s', but it did not provide decoder_lib '%s'!\n",
+		  buf,decoder_lib);
+	}
+    }
+
+    snprintf(buf,bufsiz,"vmi_%s.so",decoder_lib);
+    if (target_decoder_lib_load(buf) == 0) {
+	if ((lib = (struct target_decoder_lib *) \
+	     g_hash_table_lookup(target_decoder_lib_tab,(gpointer)decoder_lib))) {
+	    free(buf);
+	    goto libinit;
+	}
+	else {
+	    vwarn("loaded library '%s', but it did not provide decoder_lib '%s'!\n",
+		  buf,decoder_lib);
+	}
+    }
+
+    free(buf);
+    verror("could not find decoder_lib '%s'!\n",decoder_lib);
+    errno = ESRCH;
+    return -1;
+
+ libinit:
+    tdb = target_decoder_binding_create(lib,target);
+
+    if (!tdb) {
+	vwarn("Failed to attach decoder_lib '%s' on target %d!\n",
+	      decoder_lib,target->id);
+	return -1;
+    }
+    else {
+	g_hash_table_insert(target->decoders,tdb->lib->name,tdb);
+
+	vdebug(2,LA_TARGET,LF_TARGET,
+	       "initialized decoder_lib '%s' for target %d!\n",
+	       decoder_lib,target->id);
+
+	return 0;
+    }
+}
+
+struct target_decoder_binding *target_decoder_binding_create
+    (struct target_decoder_lib *lib,struct target *target) {
+    struct target_decoder_binding *tdb;
+
+    tdb = (struct target_decoder_binding *)calloc(1,sizeof(*tdb));
+    tdb->lib = lib;
+    tdb->target = target;
+    tdb->symbol_name_decoders =
+	g_hash_table_new_full(g_str_hash,g_str_equal,NULL,NULL);
+
+    tdb->decoder_data = lib->bind(tdb);
+    if (!tdb->decoder_data) {
+	target_decoder_binding_free(tdb);
+	tdb = NULL;
+    }
+
+    return tdb;
+}
+
+void target_decoder_binding_free(struct target_decoder_binding *tdb) {
+    if (tdb->lib->unbind)
+	tdb->lib->unbind(tdb,tdb->decoder_data);
+    g_hash_table_destroy(tdb->symbol_name_decoders);
+    free(tdb);
+}
+
+int target_decoder_binding_add(struct target_decoder_binding *tdb,
+			       struct bsymbol *bsymbol,target_decoder_t dfn) {
+    g_hash_table_insert(tdb->symbol_name_decoders,
+			bsymbol_get_name(bsymbol),dfn);
+
+    vdebug(1,LA_TARGET,LF_TARGET,
+	   "inserted decoder binding for symbol '%s' on decoder lib '%s' for target '%s'!\n",
+	   bsymbol_get_name(bsymbol),tdb->lib->name,tdb->target->name);
+
+    return 0;
+}
+
+int target_decoder_lookup(struct target *target,struct value *value,
+			  target_decoder_t *decoder,void **decoder_data) {
+    struct target_decoder_binding *tdb;
+    target_decoder_t tdecoder;
+    GHashTableIter iter;
+
+    g_hash_table_iter_init(&iter,target->decoders);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tdb)) {
+	vdebug(1,LA_TARGET,LF_TARGET,
+	       "looking up decoder binding for value (symbol '%s', type '%s')"
+	       " on decoder lib '%s' for target '%s'!\n",
+	       value->lsymbol ? lsymbol_get_name(value->lsymbol) : "",
+	       value->type ? symbol_get_name(value->type) : "",
+	       tdb->lib->name,target->name);
+
+	if (value->type) {
+	    tdecoder = (target_decoder_t)			\
+		g_hash_table_lookup(tdb->symbol_name_decoders,
+				    symbol_get_name(value->type));
+	    if (tdecoder) {
+		*decoder = tdecoder;
+		*decoder_data = tdb->decoder_data;
+
+		vdebug(1,LA_TARGET,LF_TARGET,
+		       "found decoder binding for value (symbol '%s', type '%s')"
+		       " on decoder lib '%s' for target '%s'!\n",
+		       value->lsymbol ? lsymbol_get_name(value->lsymbol) : "",
+		       value->type ? symbol_get_name(value->type) : "",
+		       tdb->lib->name,target->name);
+
+		return 0;
+	    }
+	}
+    }
+
+    return 1;
 }
 
 /**

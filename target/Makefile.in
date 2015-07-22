@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2012-2014 The University of Utah
+## Copyright (c) 2012-2015 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -66,7 +66,8 @@ endif
 OBJECTS := target.lo target_api.lo target_generic.lo memory.lo location.lo \
 	symbol.lo value.lo probe.lo probe_lib.lo probe_value.lo probe_filter.lo \
 	target_nv_filter.lo target_event.lo \
-	target_os.lo target_process.lo target_os_linux_generic.lo \
+	target_os.lo target_process.lo \
+	target_os_linux_generic.lo target_os_linux_generic_decoders.lo \
 	target_arch_x86.lo memcache.lo
 OBJECTS += target_linux_userproc.lo target_php.lo \
 	target_gdb_rsp.lo target_gdb.lo target_gdb_helper_builtin.lo \

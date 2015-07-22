@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2014 The University of Utah
+ * Copyright (c) 2013, 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -494,6 +494,16 @@ int os_linux_postloadinit(struct target *target) {
      */
     if (lstate->init_task) 
 	return 0;
+
+    /* XXX: enable linux decoders. */
+    if (target_decoder_lib_bind(target,
+				"os_linux_generic_decoder_lib",NULL) == 0) {
+	vdebug(3,LA_TARGET,LF_XV,
+	       "autoinitialized the os_linux_generic decoders!\n");
+    }
+    else {
+	verror("failed to autoinitialize the os_linux_generic decoders!\n");
+    }
 
     /*
      * Finally: initialize our state in the target's global thread!

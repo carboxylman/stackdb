@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -241,6 +241,17 @@ int target_personality_attach(struct target *target,
 			      char *personality,char *personality_lib);
 int target_personality_register(char *personality,target_personality_t pt,
 				struct target_personality_ops *ptops,void *pops);
+
+/**
+ ** Target decoder stuff.
+ **/
+int target_decoder_lib_load(char *filename);
+int target_decoder_lib_register(struct target_decoder_lib *lib);
+int target_decoder_lib_bind(struct target *target,char *decoder_lib,
+			    char *decoder_lib_lib);
+struct target_decoder_binding *target_decoder_binding_create
+    (struct target_decoder_lib *lib,struct target *target);
+void target_decoder_binding_free(struct target_decoder_binding *tdb);
 
 /**
  ** Overlays.

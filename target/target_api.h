@@ -1957,6 +1957,35 @@ long double      rv_dd(void *buf);
 ADDR             rv_addr(void *buf);
 
 /**
+ ** Target value decoding stuff.
+ **/
+struct target_decoder_binding;
+
+struct target_decoder_lib {
+    char *name;
+    void *(*bind)(struct target_decoder_binding *tdb);
+    int (*unbind)(struct target_decoder_binding *tdb,void *decoder_data);
+};
+
+struct target_decoder_binding {
+    struct target *target;
+    void *decoder_data;
+    GHashTable *symbol_name_decoders;
+    struct target_decoder_lib *lib;
+};
+
+typedef int (*target_decoder_t)(struct target *target,void *data,
+				struct value *value,char *buf,int buflen);
+
+int target_decoder_lib_register(struct target_decoder_lib *lib);
+int target_decoder_lib_bind(struct target *target,char *decoder_lib,
+			    char *decoder_lib_lib);
+int target_decoder_binding_add(struct target_decoder_binding *tdb,
+			       struct bsymbol *bsymbol,target_decoder_t dfn);
+int target_decoder_lookup(struct target *target,struct value *value,
+			  target_decoder_t *decoder,void **decoder_data);
+
+/**
  ** The primary target data structures.
  **/
 
@@ -2563,6 +2592,8 @@ struct target {
 	struct target_os_ops *os_ops;
 	struct target_process_ops *process_ops;
     };
+
+    GHashTable *decoders;
 
     /*
      * Each target *must* have an architecture.  This pointer must be
