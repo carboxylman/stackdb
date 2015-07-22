@@ -221,6 +221,64 @@ struct value *value_clone(struct value *in) {
     return out;
 }
 
+struct value *value_reload_as_type(struct value *in,struct bsymbol *type,
+				   int force) {
+    struct value *out;
+    int bytesize;
+
+    bytesize = symbol_get_bytesize(bsymbol_get_symbol(type));
+
+    if (!force) {
+	if (bytesize < 1) {
+	    errno = EINVAL;
+	    return NULL;
+	}
+	else if (in->isreg
+		 && bytesize > (int)in->thread->target->arch->wordsize) {
+	    errno = ERANGE;
+	    return NULL;
+	}
+	else if (in->isconst && bytesize > in->bufsiz) {
+	    errno = ERANGE;
+	    return NULL;
+	}
+    }
+
+    out = (struct value *)calloc(1,sizeof(*out));
+    if (!out)
+	return NULL;
+
+    out->type = bsymbol_get_symbol(type);
+    RHOLD(out->type,out);
+    if (in->lsymbol) {
+	out->lsymbol = in->lsymbol;
+	RHOLD(out->lsymbol,out);
+    }
+    out->thread = in->thread;
+    out->range = in->range;
+    out->ismmap = in->ismmap;
+    out->isreg = in->isreg;
+    out->isstring = in->isstring;
+    out->res.addr = in->res.addr;
+    out->res.reg = in->res.reg;
+    out->res_ip = in->res_ip;
+
+    if (!in->isreg && !in->isconst) {
+	/* Reload with new type's size. */
+	out->buf = malloc(bytesize);
+	target_read_addr(in->thread->target,in->res.addr,bytesize,
+			 (unsigned char *)out->buf);
+	out->bufsiz = bytesize;
+    }
+    else {
+	out->buf = malloc(in->bufsiz);
+	memcpy(out->buf,in->buf,in->bufsiz);
+	out->bufsiz = in->bufsiz;
+    }
+
+    return out;
+}
+
 void value_free(struct value *value) {
     REFCNT trefcnt;
 

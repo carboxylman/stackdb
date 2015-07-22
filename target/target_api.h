@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -1613,7 +1613,15 @@ void value_free(struct value *value);
 int value_snprintf(struct value *value,char *buf,int buflen);
 void value_dump(struct value *value,struct dump_info *ud);
 void value_dump_simple(struct value *value,struct dump_info *ud);
-
+/*
+ * Using @value's address, and the given @type, load a new value from
+ * target memory that is the size of @type.  If @force is nonzero, you
+ * can force the load to happen even if the new type is larger in size
+ * than the old one; generally, loading a larger value from memory could
+ * be unsafe.
+ */
+struct value *value_reload_as_type(struct value *value,struct bsymbol *type,
+				   int force);
 /*
  * Refreshes @value if necessary.  If @value is a child of another
  * value, we will try to force a refresh of its parent (and upwards
