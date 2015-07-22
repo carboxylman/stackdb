@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 The University of Utah
+ * Copyright (c) 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -1731,6 +1731,10 @@ int gdb_evloop_handler(int readfd,int fdtype,void *state) {
     struct target *target = (struct target *)state;
     int again;
     int retval;
+    int ret;
+
+    /* we've got something from the stub; let's see what it is! */
+    ret = gdb_rsp_recv(target,0,0,NULL);
 
     again = 0;
     retval = gdb_handle_exception(target,0,&again,NULL);
