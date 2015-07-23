@@ -2595,7 +2595,11 @@ loctype_t target_lsymbol_resolve_location(struct target *target,
 
  errout:
     location_internal_free(&tloc);
-    return rc;
+    /* Return a proper negative loctype_t ! */
+    if (rc > 0)
+	return -rc;
+    else
+	return rc;
 }
 
 int target_bsymbol_resolve_base(struct target *target,
