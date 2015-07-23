@@ -6298,6 +6298,7 @@ int target_decoder_lookup(struct target *target,struct value *value,
     struct target_decoder_binding *tdb;
     target_decoder_t tdecoder;
     GHashTableIter iter;
+    char *tname = NULL;
 
     g_hash_table_iter_init(&iter,target->decoders);
     while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tdb)) {
@@ -6308,10 +6309,9 @@ int target_decoder_lookup(struct target *target,struct value *value,
 	       value->type ? symbol_get_name(value->type) : "",
 	       tdb->lib->name,target->name);
 
-	if (value->type) {
+	if (value->type && (tname = symbol_get_name(value->type))) {
 	    tdecoder = (target_decoder_t)			\
-		g_hash_table_lookup(tdb->symbol_name_decoders,
-				    symbol_get_name(value->type));
+		g_hash_table_lookup(tdb->symbol_name_decoders,tname);
 	    if (tdecoder) {
 		*decoder = tdecoder;
 		*decoder_data = tdb->decoder_data;
@@ -6320,7 +6320,7 @@ int target_decoder_lookup(struct target *target,struct value *value,
 		       "found decoder binding for value (symbol '%s', type '%s')"
 		       " on decoder lib '%s' for target '%s'!\n",
 		       value->lsymbol ? lsymbol_get_name(value->lsymbol) : "",
-		       value->type ? symbol_get_name(value->type) : "",
+		       value->type ? tname : "",
 		       tdb->lib->name,target->name);
 
 		return 0;
