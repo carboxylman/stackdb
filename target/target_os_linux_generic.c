@@ -8401,9 +8401,15 @@ static struct addrspace *os_linux_space_load(struct target *target,
 	     */
 	    if (!olmm->vma_cache) 
 		olmm->vma_cache = new_vma;
-	    else {
+	    else if (cached_vma_prev) {
 		cached_vma_prev->next = new_vma;
 		cached_vma_prev->next_vma_addr = vma_addr;
+	    }
+	    else {
+		/* Add it as the first entry on the list. */
+		new_vma->next = olmm->vma_cache;
+		new_vma->next_vma_addr = olmm->vma_cache ? value_addr(olmm->vma_cache->vma) : 0;
+		olmm->vma_cache = new_vma;
 	    }
 	    ++olmm->vma_len;
 	    cached_vma_prev = new_vma;
