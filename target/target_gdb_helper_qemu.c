@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 The University of Utah
+ * Copyright (c) 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -393,6 +393,7 @@ int gdb_helper_qemu_load_machine(struct target *target,
 	    buf[i] = ' ';
     }
 
+ again:
     if (target->arch->type == ARCH_X86_64) {
 	idx = strstr(buf,"GS =0000 ");
 	if (idx) {
@@ -402,8 +403,14 @@ int gdb_helper_qemu_load_machine(struct target *target,
 
 	    regcache_init_reg(regcache,REG_X86_64_GS_BASE,regval);
 	}
-	else
+	else {
 	    vwarnopt(9,LA_TARGET,LF_GDB,"no GS for gs_base!\n");
+
+	    if (qstate->qemu_qmp_fd > 0) {
+		__recv_til_block(qstate->qemu_qmp_fd,buf,bufsiz,1);
+		goto again;
+	    }
+	}
     }
 
     idx = strstr(buf,"CR0=");
@@ -417,8 +424,14 @@ int gdb_helper_qemu_load_machine(struct target *target,
 	else
 	    regcache_init_reg(regcache,REG_X86_CR0,regval);
     }
-    else
+    else {
 	vwarnopt(9,LA_TARGET,LF_GDB,"no cr0!\n");
+
+	if (qstate->qemu_qmp_fd > 0) {
+	    __recv_til_block(qstate->qemu_qmp_fd,buf,bufsiz,1);
+	    goto again;
+	}
+    }
 
     idx = strstr(buf,"CR3=");
     if (idx) {
