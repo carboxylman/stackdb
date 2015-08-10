@@ -131,7 +131,7 @@ GList *target_instantiate_and_open(struct target_spec *primary_target_spec,
 		vwarn("could not open primary target spec %d\n",i);
 		target_close(primary_target);
 		target_finalize(primary_target);
-		*error_specs = g_list_append(*error_specs,spec);
+		*error_specs = g_list_append(*error_specs,primary_target_spec);
 	    }
 	    else {
 		verror("could not open primary target spec %d\n",i);
