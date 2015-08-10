@@ -81,6 +81,8 @@ static target_status_t gdb_handle_exception(struct target *target,
 					    target_exception_flags_t flags,
 					    int *again,void *priv);
 
+static struct target_spec *
+gdb_build_default_overlay_spec(struct target *target,tid_t tid);
 static struct target *
 gdb_instantiate_overlay(struct target *target,
 			struct target_thread *tthread,
@@ -215,6 +217,7 @@ struct target_ops gdb_ops = {
     .handle_interrupted_step = NULL,
 */
 
+    .build_default_overlay_spec = gdb_build_default_overlay_spec,
     .instantiate_overlay = gdb_instantiate_overlay,
     .lookup_overlay_thread_by_id = gdb_lookup_overlay_thread_by_id,
     .lookup_overlay_thread_by_name = gdb_lookup_overlay_thread_by_name,
@@ -1017,6 +1020,16 @@ static int gdb_set_active_probing(struct target *target,
     int rc;
     SAFE_PERSONALITY_OP_WARN(set_active_probing,rc,0,target,flags);
     return rc;
+}
+
+static struct target_spec *
+gdb_build_default_overlay_spec(struct target *target,tid_t tid) {
+    if (target->personality == TARGET_PERSONALITY_OS)
+	return target_build_spec(TARGET_TYPE_OS_PROCESS,0);
+    else {
+	errno = ENOTSUP;
+	return NULL;
+    }
 }
 
 static struct target *
