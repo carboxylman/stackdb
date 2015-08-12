@@ -3235,8 +3235,9 @@ struct value *target_load_value_member(struct target *target,
 	value_set_const(value);
     }
     else if (rc <= LOCTYPE_UNKNOWN) {
-	verror("symbol %s: failed to compute location (%d %s)\n",
-	       lsymbol_get_name(ls),rc,LOCTYPE(-rc));
+	vwarnopt(8,LA_TARGET,LF_SYMBOL,
+		 "symbol %s: failed to compute location (%d %s)\n",
+		 lsymbol_get_name(ls),rc,LOCTYPE(-rc));
 	goto errout;
     }
     else {
