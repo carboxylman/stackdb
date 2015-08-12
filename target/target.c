@@ -395,7 +395,9 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state);
       "Set an alternate root prefix for debuginfo and binfile resolution.",0 }, \
     { "active-probing",'a',"FLAG,FLAG,...",0, \
       "A list of active probing flags to enable (disabled by default)" \
-      " (thread_entry thread_exit memory other)",0 }
+      " (thread_entry thread_exit memory other)",0 }, \
+    { "read-only",'r',0,0, \
+      "Never write to the target (disables breakpoints; can only read)",0 }
 
 struct argp_option target_argp_opts[] = {
     TARGET_ARGP_CORE_OPTS,
@@ -510,6 +512,8 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
 	ac += 2;
     if (spec->ap_flags & APF_ALL)
 	ac += 2;
+    if (spec->read_only)
+	ac += 1;
 
     ac += backend_argc;
     av = calloc(ac + 1,sizeof(char *));
@@ -673,6 +677,8 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
 
 	++j;
     }
+    if (spec->read_only)
+	av[j++] = strdup("-r");
 
     for (i = 0; i < backend_argc; ++i) 
 	av[j++] = backend_argv[i];
@@ -1284,6 +1290,9 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	    }
 	}
 	break;
+    case 'r':
+	spec->read_only = 1;
+	break;
     case TARGET_ARGP_BASE:
 	if (!tstate->base_target_specs) {
 	    verror("program does not support extra base target specs!\n");
@@ -1893,6 +1902,8 @@ struct target *target_create(char *type,struct target_spec *spec) {
 
     retval->ops = ops;
     retval->spec = spec;
+
+    retval->writeable = !spec->read_only;
 
     retval->decoders = g_hash_table_new_full(g_str_hash,g_str_equal,NULL,NULL);
 
@@ -3532,6 +3543,12 @@ ADDR target_addressof_symbol(struct target *target,
 }
 
 int target_store_value(struct target *target,struct value *value) {
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EINVAL;
+	return -1;
+    }
+
     /*
      * If the target backend can read a symbol directly, do it.
      */
@@ -4757,6 +4774,12 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
     struct target_thread *tthread;
     unsigned char *rcc;
 
+    if (!nowrite && !target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EINVAL;
+	return NULL;
+    }
+
     tthread = target_lookup_thread(target,tid);
     if (!tthread) {
 	verror("tid %"PRIiTID" does not exist!\n",tid);
@@ -4855,9 +4878,17 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
     return mmod;
 }
 
-void target_memmod_set_writeable(struct target *target,
-				 struct target_memmod *mmod,int writeable) {
-    mmod->no_write = !writeable;
+int target_memmod_set_writeable(struct target *target,
+				struct target_memmod *mmod,int writeable) {
+    if (writeable && !target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EINVAL;
+	return -1;
+    }
+    else {
+	mmod->no_write = !writeable;
+	return 0;
+    }
 }
 
 struct target_memmod *target_memmod_lookup(struct target *target,tid_t tid,

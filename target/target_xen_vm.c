@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013, 2014 The University of Utah
+ * Copyright (c) 2012, 2013, 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -358,6 +358,7 @@ struct target_ops xen_vm_ops = {
 #define XV_ARGP_CLEAR_MEM_CACHES   0x550003
 #define XV_ARGP_MEMCACHE_MMAP_SIZE 0x550004
 #define XV_ARGP_HIUE               0x550005
+#define XV_ARGP_REPLAYDIR          0x550006
 
 struct argp_option xen_vm_argp_opts[] = {
     /* These options set a flag. */
@@ -382,7 +383,7 @@ struct argp_option xen_vm_argp_opts[] = {
           "Don't use HVM-specific libxc get/set context functions to access"
           "virtual CPU info.",-4 },
     { "configfile",'c',"FILE",0,"The Xen config file.",-4 },
-    { "replaydir",'r',"DIR",0,"The XenTT replay directory.",-4 },
+    { "replaydir",XV_ARGP_REPLAYDIR,"DIR",0,"The XenTT replay directory.",-4 },
     { "no-use-multiplexer",'M',NULL,0,"Do not spawn/attach to the Xen multiplexer server",-4 },
     { "dominfo-timeout",'T',"MICROSECONDS",0,"If libxc gets a \"NULL\" dominfo status, the number of microseconds we should keep retrying",-4 },
     { "hypervisor-ignores-userspace-exceptions",XV_ARGP_HIUE,NULL,0,"If your Xen hypervisor is not a Utah-patched version, make sure to supply this flag!",-4 },
@@ -473,7 +474,7 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	av[j++] = strdup(xspec->config_file);
     }
     if (xspec->replay_dir) {
-	av[j++] = strdup("-r");
+	av[j++] = strdup("--replaydir");
 	av[j++] = strdup(xspec->replay_dir);
     }
     if (xspec->no_use_multiplexer) {
@@ -603,7 +604,7 @@ error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case XV_ARGP_MEMCACHE_MMAP_SIZE:
 	xspec->memcache_mmap_size = atoi(arg);
 	break;
-    case 'r':
+    case XV_ARGP_REPLAYDIR:
 	xspec->replay_dir = strdup(arg);
 	break;
     case 'M':
@@ -869,7 +870,6 @@ struct target *xen_vm_attach(struct target_spec *spec,
     }
 
     target->live = 1;
-    target->writeable = 1;
     target->mmapable = 0; /* XXX: change this once we get mmap API
 			     worked out. */
 
@@ -1538,6 +1538,12 @@ static int __xen_vm_cpu_setcontext(struct target *target,
     vcpu_guest_context_any_t context_any;
 #endif
     int ret;
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
 
     if (!xstate->hvm || xspec->no_hvm_setcontext) {
 #ifdef XC_HAVE_CONTEXT_ANY
@@ -2352,7 +2358,7 @@ static int xen_vm_attach_internal(struct target *target) {
 	xen_vm_attach_evloop(target,target->evloop);
     }
 
-    if (!xspec->no_hw_debug_reg_clear) {
+    if (target->writeable && !xspec->no_hw_debug_reg_clear) {
 	/*
 	 * Null out hardware breakpoints, so that we don't try to infer that
 	 * one was set, only to error because it's a software BP, not a
@@ -2958,6 +2964,12 @@ static int xen_vm_flush_current_thread(struct target *target) {
 	   target_read_reg(target,TID_GLOBAL,target->ipregno),
 	   xstate->id,tid);
 
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     if (__xen_vm_thread_regcache_to_vcpu(target,tthread,tthread->tidctxt,
 					 &tstate->context)) {
 	verror("could not convert regcache to vcpu context(dom %d tid %"PRIiTID")\n",
@@ -3148,6 +3160,12 @@ static int xen_vm_flush_global_thread(struct target *target,
 #endif
 	       current_thread->tid,
 	       xstate->id,gthread->tid);
+    }
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
     }
 
     /*
@@ -4594,6 +4612,12 @@ static unsigned char *xen_vm_read(struct target *target,ADDR addr,
 
 static unsigned long xen_vm_write(struct target *target,ADDR addr,
 				  unsigned long length,unsigned char *buf) {
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return 0;
+    }
+
     return xen_vm_write_pid(target,TID_GLOBAL,addr,length,buf);
 }
 
@@ -4787,6 +4811,12 @@ static unsigned long xen_vm_write_phys(struct target *target,ADDR paddr,
     return 0;
 	}
 
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return 0;
+    }
+
     return xstate->memops->write_phys(target,paddr,length,buf);
 }
 
@@ -4824,6 +4854,12 @@ unsigned long xen_vm_write_pid(struct target *target,tid_t tid,ADDR vaddr,
 
     if (__xen_vm_pgd(target,tid,&pgd)) {
 	verror("could not read pgd for tid %"PRIiTID"!\n",tid);
+	return 0;
+    }
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
 	return 0;
     }
 
@@ -5216,6 +5252,12 @@ static int xen_vm_set_hw_breakpoint(struct target *target,tid_t tid,
 	return -1;
     }
 
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     if (!(tthread = __xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
@@ -5280,6 +5322,12 @@ static int xen_vm_set_hw_watchpoint(struct target *target,tid_t tid,
 
     if (reg < 0 || reg > 3) {
 	errno = EINVAL;
+	return -1;
+    }
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
 	return -1;
     }
 
@@ -5358,6 +5406,12 @@ static int xen_vm_unset_hw_breakpoint(struct target *target,tid_t tid,REG reg) {
 	return -1;
     }
 
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     if (!(tthread = __xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
@@ -5416,6 +5470,12 @@ int xen_vm_disable_hw_breakpoints(struct target *target,tid_t tid) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     if (!(tthread = __xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
@@ -5434,6 +5494,12 @@ int xen_vm_disable_hw_breakpoints(struct target *target,tid_t tid) {
 int xen_vm_enable_hw_breakpoints(struct target *target,tid_t tid) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
 
     if (!(tthread = __xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
@@ -5456,6 +5522,12 @@ int xen_vm_disable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
 
     if (dreg < 0 || dreg > 3) {
 	errno = EINVAL;
+	return -1;
+    }
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
 	return -1;
     }
 
@@ -5506,6 +5578,12 @@ int xen_vm_enable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
 
     if (dreg < 0 || dreg > 3) {
 	errno = EINVAL;
+	return -1;
+    }
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
 	return -1;
     }
 
@@ -5650,6 +5728,12 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
     }
     else {
     nohvm:
+	if (!target->writeable) {
+	    verror("target %s not writeable!\n",target->name);
+	    errno = EROFS;
+	    return -1;
+	}
+
 #if __WORDSIZE == 32
 	xtstate->context.user_regs.eflags |= X86_EF_TF;
 	/*
@@ -5727,6 +5811,12 @@ int xen_vm_singlestep_end(struct target *target,tid_t tid,
     }
     else {
     nohvm:
+	if (!target->writeable) {
+	    verror("target %s not writeable!\n",target->name);
+	    errno = EROFS;
+	    return -1;
+	}
+
 #if __WORDSIZE ==32
 	xtstate->context.user_regs.eflags &= ~X86_EF_TF;
 #else

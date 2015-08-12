@@ -657,7 +657,6 @@ static struct target *gdb_attach(struct target_spec *spec,
     }
 
     target->live = 1;
-    target->writeable = 1;
     target->mmapable = 0; /* XXX: change this once we get mmap API
 			     worked out. */
 
@@ -2217,6 +2216,12 @@ static int gdb_flush_global_thread(struct target *target,
 	return 0;
     }
 
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     ipval = target_read_reg(target,tid,target->ipregno);
     vdebug(3,LA_TARGET,LF_GDB,
 	   "EIP is 0x%"PRIxREGVAL" before flush (%s tid %"PRIiTID")\n",
@@ -2270,6 +2275,12 @@ static int gdb_flush_current_thread(struct target *target) {
 	       "%s tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
 	       target->name,tid,OBJVALID(tthread),OBJDIRTY(tthread));
 	return 0;
+    }
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
     }
 
     vdebug(3,LA_TARGET,LF_GDB,
@@ -2361,6 +2372,12 @@ static int gdb_flush_thread(struct target *target,tid_t tid) {
 	       "%s tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
 	       target->name,tthread->tid,OBJVALID(tthread),OBJDIRTY(tthread));
 	return 0;
+    }
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
     }
 
     SAFE_PERSONALITY_OP(flush_thread,rc,0,target,tid);
@@ -2513,6 +2530,12 @@ static unsigned long gdb_write(struct target *target,ADDR addr,
     if (!xstate->hops || !xstate->hops->write_tid) {
 	errno = EINVAL;
 	return 0;
+    }
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
     }
 
     if (__gdb_pgd(target,TID_GLOBAL,&pgd)) {
@@ -2678,12 +2701,24 @@ static unsigned long gdb_write_phys(struct target *target,ADDR paddr,
 	return 0;
     }
 
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     return xstate->hops->write_phys(target,paddr,length,buf);
 }
 
 static struct target_memmod *gdb_insert_sw_breakpoint(struct target *target,
 						      tid_t tid,ADDR addr) {
     struct target_memmod *mmod;
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
 
     /*
      * Create a fake memmod before gdb changes memory.
@@ -2703,6 +2738,12 @@ static struct target_memmod *gdb_insert_sw_breakpoint(struct target *target,
 
 static int gdb_remove_sw_breakpoint(struct target *target,tid_t tid,
 				    struct target_memmod *mmod) {
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     if (gdb_rsp_remove_break(target,mmod->addr,GDB_RSP_BREAK_SW,1)) {
 	verror("could not remove breakpoint!\n");
 	return -1;
@@ -2714,6 +2755,12 @@ static int gdb_remove_sw_breakpoint(struct target *target,tid_t tid,
 
 static int gdb_enable_sw_breakpoint(struct target *target,tid_t tid,
 				    struct target_memmod *mmod) {
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     if (gdb_rsp_insert_break(target,mmod->addr,GDB_RSP_BREAK_SW,1)) {
 	verror("could not insert breakpoint!\n");
 	return -1;
@@ -2724,6 +2771,12 @@ static int gdb_enable_sw_breakpoint(struct target *target,tid_t tid,
 
 static int gdb_disable_sw_breakpoint(struct target *target,tid_t tid,
 				     struct target_memmod *mmod) {
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     if (gdb_rsp_remove_break(target,mmod->addr,GDB_RSP_BREAK_SW,1)) {
 	verror("could not remove breakpoint!\n");
 	return -1;
@@ -2735,6 +2788,12 @@ static int gdb_disable_sw_breakpoint(struct target *target,tid_t tid,
 int gdb_change_sw_breakpoint(struct target *target,tid_t tid,
 				struct target_memmod *mmod,
 				unsigned char *code,unsigned long code_len) {
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     /*
      * GDB (at least QEMU's stub) is persnickety.  We have to remove the
      * breakpoint first, then change the code, then change it back.
@@ -2751,6 +2810,12 @@ int gdb_change_sw_breakpoint(struct target *target,tid_t tid,
 
 int gdb_unchange_sw_breakpoint(struct target *target,tid_t tid,
 			       struct target_memmod *mmod) {
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     _target_unchange_sw_breakpoint(target,tid,mmod);
 
     target_memmod_set_writeable(target,mmod,0);
@@ -2844,6 +2909,12 @@ static int gdb_singlestep(struct target *target,tid_t tid,int isbp,
     struct gdb_state *gstate = (struct gdb_state *)target->state;
     struct target_thread *tthread;
 
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     CHECKTIDGLOBALORCURRENT(tid);
 
     tthread = __gdb_load_cached_thread(target,tid);
@@ -2857,6 +2928,12 @@ static int gdb_singlestep_end(struct target *target,tid_t tid,
 			      struct target *overlay) {
     struct gdb_state *gstate = (struct gdb_state *)target->state;
     struct target_thread *tthread;
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
 
     CHECKTIDGLOBALORCURRENT(tid);
 

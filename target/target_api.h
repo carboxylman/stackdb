@@ -2214,7 +2214,8 @@ struct target_spec {
 	    spec_was_overlay:1,
 	    start_paused:1,
 	    kill_on_close:1,
-            stay_paused:1;
+	    stay_paused:1,
+	    read_only:1;
 
     active_probe_flags_t ap_flags;
 

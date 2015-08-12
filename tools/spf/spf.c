@@ -440,6 +440,9 @@ void spf_backtrace(struct target *t,tid_t ctid,char *tiddesc,
 	    if (!ospec)
 		break;
 
+	    /* Try read-only, because we don't want any of the extra gunk */
+	    ospec->read_only = 1;
+
 	    if (overlay_debuginfo_prefix)
 		ospec->debugfile_root_prefix = strdup(overlay_debuginfo_prefix);
 

@@ -350,8 +350,8 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
 					   target_memmod_type_t mmt,
 					   unsigned char *code,
 					   unsigned int code_len,int nowrite);
-void target_memmod_set_writeable(struct target *target,
-				 struct target_memmod *mmod,int writeable);
+int target_memmod_set_writeable(struct target *target,
+				struct target_memmod *mmod,int writeable);
 struct target_memmod *target_memmod_lookup(struct target *target,tid_t tid,
 					   ADDR addr,int is_phys);
 unsigned long target_memmod_length(struct target *target,

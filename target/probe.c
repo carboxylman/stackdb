@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -2840,15 +2840,17 @@ result_t probepoint_bp_handler(struct target *target,
     /* Restore ip register if we ran a handler. */
     if (!target->no_adjust_bp_ip && doit) {
 	errno = 0;
-	target_write_reg(target,tid,target->ipregno,ipval);
-	if (errno) {
-	    verror("could not reset EIP after pre handlers!\n");
-	    probepoint->state = PROBE_BP_SET;
-	    probepoint_release(target,tthread,probepoint);
-	    tpc_free(tthread->tpc);
-	    tthread->tpc = (struct thread_probepoint_context *) \
-		array_list_remove(tthread->tpc_stack);
-	    return RESULT_ERROR;
+	if (target_read_reg(target,tid,target->ipregno) != ipval) {
+	    target_write_reg(target,tid,target->ipregno,ipval);
+	    if (errno) {
+		verror("could not reset EIP after pre handlers!\n");
+		probepoint->state = PROBE_BP_SET;
+		probepoint_release(target,tthread,probepoint);
+		tpc_free(tthread->tpc);
+		tthread->tpc = (struct thread_probepoint_context *)	\
+		    array_list_remove(tthread->tpc_stack);
+		return RESULT_ERROR;
+	    }
 	}
         
 	vdebug(9,LA_PROBE,LF_PROBEPOINT,

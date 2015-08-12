@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2014 The University of Utah
+ * Copyright (c) 2013, 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -231,7 +231,6 @@ static int os_process_init(struct target *target) {
     target->threadctl = base->threadctl;
     target->nodisablehwbponss = base->nodisablehwbponss;
     target->live = base->live;
-    target->writeable = base->writeable;
     target->mmapable = base->mmapable;
     target->no_adjust_bp_ip = 0;
     /* NB: only native arch supported!  i.e., no 32-bit emu on 64-bit host. */
@@ -586,6 +585,12 @@ static int os_process_postloadinit(struct target *target) {
 static int os_process_set_active_probing(struct target *target,
 					 active_probe_flags_t flags) {
     active_probe_flags_t baseflags = 0;
+
+    if (!target->writeable && flags != AFP_NONE) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
 
     /*
      * Filter out the default flags according to our personality.
@@ -972,6 +977,12 @@ static unsigned long os_process_write(struct target *target,ADDR addr,
 				      unsigned long length,unsigned char *buf) {
     ADDR paddr = 0;
 
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return 0;
+    }
+
     if (__we_are_current(target))
 	return target_write_addr(target->base,addr,length,buf);
     else {
@@ -1083,6 +1094,12 @@ static int os_process_flush_thread(struct target *target,tid_t tid) {
     if (!OBJDIRTY(tthread))
 	return 0;
 
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     if (!__is_our_tid(target,tid)) {
 	verror("tid %d is not in tgid %d!\n",tid,target->base_tid);
 	errno = ESRCH;
@@ -1164,6 +1181,12 @@ static int os_process_write_reg(struct target *target,tid_t tid,REG reg,
 	return -1;
     }
 
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     tthread = target_lookup_thread(target,tid);
     OBJSDIRTY(tthread);
 
@@ -1184,6 +1207,12 @@ os_process_insert_sw_breakpoint(struct target *target,
 				    tid_t tid,ADDR addr) {
     struct target_thread *tthread;
     ADDR paddr = 0;
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return NULL;
+    }
 
     tthread = target_lookup_thread(target,tid);
     if (!tthread) {
@@ -1211,16 +1240,34 @@ os_process_insert_sw_breakpoint(struct target *target,
 }
 static int os_process_remove_sw_breakpoint(struct target *target,tid_t tid,
 					       struct target_memmod *mmod) {
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     return _target_remove_sw_breakpoint(target->base,tid,mmod);
 }
 
 static int os_process_enable_sw_breakpoint(struct target *target,tid_t tid,
 					       struct target_memmod *mmod) {
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     return target_memmod_set(target->base,tid,mmod);
 }
 
 static int os_process_disable_sw_breakpoint(struct target *target,tid_t tid,
 						struct target_memmod *mmod) {
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     return target_memmod_unset(target->base,tid,mmod);
 }
 
@@ -1228,6 +1275,12 @@ static int os_process_change_sw_breakpoint(struct target *target,tid_t tid,
 					       struct target_memmod *mmod,
 					       unsigned char *code,
 					       unsigned long code_len) {
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     return target_memmod_set_tmp(target->base,tid,mmod,code,code_len);
 }
 
@@ -1243,10 +1296,22 @@ int os_process_notify_sw_breakpoint(struct target *target,ADDR addr,
 
 int os_process_singlestep(struct target *target,tid_t tid,int isbp,
 			  struct target *overlay) {
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     return target_os_thread_singlestep(target->base,tid,isbp,target,0);
 }
 
 int os_process_singlestep_end(struct target *target,tid_t tid,
 			      struct target *overlay) {
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     return target_os_thread_singlestep_end(target->base,tid,target,0);
 }

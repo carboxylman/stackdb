@@ -1341,7 +1341,7 @@ int os_linux_postopened(struct target *target) {
      * will never get called for kernel code; if they do, we may have
      * more work to do here.
      */
-    if (lstate->hypervisor_ignores_userspace_exceptions) {
+    if (target->writeable && lstate->hypervisor_ignores_userspace_exceptions) {
 	ADDR start = 0;
 	struct target_location_ctxt *tlctxt = NULL;
 
@@ -1435,6 +1435,10 @@ int os_linux_postopened(struct target *target) {
 	}
     updone:
 	;
+    }
+    else if (lstate->hypervisor_ignores_userspace_exceptions) {
+	vwarn("target %s not writeable; cannot snag hypervisor-ignored"
+	      " userspace exceptions via emulation!\n",target->name);
     }
 
     v_g_list_foreach(target->spaces,t1,space) {
@@ -1998,6 +2002,7 @@ int os_linux_signal_enqueue(struct target *target,struct target_thread *tthread,
     struct value *v;
     uint32_t sigmask = 1UL << (signo - 1);
     const char *signame;
+    int rc;
 
     /* The only reason this should be NULL is if it's a kernel thread. */
     if (!ltstate->task_struct) {
@@ -2033,11 +2038,17 @@ int os_linux_signal_enqueue(struct target *target,struct target_thread *tthread,
 			  sizeof(uint32_t))) {
 	verror("could not setup pending signal %s (%d) to %d %s!\n",
 	       signame,signo,tthread->tid,tthread->name);
+	value_free(signal_v);
 	return -1;
     }
-    target_store_value(target,signal_pending_signal_v);
+    rc = target_store_value(target,signal_pending_signal_v);
     value_free(signal_pending_signal_v);
     value_free(signal_pending_v);
+    if (rc) {
+	verror("could not store signal pending value; aborting!\n");
+	value_free(signal_v);
+	return -1;
+    }
 
     /* Now, set some junk in the signal struct.  We really should do
      * these three things for each thread in the process, but for now,
@@ -2067,8 +2078,13 @@ int os_linux_signal_enqueue(struct target *target,struct target_thread *tthread,
     v = target_load_value_member(target,NULL,signal_v,"group_stop_count",
 				 NULL,LOAD_FLAG_NONE);
     value_update_i32(v,0);
-    target_store_value(target,v);
+    rc = target_store_value(target,v);
     value_free(v);
+    if (rc) {
+	verror("could not store group stop count!\n");
+	value_free(signal_v);
+	return -1;
+    }
 
     value_free(signal_v);
 
@@ -2080,8 +2096,13 @@ int os_linux_signal_enqueue(struct target *target,struct target_thread *tthread,
 	verror("could not setup pending signal %d!\n",signo);
 	return -1;
     }
-    target_store_value(target,signal_pending_signal_v);
+    rc = target_store_value(target,signal_pending_signal_v);
     value_free(signal_pending_signal_v);
+
+    if (rc) {
+	verror("could not store pending signal!\n");
+	return -1;
+    }
 
 #define LOCAL_TIF_SIGPENDING          (1UL << 2)
 
@@ -6189,6 +6210,12 @@ int os_linux_flush_current_thread(struct target *target) {
 	   target_read_reg(target,TID_GLOBAL,target->ipregno),
 	   target->id,tid);
 
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     /*
      * Flush PCB state -- task_flags, thread_info_flags.
      *
@@ -6461,6 +6488,12 @@ int os_linux_flush_thread(struct target *target,tid_t tid) {
 	       "target %d tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
 	       target->id,tthread->tid,OBJVALID(tthread),OBJDIRTY(tthread));
 	return 0;
+    }
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
     }
 
     /*
@@ -8883,6 +8916,12 @@ int os_linux_set_active_probing(struct target *target,
     int retval = 0;
     struct bsymbol *bs;
 
+    if (!target->writeable && flags != AFP_NONE) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     /*
      * Filter out the default flags according to our personality.
      */
@@ -9247,6 +9286,12 @@ int os_linux_thread_singlestep(struct target *target,tid_t tid,int isbp,
 	&& !force_emulate)
 	return target->ops->singlestep(target,tid,isbp,overlay);
 
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
+
     /*
      * We have to emulate the exception in the userspace part of the
      * target's thread.
@@ -9284,6 +9329,12 @@ int os_linux_thread_singlestep_end(struct target *target,tid_t tid,
     if (!g_hash_table_lookup(target->config,"OS_EMULATE_USERSPACE_EXCEPTIONS")
 	&& !force_emulate)
 	return target->ops->singlestep_end(target,tid,overlay);
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
 
     /*
      * If this is a userspace thread that is in the kernel, and our

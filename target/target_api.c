@@ -445,6 +445,7 @@ struct target_spec *target_build_spec(target_type_t type,target_mode_t mode) {
     tspec->target_mode = mode;
     tspec->style = PROBEPOINT_FASTEST;
     tspec->kill_on_close_sig = SIGKILL;
+    tspec->read_only = 0;
 
     return tspec;
 }
@@ -632,6 +633,12 @@ int target_open(struct target *target) {
 int target_set_active_probing(struct target *target,active_probe_flags_t flags) {
     int rc;
 
+    if (!target->writeable && flags != AFP_NONE) {
+	verror("target not writeable; cannot enable any active probing!\n");
+	errno = EINVAL;
+	return -1;
+    }
+
     if (!target->ops->set_active_probing
 	&& !target->personality_ops
 	&& !target->personality_ops->set_active_probing) {
@@ -726,6 +733,8 @@ tid_t target_lookup_overlay_thread_by_name(struct target *target,char *name) {
 
 struct target_spec *target_build_default_overlay_spec(struct target *target,
 						      tid_t tid) {
+    struct target_spec *retval;
+
     vdebug(16,LA_TARGET,LF_TARGET,
 	   "target(%s) tid %"PRIiTID"\n",target->name,tid);
 
@@ -734,7 +743,15 @@ struct target_spec *target_build_default_overlay_spec(struct target *target,
 	return NULL;
     }
 
-    return target->ops->build_default_overlay_spec(target,tid);
+    retval = target->ops->build_default_overlay_spec(target,tid);
+    if (retval && target->writeable == 0 && retval->read_only == 0) {
+	verror("base target not writeable; cannot enable writeable overlay!\n");
+	errno = EINVAL;
+	target_free_spec(retval);
+	return NULL;
+    }
+    else
+	return retval;
 }
 
 struct target *target_instantiate_overlay(struct target *target,tid_t tid,
@@ -746,6 +763,12 @@ struct target *target_instantiate_overlay(struct target *target,tid_t tid,
     if (!target->ops->instantiate_overlay) {
 	verror("no overlay support in target(%s)!\n",target->name);
 	errno = ENOTSUP;
+	return NULL;
+    }
+
+    if (!target->writeable && !spec->read_only) {
+	verror("base target not writeable; cannot enable writeable overlay!\n");
+	errno = EINVAL;
 	return NULL;
     }
 
@@ -1038,6 +1061,11 @@ unsigned long target_write_addr(struct target *target,ADDR addr,
 				unsigned long length,unsigned char *buf) {
     vdebug(16,LA_TARGET,LF_TARGET,"writing target(%s) at 0x%"PRIxADDR" (%d)\n",
 	   target->name,addr,length);
+    if (!target->writeable) {
+	verror("target not writeable!\n");
+	errno = EINVAL;
+	return 0;
+    }
     return target->ops->write(target,addr,length,buf);
 }
 
@@ -1075,6 +1103,11 @@ unsigned long target_write_physaddr(struct target *target,ADDR paddr,
     vdebug(16,LA_TARGET,LF_TARGET,
 	   "writing target(%s) at phys 0x%"PRIxADDR" (%d)\n",
 	   target->name,paddr,length);
+    if (!target->writeable) {
+	verror("target not writeable!\n");
+	errno = EINVAL;
+	return 0;
+    }
     return target->ops->write_phys(target,paddr,length,buf);
 }
 
@@ -1109,6 +1142,11 @@ int target_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value) {
     vdebug(16,LA_TARGET,LF_TARGET,
 	   "writing target(%s:%"PRIiTID") reg %d 0x%"PRIxREGVAL")\n",
 	   target->name,tid,reg,value);
+    if (!target->writeable) {
+	verror("target not writeable!\n");
+	errno = EINVAL;
+	return -1;
+    }
     if (target->ops->writereg)
 	return target->ops->writereg(target,tid,reg,value);
     else
@@ -1129,6 +1167,11 @@ int target_write_reg_ctxt(struct target *target,tid_t tid,thread_ctxt_t tidctxt,
     vdebug(16,LA_TARGET,LF_TARGET,
 	   "writing target(%s:%"PRIiTID") reg %d tidctxt %d 0x%"PRIxREGVAL")\n",
 	   target->name,tid,reg,tidctxt,value);
+    if (!target->writeable) {
+	verror("target not writeable!\n");
+	errno = EINVAL;
+	return -1;
+    }
     return target->ops->writereg_tidctxt(target,tid,tidctxt,reg,value);
 }
 
@@ -1144,6 +1187,12 @@ REGVAL target_read_creg(struct target *target,tid_t tid,common_reg_t reg) {
 int target_write_creg(struct target *target,tid_t tid,common_reg_t reg,
 		      REGVAL value) {
     REG treg;
+
+    if (!target->writeable) {
+	verror("target not writeable!\n");
+	errno = EINVAL;
+	return -1;
+    }
 
     if (target_cregno(target,reg,&treg))
 	return 0;

@@ -710,7 +710,6 @@ static struct target *linux_userproc_attach(struct target_spec *spec,
 	return NULL;
 
     target->live = 1;
-    target->writeable = 1;
 
     /*
      * Save off the binfile, and some stuff from it.
@@ -837,7 +836,6 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
 	goto errout;
 
     target->live = 1;
-    target->writeable = 1;
 
     /*
      * Save off the binfile, and some stuff from it.
@@ -1974,6 +1972,12 @@ static int linux_userproc_flush_thread(struct target *target,tid_t tid) {
 
     if (!OBJVALID(tthread) || !OBJDIRTY(tthread))
 	return 0;
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
 
     errno = 0;
     if (ptrace(PTRACE_SETREGS,tthread->tid,NULL,&(tstate->regs)) == -1) {
@@ -4065,6 +4069,12 @@ unsigned long linux_userproc_write(struct target *target,
 	vdebugc(5,LA_TARGET,LF_LUP,"%02hhx ",buf[j]);
     vdebugc(5,LA_TARGET,LF_LUP,"\n");
 
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return 0;
+    }
+
     target_find_memory_real(target,addr,NULL,NULL,&range);
 
     /* Don't bother checking if process is stopped!  We can't send it a
@@ -4270,6 +4280,12 @@ int linux_userproc_write_reg(struct target *target,tid_t tid,REG reg,
     int ptrace_idx;
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;
+
+    if (!target->writeable) {
+	verror("target %s not writeable!\n",target->name);
+	errno = EROFS;
+	return -1;
+    }
 
     tthread = linux_userproc_load_thread(target,tid,0);
     if (!tthread) {
