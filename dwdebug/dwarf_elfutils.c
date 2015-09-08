@@ -1,5 +1,5 @@
 /* Print information from ELF file in human-readable form.
-   Copyright (C) 1999-2014 Red Hat, Inc.
+   Copyright (C) 1999-2015 Red Hat, Inc.
    Copyright (c) 2011, 2012, 2013 The University of Utah
 
    ELF utility functions, adapted from Red Hat elfutils.
@@ -764,7 +764,9 @@ dwarf_tag_string (unsigned int tag)
       [DW_TAG_unspecified_type] = "unspecified_type",
       [DW_TAG_partial_unit] = "partial_unit",
       [DW_TAG_imported_unit] = "imported_unit",
+#if _INT_ELFUTILS_VERSION < 160
       [DW_TAG_mutable_type] = "mutable_type",
+#endif
       [DW_TAG_condition] = "condition",
       [DW_TAG_shared_type] = "shared_type",
 #if _INT_ELFUTILS_VERSION > 141
@@ -773,6 +775,9 @@ dwarf_tag_string (unsigned int tag)
 #endif
 #if _INT_ELFUTILS_VERSION > 147
       [DW_TAG_template_alias] = "template_alias",
+#endif
+#if _INT_ELFUTILS_VERSION > 161
+      [DW_TAG_atomic_type] = "atomic_type",
 #endif
     };
   const unsigned int nknown_tags = (sizeof (known_tags)
