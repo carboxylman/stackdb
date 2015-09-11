@@ -60,6 +60,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <string.h>
+#include "config.h"
 #include "log.h"
 #include "dwdebug.h"
 #include "target_api.h"
