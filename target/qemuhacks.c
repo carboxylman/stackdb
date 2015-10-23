@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 The University of Utah
+ * Copyright (c) 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -62,11 +62,11 @@ static void cleanup(void) {
  */
 static void sig_override_handler(int signal,siginfo_t *info,void *x) {
     cleanup();
-    if (signal == SIGINT)
+    if (signal == SIGINT && qemu_sigint_handler)
 	qemu_sigint_handler(signal,info,x);
-    if (signal == SIGTERM)
+    if (signal == SIGTERM && qemu_sigterm_handler)
 	qemu_sigterm_handler(signal,info,x);
-    if (signal == SIGHUP)
+    if (signal == SIGHUP && qemu_sighup_handler)
 	qemu_sighup_handler(signal,info,x);;
 }
 
@@ -107,15 +107,17 @@ int sigaction(int signum,const struct sigaction *act,struct sigaction *oldact) {
     if (signum == SIGINT || signum == SIGTERM || signum == SIGHUP) {
 	memset(&ouract,0,sizeof(ouract));
 	ouract.sa_sigaction = sig_override_handler;
-	ouract.sa_mask = act->sa_mask;
-	ouract.sa_flags = act->sa_flags;
+	if (act) {
+	    ouract.sa_mask = act->sa_mask;
+	    ouract.sa_flags = act->sa_flags;
 
-	if (signum == SIGINT)
-	    qemu_sigint_handler = act->sa_sigaction;
-	else if (signum == SIGTERM)
-	    qemu_sigterm_handler = act->sa_sigaction;
-	else if (signum == SIGHUP)
-	    qemu_sighup_handler = act->sa_sigaction;
+	    if (signum == SIGINT)
+		qemu_sigint_handler = act->sa_sigaction;
+	    else if (signum == SIGTERM)
+		qemu_sigterm_handler = act->sa_sigaction;
+	    else if (signum == SIGHUP)
+		qemu_sighup_handler = act->sa_sigaction;
+	}
 
 	return real_sigaction(signum,&ouract,oldact);
     }
