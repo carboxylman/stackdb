@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 The University of Utah
+ * Copyright (c) 2014, 2015 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -114,6 +114,9 @@ struct os_linux_state {
     const char *thread_sp0_member_name;
     const char *thread_sp_member_name;
     const char *thread_ip_member_name;
+
+    /* Some newer kernel thread_info structs have saved_preempt_count. */
+    const char *thread_info_preempt_count_name;
 
     /*
      * On x86_64 systems, figuring out the saved IP for a sleeping
@@ -318,6 +321,7 @@ char *os_linux_file_get_path(struct target *target,struct value *task,
 #define SOFTIRQ_MASK   0x0000ff00
 #define HARDIRQ_MASK   0x0fff0000
 #define PREEMPT_ACTIVE 0x10000000
+#define PREEMPT_NEED_RESCHED 0x80000000
 #define PREEMPT_BITSHIFT 0
 #define SOFTIRQ_BITSHIFT 8
 #define HARDIRQ_BITSHIFT 16

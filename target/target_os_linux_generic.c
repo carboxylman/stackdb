@@ -792,6 +792,20 @@ int os_linux_postloadinit(struct target *target) {
 		errno = 0;
 	    }
 	}
+	else if ((tmpbs = target_lookup_sym(target,"per_cpu__preempt_count",NULL,
+				       NULL,SYMBOL_TYPE_FLAG_VAR))) {
+	    errno = 0;
+	    lstate->irq_count_percpu_offset =
+		target_addressof_symbol(target,tlctxt,tmpbs,
+					LOAD_FLAG_NONE,NULL);
+	    bsymbol_release(tmpbs);
+	    if (errno) {
+		vwarn("could not load per_cpu__preempt_count percpu offset;"
+		       " cannot continue!\n");
+		lstate->irq_count_percpu_offset = -1;
+		errno = 0;
+	    }
+	}
 	else if ((tmpbs = target_lookup_sym(target,"struct x8664_pda",NULL,NULL,
 					    SYMBOL_TYPE_FLAG_TYPE))) {
 	    errno = 0;
@@ -1035,6 +1049,17 @@ int os_linux_postloadinit(struct target *target) {
     lstate->thread_info_type = bsymbol_get_symbol(thread_info_type);
     RHOLD(lstate->thread_info_type,target);
     bsymbol_release(thread_info_type);
+
+    /*
+     * Find out if thread_info has preempt_count or saved_preempt_count.
+     */
+    if ((tmpls = symbol_lookup_sym(lstate->thread_info_type,"saved_preempt_count",
+				   NULL))) {
+	lsymbol_release(tmpls);
+	lstate->thread_info_preempt_count_name = "saved_preempt_count";
+    }
+    else
+	lstate->thread_info_preempt_count_name = "preempt_count";
 
     if (!(lstate->module_type = target_lookup_sym(target,"struct module",
 						  NULL,NULL,
@@ -4408,7 +4433,7 @@ struct target_thread *os_linux_load_current_thread(struct target *target,
     }
 
     v = target_load_value_member(target,tlctxt,
-				 threadinfov,"preempt_count",NULL,
+				 threadinfov,lstate->thread_info_preempt_count_name,NULL,
 				 LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load thread_info->preempt_count (to check IRQ status)!\n");
@@ -5389,7 +5414,7 @@ struct target_thread *os_linux_load_thread_from_value(struct target *target,
     v = NULL;
 
     v = target_load_value_member(target,tlctxt,
-				 threadinfov,"preempt_count",NULL,LOAD_FLAG_NONE);
+				 threadinfov,lstate->thread_info_preempt_count_name,NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load thread_info.preempt_count in task %"PRIiTID";"
 	       " BUG?\n",tid);
