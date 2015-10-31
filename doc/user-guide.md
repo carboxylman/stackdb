@@ -362,6 +362,9 @@ Here's a quick overview of the options available:
 
     -C, --clear-libvmi-caches-each-rw
                              Clear libvmi caches on each memory-read/write.
+        --hypervisor-ignores-userspace-exceptions
+                             If your Xen hypervisor is not a Utah-patched
+                             version, make sure to supply this flag!
     -H, --no-clear-hw-debug-regs   Don't clear hardware debug registers at target attach.
     -K, --kernel-filename=FILE Override xenstore kernel filepath for guest.
     -m, --domain=DOMAIN        The Xen domain ID or name.
@@ -393,6 +396,39 @@ Stackdb programs attached to Xen VMs when there is a Xen debug
 exception.  If you only need to attach to a single VM at one time, and
 don't want to incur any of the tiny, minimal overhead of the
 demultiplexing service, you can disable it via the `-M` option.
+
+Another important option affects your ability to stack other drivers
+atop the Xen driver (i.e., to stack the os-process userspace-process
+driver atop the Xen driver, to debug processes in VMs from outside the
+VM).  This option is `--hypervisor-ignores-userspace-exceptions`.  It's
+not important if you're not stacking, though; you can attach to Xen VMs
+and debug the kernel without worrying about it.  Here's a brief summary
+(the technical details are involved).  Basically, the Xen hypervisor
+catches kernel-mode debug exceptions (int 3 and debug traps), and, if
+there's a debugger attached via the debugger VIRQ, it notifies the
+debugger and pauses the VM so the debugger can handle it.  However, the
+hypervisor does not forward userspace debug exceptions to the debugger;
+it naturally expects that there's a userspace debugger running inside
+the VM that will handle the exceptions in cooperation with the guest
+kernel.  Initially when developing stackdb, we patched the hypervisor to
+also forward userspace debug exceptions, but that doesn't easily let us
+support distro-packaged hypervisors.  So we observed that since the
+hypervisor passes userspace exceptions back to the guest kernel (or the
+guest kernel gets them directly via HVM IDT), we could just install
+breakpoints on the guest kernel debug handlers, and emulate how they
+would handle a userspace exception (but we do the work if the userspace
+exception was a VMI-triggered exception) -- and then immediately return
+from the handler in the kernel isntead of single-stepping the first
+instruction of the interrupt handler.  So, VMI actually handles the
+userspace exception, but the kernel thinks it did.  This works fine for
+HVM, but it is more complicated for PV domains, and it doesn't currently
+work.  The hypervisor has to explicitly support this style of
+exceptions, and notice in which ring the exception occurred; this
+currently doesn't appear to be what the code does (and it's not what we
+observe at all).  So this feature is not currently supported for PV
+domains, which means that if you want to use the os-process driver atop
+the Xen driver on a PV domain, you'll need Utah's simple Xen patch, and
+then rebuild your Xen packages.
 
 The other options mainly cover special cases and problems we've observed
 in Xen.
@@ -688,6 +724,10 @@ needed that yet.)
 There is no special configuration necessary to use this driver --- but
 you must ensure that the underlying base driver is configured with an OS
 personality!  This currently happens automatically, and is assumed.
+
+(*However*, if you're trying to use the OS Process driver atop a Xen PV
+domain, you'll need to read the Xen driver section, particularly the
+part about the `--hypervisor-ignores-userspace-exceptions` option!
 
 ### PHP Driver ###
 
