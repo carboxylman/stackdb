@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   
-  Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
+  Copyright (c) 2011, 2012, 2013, 2014, 2015 The University of Utah
   
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
@@ -47,6 +47,7 @@
   </xs:simpleType>
   <xs:complexType name="TargetSpecT">
     <xs:sequence>
+      <xs:element minOccurs="0" ref="vmi1:targetId"/>
       <xs:element ref="vmi1:mode"/>
       <xs:element ref="vmi1:threadBPMode"/>
       <xs:element ref="vmi1:startPaused"/>
@@ -67,6 +68,7 @@
     </xs:sequence>
     <xs:attribute name="type" use="required" type="vmi1:TargetTypeT"/>
   </xs:complexType>
+  <xs:element name="targetId" type="vmi1:TargetIdT"/>
   <xs:element name="mode" type="vmi1:TargetModeT"/>
   <xs:element name="threadBPMode" type="vmi1:ThreadBPModeT"/>
   <xs:element name="startPaused" type="xs:boolean"/>
