@@ -1,5 +1,6 @@
 testing:
   script:
+  - autoconf
   - mkdir build install
   - cd build
   - ../configure --prefix=`readlink -f ../install`
