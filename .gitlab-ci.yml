@@ -1,0 +1,9 @@
+testing:
+  script:
+  - mkdir build install
+  - cd build
+  - ../configure --prefix=`readlink -f ../install`
+  - make
+  - make install
+  only:
+  - master
