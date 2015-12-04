@@ -23,7 +23,7 @@ TOP_SRCDIR	= @top_srcdir@
 SUBDIR		= tools
 OBJDIR		= @top_builddir@
 
-SUBDIRS = spf syscall nullpage
+SUBDIRS = spf syscall nullpage pingpongmonitor
 
 include $(OBJDIR)/Makeconf
 

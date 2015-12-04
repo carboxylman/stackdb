@@ -31,7 +31,7 @@ PROGRAMS = debuginfo_test.py target_test.py target_test_with_listener.py \
 	target_listener_server_test.py target_listener_client_test.py \
 	target_test_with_listener_xen.py target_test_external_listener.py \
 	analysis_test.py analysis_spf_xen.py analysis_cfi_xen.py \
-	analysis_rop_xen.py
+	analysis_rop_xen.py analysis_ppm_xen.py
 
 all:	$(LIBRARIES) $(PROGRAMS) all-subdirs
 

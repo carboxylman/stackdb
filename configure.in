@@ -914,6 +914,7 @@ outfiles="$outfiles Makeconf Makefile include/Makefile lib/Makefile \
           xml/client/java/Makefile \
 	  tools/Makefile tools/rop/Makefile tools/cfi/Makefile tools/nullpage/Makefile \
 	  tools/bts/Makefile tools/syscall/Makefile tools/spf/Makefile \
+      tools/pingpongmonitor/Makefile \
 	  asm/moti/Makefile \
           xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile \
           vmfs/Makefile vmps/Makefile vmtap/Makefile xentt/Makefile \
