@@ -1,0 +1,135 @@
+#!/usr/bin/env python
+##
+## Copyright (c) 2013 The University of Utah
+##
+## This program is free software; you can redistribute it and/or
+## modify it under the terms of the GNU General Public License as
+## published by the Free Software Foundation; either version 2 of
+## the License, or (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+##
+
+import logging
+import sys
+import os
+import os.path
+from suds.client import Client
+from pysimplesoap.server import SoapDispatcher,SOAPHandler
+from BaseHTTPServer import HTTPServer
+import binascii
+
+logging.basicConfig(level=logging.INFO)
+logging.getLogger('suds.client').setLevel(logging.DEBUG)
+logging.getLogger('suds.transport').setLevel(logging.DEBUG)
+logging.getLogger('suds.xsd.schema').setLevel(logging.DEBUG)
+logging.getLogger('suds.wsdl').setLevel(logging.DEBUG)
+
+logging.getLogger('pysimplesoap').setLevel(logging.DEBUG)
+logging.getLogger('pysimplesoap.server').setLevel(logging.DEBUG)
+logging.getLogger('pysimplesoap.simplexml').setLevel(logging.DEBUG)
+logging.getLogger('pysimplesoap.transport').setLevel(logging.DEBUG)
+
+objdir = os.path.abspath("@top_builddir@")
+url = 'file://%s/xml/service/analysis.wsdl.test' % (objdir,)
+
+#
+# Setup SOAP client
+#
+client = Client(url,cache=None)
+
+#
+# Start running commands
+#
+
+#names = client.service.ListAnalysisDescNames()
+#print names
+#descs = client.service.ListAnalysisDescs()
+#print descs
+#ttypes = client.service.ListTargetTypes()
+#print ttypes
+
+
+tspec = client.factory.create('TargetSpecT')
+tspec.mode = "live"
+tspec.startPaused = False
+tspec.logStdout = True
+tspec.logStderr = True
+tspec.stdinBytes = None
+
+tspec._type = "xen"
+tspec.defaultProbeStyle = 'sw'
+tspec.backendSpec.targetXenSpec = client.factory.create('TargetXenSpecT')
+tspec.backendSpec.targetXenSpec.domain = "h1"
+tspec.backendSpec.targetXenSpec.kernelFilename = \
+  "/local/sda4/licai/h1/3.8.0-34-generic/boot/vmlinux-3.8.0-34-generic"
+
+
+otspec = client.factory.create('TargetSpecT')
+otspec.mode = "live"
+otspec.targetId = "100"
+otspec.startPaused = False
+otspec.logStdout = True
+otspec.logStderr = True
+otspec.stdinBytes = None
+otspec.debugfileRootPrefix = '/local/sda4/licai/h1/3.8.0-34-generic/'
+
+otspec._type = "osProcess"
+otspec.defaultProbeStyle = 'sw'
+otspec.backendSpec.targetOsProcessSpec = None #client.factory.create('TargetXenProcessSpecT')
+
+aspec = client.factory.create('AnalysisSpecT')
+aspec.name = "PPM"
+aspec.stdinBytes = None
+aspec.logStderr = True
+aspec.logStdout = True
+aspec.killOnClose = False
+aspec.killOnCloseSignal = None
+aspec.reportStdoutIntermediateResults = True
+aspec.reportStderrIntermediateResults = True
+aspec.autoparseSimpleResults = True
+
+inputParam = client.factory.create('NameValueT')
+inputParam.nvName = 'hypervisor-ignores-userspace-exceptions'
+inputParam.nvValue = ''
+aspec.inputParams.nameValue.append(inputParam)
+
+inputParam = client.factory.create('NameValueT')
+inputParam.nvName = 'd' 
+inputParam.nvValue = '20'
+aspec.inputParams.nameValue.append(inputParam)
+
+inputParam = client.factory.create('NameValueT')
+inputParam.nvName = 'w' 
+inputParam.nvValue = '20'
+aspec.inputParams.nameValue.append(inputParam)
+
+inputParam = client.factory.create('NameValueT')
+inputParam.nvName = 'l' 
+inputParam.nvValue = 'T_ALL,T_XV,T_GDB,T_OS,T_OSLINUX'
+aspec.inputParams.nameValue.append(inputParam)
+
+inputParam = client.factory.create('NameValueT')
+inputParam.nvName = 'cli_in'
+inputParam.nvValue = '100:rserver.c:84:s_pingpong'
+aspec.inputParams.nameValue.append(inputParam)
+
+# Here I assume the java client is running on the same machine as the python
+# client. If it is not, you need to modify the listener.hostname the ip and
+# port number that the java client is listening on
+listener = client.factory.create('ListenerT')
+listener.hostname = 'localhost'
+listener.port = 3952
+
+# In this example, I just show the way to monitor the server end of the 
+# pingpong programs. For Client side, you need to change the cli_in value
+# and the program name to be monitor as lclient
+retval = client.service.InstantiateOverlayAnalysisByThreadName(aspec,tspec,otspec,'rserver',listener)
+print retval
