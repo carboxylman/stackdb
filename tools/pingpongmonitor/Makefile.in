@@ -1,0 +1,110 @@
+## -*- mode: Makefile -*-
+##
+## Copyright (c) 2013, 2014 The University of Utah
+##
+## This program is free software; you can redistribute it and/or
+## modify it under the terms of the GNU General Public License as
+## published by the Free Software Foundation; either version 2 of
+## the License, or (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+
+###############################################################################
+
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= tools/pingpongmonitor
+OBJDIR		= @top_builddir@
+
+SUBDIRS = 
+
+include $(OBJDIR)/Makeconf
+
+CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
+	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug 
+CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
+ifeq ($(ENABLE_XENACCESS),"1")
+	CFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS)
+	CFLAGS += -I$(XENACCESS_INC)
+endif
+ifeq ($(ENABLE_LIBVMI),"1")
+	CFLAGS += -D ENABLE_LIBVMI
+	CFLAGS += -I$(LIBVMI)/include/libvmi
+endif
+ifeq ($(ENABLE_DISTORM),"1")
+	CFLAGS += -D ENABLE_DISTORM -D SUPPORT_64BIT_OFFSET 
+	CFLAGS += -I$(DISTORM)/include
+endif
+
+LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS)
+ifeq ($(ENABLE_XENACCESS),"1")
+	LDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)
+endif
+ifeq ($(ENABLE_LIBVMI),"1")
+	LDFLAGS += -lxenctrl -lxenstore -lc -L$(LIBVMI)/lib -lvmi
+endif
+ifeq ($(ENABLE_DISTORM),"1")
+	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
+endif
+
+OBJECTS := pingpongmonitor.lo
+DEPENDENCIES := $(OBJECTS:%.lo=%.d)
+
+PROGRAMS := pingpongmonitor
+
+STATICLIBS := $(OBJDIR)/target/libtarget.la $(OBJDIR)/dwdebug/libdwdebug.la \
+	$(OBJDIR)/lib/libvmilib.la
+ifeq ($(ENABLE_XENACCESS),"1")
+	STATICLIBS += $(XENACCESS_A)
+endif
+ifeq ($(ENABLE_LIBVMI),"1")
+	STATICLIBS += $(LIBVMI)/lib/libvmi.a
+endif
+
+INST_INC = 
+INST_LIB = $(LIBRARIES)
+INST_BIN = $(PROGRAMS)
+
+# Get libtool to shut up when compiling.
+RM=rm -f
+
+all:	$(LIBRARIES) $(PROGRAMS) all-subdirs
+
+include $(TOP_SRCDIR)/Makerules
+
+# Don't fail on missing .d files; there won't be any on the first run.
+-include $(DEPENDENCIES)
+
+pingpongmonitor: pingpongmonitor.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ \
+		$(CFLAGS) pingpongmonitor.lo $(STATICLIBS) $(LDFLAGS)
+
+install: def-install install-subdirs
+	mkdir -p $(INSTALL_LIBEXECDIR)/analysis/PPM
+	$(INSTALL) pingpongmonitor $(INSTALL_LIBEXECDIR)/analysis/PPM
+	$(INSTALL) -m 644 $(SRCDIR)/description.xml \
+		$(INSTALL_LIBEXECDIR)/analysis/PPM
+
+clean: clean-subdirs
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(PROGRAMS)
+	$(RM) -rf .libs
+	$(RM) -f $(DEPENDENCIES)
+
+distclean: distclean-subdirs
+
+# How to recursively descend into subdirectories to make general
+# targets such as `all'.
+%.MAKE:
+	@$(MAKE) -C $(dir $@) $(basename $(notdir $@))
+%-subdirs: $(addsuffix /%.MAKE,$(SUBDIRS)) ;
+
+.PHONY:	$(SUBDIRS)
+
+.SECONDARY:
