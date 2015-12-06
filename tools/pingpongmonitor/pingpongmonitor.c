@@ -34,7 +34,6 @@
 #include "target_api.h"
 #include "target.h"
 #include "probe_api.h"
-#include "target_xen_vm.h"
 #include "target_os_process.h"
 
 /**
