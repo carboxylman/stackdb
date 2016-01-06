@@ -427,7 +427,7 @@ void extract_args(int argc, char **argv, struct tgt_sym *task2sym) {
         fprintf(stderr,"sym_name = %s\n", task2sym[i].sym_name);
     }
     for (i = 0; i < argc; i++) {
-        fprintf(stderr,"the tgtid == %d file_name == %s, line == %d, 
+        fprintf(stderr,"the tgtid == %d file_name == %s, line == %d, \
                 sym_name == %s \n",
                task2sym[i].tgtid, task2sym[i].file_name, task2sym[i].line,
                task2sym[i].sym_name);
