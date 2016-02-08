@@ -2297,11 +2297,13 @@ struct bsymbol *target_lookup_sym_line(struct target *target,
 
  out:
     taddr = memregion_relocate(region,taddr,NULL);
-    if (errno) {
+    if (taddr == 0 && errno) {
 	verror("could not relocate obj addr 0x%"PRIxADDR"!\n",taddr);
 	lsymbol_release(lsymbol);
 	return NULL;
     }
+    else if (errno)
+        errno = 0;
     bsymbol = bsymbol_create(lsymbol,region);
     /* Take a ref to bsymbol on the user's behalf, since this is
      * a lookup function.
