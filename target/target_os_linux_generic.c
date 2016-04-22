@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2014, 2015 The University of Utah
+ * Copyright (c) 2013, 2014, 2015, 2016 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -8184,6 +8184,7 @@ static struct addrspace *os_linux_space_load(struct target *target,
     struct target_location_ctxt *tlctxt;
     struct target_event *event;
     char nbuf[32];
+    ADDR vm_mm_addr = 0;
 
     lstate = (struct os_linux_state *)target->personality_state;
     xtstate = \
@@ -8363,6 +8364,8 @@ static struct addrspace *os_linux_space_load(struct target *target,
 		&file_addr,NULL,err_vmiload);
 	    VLV(target,tlctxt,vma,"vm_next",LOAD_FLAG_NONE,
 		&vma_next_addr,NULL,err_vmiload);
+	    VLV(target,tlctxt,vma,"vm_mm",LOAD_FLAG_NONE,
+		&vm_mm_addr,NULL,err_vmiload);
 
 	    /* Figure out the region type. */
 	    rtype = REGION_TYPE_ANON;
@@ -8405,8 +8408,9 @@ static struct addrspace *os_linux_space_load(struct target *target,
 		    else if (start <= olmm->mm_start_stack
 			     && end >= olmm->mm_start_stack)
 			rtype = REGION_TYPE_STACK;
-		    else
+		    else if (vm_mm_addr == 0)
 			rtype = REGION_TYPE_VDSO;
+		    /* else, stick with our REGION_TYPE_ANON default. */
 		}
 		else {
 		    /*
