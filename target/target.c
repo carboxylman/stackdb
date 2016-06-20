@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013, 2014, 2015 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014, 2015, 2016 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -5477,6 +5477,8 @@ int target_location_ctxt_unwind(struct target_location_ctxt *tlctxt) {
     return 0;
 }
 
+#define TARGET_UNW_CONSECUTIVE_IPADDR_LIMIT 8
+
 int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
 			   target_unwind_style_t fstyle,
 			   char *frame_sep,char *ksep) {
@@ -5488,7 +5490,7 @@ int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
     int tmpsiz;
     int retval;
     REG ipreg;
-    REGVAL ipval;
+    REGVAL ipval,last_ipval;
     char *srcfile = NULL;
     int srcline;
     char *name;
@@ -5501,6 +5503,7 @@ int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
     GSList *args;
     GSList *gsltmp;
     struct symbol *argsym;
+    int consecutive_ipvals = 0;
 
     if (!buf) {
 	errno = EINVAL;
@@ -5528,8 +5531,21 @@ int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
     while (1) {
 	tlctxtf = target_location_ctxt_current_frame(tlctxt);
 
+	last_ipval = ipval;
 	ipval = 0;
 	target_location_ctxt_read_reg(tlctxt,ipreg,&ipval);
+
+	if (j > 0 && ipval == last_ipval)
+	    ++consecutive_ipvals;
+	else if (ipval != last_ipval)
+	    consecutive_ipvals = 0;
+
+	if (consecutive_ipvals > TARGET_UNW_CONSECUTIVE_IPADDR_LIMIT) {
+	    vwarnopt(2,LA_TARGET,LF_TARGET,
+		     "ipval 0x"PRIxADDR" same as previous frame; aborting!\n",
+		     ipval);
+	    goto err;
+	}
 
 	srcline = 0;
 	srcfile = NULL;
