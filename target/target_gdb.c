@@ -1526,11 +1526,21 @@ static int gdb_pause(struct target *target,int nowait) {
     target_set_status(target,TSTATUS_PAUSED);
 
     gstate->rsp_status_valid = 0;
+
+    /*
+     * NB: QEMU's gdb stub removes all breakpoints on '?', so we have to
+     * only call this on target attach!  We have to trust our status as
+     * TARGET_PAUSED when we call gdb_pause(), if it succeeds.  This
+     * must also be the gdb client's default behavior, although I don't
+     * think I saw this in the protocol docs.
+     */
+    /*
     status = gdb_rsp_load_status(target);
     if (status == TSTATUS_UNKNOWN || status == TSTATUS_ERROR)
 	vwarn("could not reload GDB stub status target %s after pause!\n",
 	      target->name);
     else 
+    */
 	gstate->rsp_status_valid = 1;
 
     /*
