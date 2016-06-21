@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2014, 2015 The University of Utah
+ * Copyright (c) 2013, 2014, 2015, 2016 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -948,7 +948,8 @@ static int __we_are_current(struct target *target) {
 
 static unsigned char *os_process_read(struct target *target,ADDR addr,
 				      unsigned long length,unsigned char *buf) {
-    ADDR paddr = 0;
+    ADDR paddr = 0,raddr,offset;
+    unsigned long clen,tlen;
 
     /*
      * If we are the current thread in the base target, this is easy --
@@ -962,20 +963,44 @@ static unsigned char *os_process_read(struct target *target,ADDR addr,
     if (__we_are_current(target))
 	return target_read_addr(target->base,addr,length,buf);
     else {
-	/* Resolve the phys page. */
-	if (target_addr_v2p(target->base,target->base_tid,addr,&paddr)) {
-	    verror("could not translate vaddr 0x%"PRIxADDR" in tid %"PRIiTID"!\n",
-		   addr,target->base_tid);
-	    return NULL;
+	/*
+	 * Resolve the phys page.
+	 *
+	 * We do not know the v2p mapping, so we must translate each
+	 * virt page the user wishes to read into a physical page, and
+	 * read whatever chunks they want.  Sigh.
+	 */
+	clen = 0;
+	raddr = addr;
+	while (clen < length) {
+	    if (target_addr_v2p(target->base,target->base_tid,raddr,&paddr)) {
+		verror("could not translate vaddr 0x%"PRIxADDR
+		       " in tid %"PRIiTID"!\n",
+		       raddr,target->base_tid);
+		return NULL;
+	    }
+	    offset = raddr & (PAGE_SIZE - 1);
+	    tlen = PAGE_SIZE - offset;
+	    tlen = (tlen < (length - clen)) ? tlen : (length - clen);
+	    if (!target_read_physaddr(target->base,paddr + offset,
+				      tlen,buf + clen)) {
+		verror("could not read paddr %"PRIxADDR" for vaddr %"PRIxADDR
+		       " len %ld in tid %"PRIiTID"!\n",
+		       paddr,raddr,tlen,target->base_tid);
+		return NULL;
+	    }
+	    clen += tlen;
 	}
 
-	return target_read_physaddr(target->base,paddr,length,buf);
+	return buf;
     }
 }
 
 static unsigned long os_process_write(struct target *target,ADDR addr,
 				      unsigned long length,unsigned char *buf) {
-    ADDR paddr = 0;
+    ADDR paddr = 0,raddr,offset;
+    unsigned long clen,tlen;
+    unsigned char byte;
 
     if (!target->writeable) {
 	verror("target %s not writeable!\n",target->name);
@@ -986,14 +1011,66 @@ static unsigned long os_process_write(struct target *target,ADDR addr,
     if (__we_are_current(target))
 	return target_write_addr(target->base,addr,length,buf);
     else {
-	/* Resolve the phys page. */
-	if (target_addr_v2p(target->base,target->base_tid,addr,&paddr)) {
-	    verror("could not translate vaddr 0x%"PRIxADDR" in tid %"PRIiTID"!\n",
-		   addr,target->base_tid);
-	    return 0;
+	/*
+	 * Resolve the phys page.
+	 *
+	 * We do not know the v2p mapping, so we must translate each
+	 * virt page the user wishes to read into a physical page, and
+	 * read whatever chunks they want.  Sigh.
+	 *
+	 * In an effort to ensure safety, we assume that if we can
+	 * resolve all the v2p mappings and read a byte from each page,
+	 * that the page is present.  So we actually do all those checks
+	 * before writing anything.  These checks of course are racy if
+	 * the VM is not paused, but right now it's the best we can do.
+	 * The only other solution would be to hack the hypervisor page
+	 * protection bits, which would be super-heavyweight.  And we're
+	 * not going to do that anytime soon!
+	 */
+	clen = 0;
+	raddr = addr;
+	while (clen < length) {
+	    if (target_addr_v2p(target->base,target->base_tid,raddr,&paddr)) {
+		verror("could not translate vaddr 0x%"PRIxADDR
+		       " in tid %"PRIiTID"!\n",
+		       raddr,target->base_tid);
+		return 0;
+	    }
+	    offset = raddr & (PAGE_SIZE - 1);
+	    tlen = PAGE_SIZE - offset;
+	    tlen = (tlen < (length - clen)) ? tlen : (length - clen);
+	    if (!target_read_physaddr(target->base,paddr + offset,1,&byte)) {
+		verror("could not test-read paddr %"PRIxADDR" for vaddr %"PRIxADDR
+		       " len %ld in tid %"PRIiTID"!\n",
+		       paddr,raddr,1L,target->base_tid);
+		return 0;
+	    }
+	    clen += tlen;
 	}
 
-	return target_write_physaddr(target->base,paddr,length,buf);
+	clen = 0;
+	raddr = addr;
+	while (clen < length) {
+	    if (target_addr_v2p(target->base,target->base_tid,raddr,&paddr)) {
+		verror("could not translate vaddr 0x%"PRIxADDR
+		       " in tid %"PRIiTID"!\n",
+		       raddr,target->base_tid);
+		return 0;
+	    }
+	    offset = raddr & (PAGE_SIZE - 1);
+	    tlen = PAGE_SIZE - offset;
+	    tlen = (tlen < (length - clen)) ? tlen : (length - clen);
+	    if (!target_write_physaddr(target->base,paddr + offset,
+				       tlen,buf + clen)) {
+		verror("could not write paddr %"PRIxADDR" for vaddr %"PRIxADDR
+		       " len %ld in tid %"PRIiTID"!\n",
+		       paddr,raddr,tlen,target->base_tid);
+		return 0;
+	    }
+	    clen += tlen;
+	}
+
+	return clen;
     }
 }
 
