@@ -982,14 +982,14 @@ static unsigned char *os_process_read(struct target *target,ADDR addr,
 	    offset = raddr & (PAGE_SIZE - 1);
 	    tlen = PAGE_SIZE - offset;
 	    tlen = (tlen < (length - clen)) ? tlen : (length - clen);
-	    if (!target_read_physaddr(target->base,paddr + offset,
-				      tlen,buf + clen)) {
+	    if (!target_read_physaddr(target->base,paddr,tlen,buf + clen)) {
 		verror("could not read paddr %"PRIxADDR" for vaddr %"PRIxADDR
 		       " len %ld in tid %"PRIiTID"!\n",
 		       paddr,raddr,tlen,target->base_tid);
 		return NULL;
 	    }
 	    clen += tlen;
+	    raddr += tlen;
 	}
 
 	return buf;
@@ -1039,13 +1039,14 @@ static unsigned long os_process_write(struct target *target,ADDR addr,
 	    offset = raddr & (PAGE_SIZE - 1);
 	    tlen = PAGE_SIZE - offset;
 	    tlen = (tlen < (length - clen)) ? tlen : (length - clen);
-	    if (!target_read_physaddr(target->base,paddr + offset,1,&byte)) {
+	    if (!target_read_physaddr(target->base,paddr,1,&byte)) {
 		verror("could not test-read paddr %"PRIxADDR" for vaddr %"PRIxADDR
 		       " len %ld in tid %"PRIiTID"!\n",
 		       paddr,raddr,1L,target->base_tid);
 		return 0;
 	    }
 	    clen += tlen;
+	    raddr += tlen;
 	}
 
 	clen = 0;
@@ -1060,14 +1061,14 @@ static unsigned long os_process_write(struct target *target,ADDR addr,
 	    offset = raddr & (PAGE_SIZE - 1);
 	    tlen = PAGE_SIZE - offset;
 	    tlen = (tlen < (length - clen)) ? tlen : (length - clen);
-	    if (!target_write_physaddr(target->base,paddr + offset,
-				       tlen,buf + clen)) {
+	    if (!target_write_physaddr(target->base,paddr,tlen,buf + clen)) {
 		verror("could not write paddr %"PRIxADDR" for vaddr %"PRIxADDR
 		       " len %ld in tid %"PRIiTID"!\n",
 		       paddr,raddr,tlen,target->base_tid);
 		return 0;
 	    }
 	    clen += tlen;
+	    raddr += tlen;
 	}
 
 	return clen;
