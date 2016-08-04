@@ -1,14 +1,21 @@
 -*- mode: Text -*-
 
-VMI is Copyright (c) 2011, 2012 The University of Utah.
+Stackdb and its associated tools are Copyright (c) 2011-2016 The University of
+Utah.
 
-VMI is distributed under the GNU General Public License version 2 (GPLv2).
-The text of the GNU GPLv2 is included below.
+Stackdb is free software, distributed under the terms of the GNU General Public
+License (GPL) as published by the Free Software Foundation: either version 2 of
+the License or (at your option) any later version.  The text of the GNU GPLv2
+is included below.
 
-Certain third-party components are included with the VMI software distribution.
-Those components are copyrighted and licensed as described in the files that
-make up those components.  For convenience, the following is a summary of the
-third-party components included with the VMI software.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY, without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+
+Certain third-party components are included with the Stackdb software
+distribution.  Those components are copyrighted and licensed as described in
+the files that make up those components.  For convenience, the following is a
+summary of the third-party components included with the Stackdb software.
 
 Major components:
 
