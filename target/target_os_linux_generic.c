@@ -8356,7 +8356,7 @@ static struct addrspace *os_linux_space_load(struct target *target,
 		&start,NULL,err_vmiload);
 	    VLV(target,tlctxt,vma,"vm_end",LOAD_FLAG_NONE,
 		&end,NULL,err_vmiload);
-	    VLV(target,tlctxt,vma,"vm_page_prot",LOAD_FLAG_NONE,
+	    VLV(target,tlctxt,vma,"vm_flags",LOAD_FLAG_NONE,
 		&prot_flags,NULL,err_vmiload);
 	    VLV(target,tlctxt,vma,"vm_pgoff",LOAD_FLAG_NONE,
 		&offset,NULL,err_vmiload);
@@ -8584,7 +8584,7 @@ static struct addrspace *os_linux_space_load(struct target *target,
 		LOAD_FLAG_NONE,&start,NULL,err_vmiload);
 	    VLV(target,tlctxt,cached_vma->vma,"vm_end",
 		LOAD_FLAG_NONE,&end,NULL,err_vmiload);
-	    VLV(target,tlctxt,cached_vma->vma,"vm_page_prot",
+	    VLV(target,tlctxt,cached_vma->vma,"vm_flags",
 		LOAD_FLAG_NONE,&prot_flags,NULL,err_vmiload);
 	    VLV(target,tlctxt,cached_vma->vma,"vm_pgoff",
 		LOAD_FLAG_NONE,&offset,NULL,err_vmiload);
