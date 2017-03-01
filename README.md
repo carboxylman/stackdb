@@ -66,9 +66,9 @@ full architecture abstraction.
 Obtaining the Software
 ----------------------
 
-You can obtain Stackdb at <http://www.flux.utah.edu/software/stackdb>.
-You can browse a copy of the source repository at
-<https://gitlab.flux.utah.edu/admin/projects/a3/vmi>.
+You can obtain Stackdb at <https://gitlab.flux.utah.edu/a3/vmi>.
+You can browse the source repository at
+<https://gitlab.flux.utah.edu/a3/vmi/tree/master>.
 
 
 Additional Documentation
