@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2014 The University of Utah
+# Copyright (c) 2014, 2017 The University of Utah
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License as
@@ -28,10 +28,10 @@ all: doc-www doc-pdf doc-all doc-api
 doc-all:
 	$(PANDOC) -s -S --toc --toc-depth=4 -N --chapters \
 		-o stackdb-alldocs.pdf \
-		../README ../INSTALL user-guide.md hacker-guide.md
+		../README.md ../INSTALL user-guide.md hacker-guide.md
 	$(PANDOC) -s -S --toc --toc-depth=4 -N --self-contained -c style.css \
 		-o all.html \
-		../README ../INSTALL user-guide.md hacker-guide.md
+		../README.md ../INSTALL user-guide.md hacker-guide.md
 
 doc-pdf:
 	$(PANDOC) -s -S --toc --toc-depth=4 -N \
@@ -43,7 +43,7 @@ doc-www:
 	$(PANDOC) -S -c style.css \
 		-o index.html index.md
 	$(PANDOC) -S --toc --toc-depth=4 -c style.css \
-		-o about.html ../README
+		-o about.html ../README.md
 	$(PANDOC) -S --toc --toc-depth=4 -c style.css \
 		-o install.html ../INSTALL
 	$(PANDOC) -S --toc --toc-depth=4 -c style.css \
