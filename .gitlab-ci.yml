@@ -8,3 +8,13 @@ testing:
   - make install
   only:
   - master
+  
+pages:
+  script:
+  - cd doc
+  - make
+  - cd ..
+  - ln -s doc public
+  artifacts:
+    paths:
+    - public/
