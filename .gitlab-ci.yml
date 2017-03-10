@@ -11,6 +11,7 @@ build-ubuntu16:
   - master
   
 pages:
+  image: gitlab.flux.utah.edu:4567/a3/vmi:docbuilder
   script:
   - cd doc
   - make
