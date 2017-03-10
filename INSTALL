@@ -100,9 +100,8 @@ Notes on Building Dependencies
 
   * distorm
 
-    Download `distorm` from
-    http://code.google.com/p/distorm/downloads .  Unpack it and build
-    like this:
+    Download `distorm` from https://github.com/gdabah/distorm .
+    Unpack it and build like this:
 
         cd distorm/make/linux && make && make install
 
@@ -149,7 +148,8 @@ Notes on Building Dependencies
 
         cd python-suds-0.4 && python2 setup.py build && python2 setup.py install
 
-  * pysimplesoap
+  * pysimplesoap (if you can get >= 1.12 via your distro, you shouldn't
+    need the below patch):
 
     Grab the latest pysimplesoap from http://code.google.com/p/pysimplesoap/ .
     Unpack it, then apply the pysimplesoap-soap-env.patch in the Stackdb

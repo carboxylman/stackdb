@@ -1,9 +1,10 @@
-testing:
+build-ubuntu16:
+  image: gitlab.flux.utah.edu:4567/a3/vmi:ubuntu16
   script:
   - autoconf
   - mkdir build install
   - cd build
-  - ../configure --prefix=`readlink -f ../install`
+  - CFLAGS="-I/usr/lib/include/distorm3" ../configure --prefix=`readlink -f ../install` --with-elfutils=/opt/elfutils --disable-asm
   - make
   - make install
   only:

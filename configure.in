@@ -1,6 +1,6 @@
 ## -*- mode: Autoconf -*-
 ##
-## Copyright (c) 2011, 2012, 2013, 2014, 2015 The University of Utah
+## Copyright (c) 2011, 2012, 2013, 2014, 2015, 2017 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -127,10 +127,6 @@ fi
 AC_PATH_PROG(LIBTOOL, libtool)
 if test -z "$LIBTOOL" ; then
     AC_MSG_ERROR([no libtool found in \$PATH])
-fi
-AC_PATH_PROG(SUDO, sudo)
-if test -z "$SUDO" ; then
-    AC_MSG_ERROR([no sudo found in \$PATH])
 fi
 AC_PATH_PROG(SWIG, swig)
 if test -z "$SWIG" ; then
