@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2014, 2015, 2016 The University of Utah
+ * Copyright (c) 2013, 2014, 2015, 2016, 2017 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -231,21 +231,46 @@ int os_linux_attach(struct target *target) {
 			    strdup(lstate->kernel_sysmap_filename));
     }
 
-    /* Figure out where the modules are. */
-    if ((tmp = strstr(lstate->kernel_filename,"vmlinuz-"))) {
+    /* Figure out the kernel version, so we can search for modules later. */
+    tmp = strstr(lstate->kernel_filename,"vmlinuz-") + strlen("vmlinuz-");
+    if (!tmp)
+	tmp = strstr(lstate->kernel_filename,"vmlinux-syms-") + strlen("vmlinux-syms-");
+    if (!tmp)
+	tmp = strstr(lstate->kernel_filename,"vmlinux-") + strlen("vmlinux-");
+    /*
+     * If we found something, look for the kernel module dir. We look in
+     * two places:
+     *
+     * /usr/lib/debug/lib/modules/<kernel_version>
+     * /lib/modules/<kernel_version>
+     */
+    if (tmp) {
 	lstate->kernel_module_dir = malloc(PATH_MAX);
-	snprintf(lstate->kernel_module_dir,PATH_MAX,
-		 "/lib/modules/%s",tmp+strlen("vmlinuz-"));
-    }
-    else if ((tmp = strstr(lstate->kernel_filename,"vmlinux-syms-"))) {
-	lstate->kernel_module_dir = malloc(PATH_MAX);
-	snprintf(lstate->kernel_module_dir,PATH_MAX,
-		 "/lib/modules/%s",tmp+strlen("vmlinux-syms-"));
-    }
-    else if ((tmp = strstr(lstate->kernel_filename,"vmlinux-"))) {
-	lstate->kernel_module_dir = malloc(PATH_MAX);
-	snprintf(lstate->kernel_module_dir,PATH_MAX,
-		 "/lib/modules/%s",tmp+strlen("vmlinux-"));
+	lstate->kernel_module_dir = '\0';
+
+	if (lstate->kernel_module_dir[0] == '\0') {
+	    snprintf(lstate->kernel_module_dir,PATH_MAX,
+		     "%s/usr/lib/debug/lib/modules/%s",
+		     (target->spec->debugfile_root_prefix)		\
+		         ? target->spec->debugfile_root_prefix : "",
+		     tmp);
+	    if (access(lstate->kernel_module_dir,R_OK))
+		lstate->kernel_module_dir[0] = '\0';
+	}
+	if (lstate->kernel_module_dir[0] == '\0') {
+	    snprintf(lstate->kernel_module_dir,PATH_MAX,
+		     "%s/lib/modules/%s",
+		     (target->spec->debugfile_root_prefix)	\
+		         ? target->spec->debugfile_root_prefix : "",
+		     tmp);
+	    if (access(lstate->kernel_module_dir,R_OK))
+		lstate->kernel_module_dir[0] = '\0';
+	}
+
+	if (lstate->kernel_module_dir[0] == '\0') {
+	    free(lstate->kernel_module_dir);
+	    lstate->kernel_module_dir = NULL;
+	}
     }
 
     if (sscanf(lstate->kernel_version,"%m[0-9].%m[0-9].%m[0-9]",
