@@ -231,12 +231,6 @@ int os_linux_attach(struct target *target) {
 			    strdup(lstate->kernel_sysmap_filename));
     }
 
-    /* Figure out the kernel version, so we can search for modules later. */
-    tmp = strstr(lstate->kernel_filename,"vmlinuz-") + strlen("vmlinuz-");
-    if (!tmp)
-	tmp = strstr(lstate->kernel_filename,"vmlinux-syms-") + strlen("vmlinux-syms-");
-    if (!tmp)
-	tmp = strstr(lstate->kernel_filename,"vmlinux-") + strlen("vmlinux-");
     /*
      * If we found something, look for the kernel module dir. We look in
      * two places:
@@ -244,16 +238,16 @@ int os_linux_attach(struct target *target) {
      * /usr/lib/debug/lib/modules/<kernel_version>
      * /lib/modules/<kernel_version>
      */
-    if (tmp) {
+    if (lstate->kernel_version) {
 	lstate->kernel_module_dir = malloc(PATH_MAX);
-	lstate->kernel_module_dir = '\0';
+	lstate->kernel_module_dir[0] = '\0';
 
 	if (lstate->kernel_module_dir[0] == '\0') {
 	    snprintf(lstate->kernel_module_dir,PATH_MAX,
 		     "%s/usr/lib/debug/lib/modules/%s",
 		     (target->spec->debugfile_root_prefix)		\
 		         ? target->spec->debugfile_root_prefix : "",
-		     tmp);
+		     lstate->kernel_version);
 	    if (access(lstate->kernel_module_dir,R_OK))
 		lstate->kernel_module_dir[0] = '\0';
 	}
@@ -262,7 +256,7 @@ int os_linux_attach(struct target *target) {
 		     "%s/lib/modules/%s",
 		     (target->spec->debugfile_root_prefix)	\
 		         ? target->spec->debugfile_root_prefix : "",
-		     tmp);
+		     lstate->kernel_version);
 	    if (access(lstate->kernel_module_dir,R_OK))
 		lstate->kernel_module_dir[0] = '\0';
 	}
